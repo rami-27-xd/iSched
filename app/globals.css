@@ -1,0 +1,233 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Explicit content sources (relative to THIS file, so independent of the working
+   directory). Pinning @tailwindcss/postcss's `base` in postcss.config.mjs fixes the
+   `@import "tailwindcss"` resolution but disables auto source-detection, so the app's
+   utility classes must be declared here or the generated CSS ships with no utilities. */
+@source "../app";
+@source "../components";
+@source "../hooks";
+@source "../stores";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-gold: var(--gold);
+  --color-gold-foreground: var(--gold-foreground);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ─── SLSU iSched Light Theme (Deep Forest Green + Gold) ─── */
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0.015 260);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0.015 260);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0.015 260);
+
+  /* Primary: Deep Forest Green #1B4332 */
+  --primary: oklch(0.326 0.06 163);
+  --primary-foreground: oklch(0.985 0 0);
+
+  /* Secondary: Light green tint */
+  --secondary: oklch(0.955 0.02 160);
+  --secondary-foreground: oklch(0.326 0.06 163);
+
+  --muted: oklch(0.965 0.005 260);
+  --muted-foreground: oklch(0.50 0.015 260);
+
+  /* Accent: Gold/Yellow #D4AF37 */
+  --accent: oklch(0.78 0.14 85);
+  --accent-foreground: oklch(0.20 0.04 85);
+
+  --destructive: oklch(0.577 0.245 27.325);
+
+  --border: oklch(0.82 0.008 260);
+  --input: oklch(0.86 0.006 260);
+  --ring: oklch(0.326 0.06 163);
+
+  /* Status colors */
+  --warning: oklch(0.78 0.17 70);
+  --warning-foreground: oklch(0.20 0.05 70);
+  --success: oklch(0.52 0.14 155);
+  --success-foreground: oklch(0.985 0 0);
+  --info: oklch(0.60 0.18 260);
+  --info-foreground: oklch(0.985 0 0);
+
+  /* Gold accent token */
+  --gold: oklch(0.78 0.14 85);
+  --gold-foreground: oklch(0.20 0.04 85);
+
+  /* Chart colors using SLSU palette */
+  --chart-1: oklch(0.326 0.06 163);
+  --chart-2: oklch(0.42 0.08 163);
+  --chart-3: oklch(0.52 0.14 155);
+  --chart-4: oklch(0.78 0.14 85);
+  --chart-5: oklch(0.60 0.18 260);
+
+  --radius: 0.625rem;
+
+  /* Sidebar: Deep forest green */
+  --sidebar: oklch(0.326 0.06 163);
+  --sidebar-foreground: oklch(0.95 0.005 160);
+  --sidebar-primary: oklch(0.78 0.14 85);
+  --sidebar-primary-foreground: oklch(0.20 0.04 85);
+  --sidebar-accent: oklch(0.38 0.065 163);
+  --sidebar-accent-foreground: oklch(0.95 0.005 160);
+  --sidebar-border: oklch(0.40 0.06 163);
+  --sidebar-ring: oklch(0.78 0.14 85);
+}
+
+.dark {
+  --background: oklch(0.16 0.015 260);
+  --foreground: oklch(0.95 0.005 260);
+
+  --card: oklch(0.20 0.015 260);
+  --card-foreground: oklch(0.95 0.005 260);
+
+  --popover: oklch(0.20 0.015 260);
+  --popover-foreground: oklch(0.95 0.005 260);
+
+  --primary: oklch(0.52 0.14 155);
+  --primary-foreground: oklch(0.985 0 0);
+
+  --secondary: oklch(0.26 0.02 260);
+  --secondary-foreground: oklch(0.95 0.005 260);
+
+  --muted: oklch(0.26 0.015 260);
+  --muted-foreground: oklch(0.65 0.01 260);
+
+  --accent: oklch(0.78 0.14 85);
+  --accent-foreground: oklch(0.20 0.04 85);
+
+  --destructive: oklch(0.704 0.191 22.216);
+
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.52 0.14 155);
+
+  --warning: oklch(0.78 0.17 70);
+  --warning-foreground: oklch(0.20 0.05 70);
+  --success: oklch(0.52 0.14 155);
+  --success-foreground: oklch(0.985 0 0);
+  --info: oklch(0.60 0.18 260);
+  --info-foreground: oklch(0.985 0 0);
+
+  --gold: oklch(0.78 0.14 85);
+  --gold-foreground: oklch(0.20 0.04 85);
+
+  --chart-1: oklch(0.52 0.14 155);
+  --chart-2: oklch(0.42 0.08 163);
+  --chart-3: oklch(0.60 0.18 260);
+  --chart-4: oklch(0.78 0.14 85);
+  --chart-5: oklch(0.65 0.15 30);
+
+  --sidebar: oklch(0.18 0.02 260);
+  --sidebar-foreground: oklch(0.95 0.005 260);
+  --sidebar-primary: oklch(0.78 0.14 85);
+  --sidebar-primary-foreground: oklch(0.20 0.04 85);
+  --sidebar-accent: oklch(0.26 0.02 260);
+  --sidebar-accent-foreground: oklch(0.95 0.005 260);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.52 0.14 155);
+}
+
+/* ─── Dark-mode legibility fixes ───────────────────────────────────────────
+   Many dashboard pages/components hardcode the brand green as a literal hex
+   (`text-[#1B4332]`) instead of the theme-aware `--primary` token, for
+   headings, labels, and icons. That's a very dark green — legible on the
+   light theme's white cards, but nearly invisible on the dark theme's dark
+   card/background (oklch ~0.16-0.20 lightness). Written unlayered (outside
+   any @layer) so it always wins over the Tailwind utility it targets,
+   regardless of source order — no need to chase down every file that uses
+   the class. Retargets to `--primary`, which the dark theme already defines
+   as a legible mid-tone green (oklch 0.52 0.14 155) — the intended dark-mode
+   equivalent of the same brand color, just not wired up at the class-usage
+   sites. Every place this class appears sits on either a theme-aware
+   background (where this is the actual fix) or a fixed light/gold backdrop
+   (auth pages, brand badges) where a mid-tone green reads fine either way —
+   so this is safe everywhere the class is used. */
+.dark .text-\[\#1B4332\] {
+  color: var(--primary);
+}
+
+/* Same problem, different hardcoded colors. These three are dark by design so
+   they read on a LIGHT tint — but they're always paired with a *translucent*
+   brand background (bg-[#D4AF37]/15, bg-[#2D6A4F]/10). A translucent tint
+   composites over whatever is behind it: light in the light theme, DARK in the
+   dark theme — so the tint stops being light and the dark text on it goes
+   unreadable. (Opaque light backgrounds like bg-amber-50 don't have this
+   problem: they stay light in both themes, which is why the many
+   dark-text-on-bg-*-50 callouts elsewhere are left alone.)
+     #8B7A2B / #8a6d1a — dark olive on a gold tint (role badges)
+     #2D6A4F          — mid green on a green tint ("Lab" badge) */
+.dark .text-\[\#8B7A2B\],
+.dark .text-\[\#8a6d1a\] {
+  color: var(--gold);
+}
+
+.dark .text-\[\#2D6A4F\] {
+  color: var(--primary);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  html {
+    @apply scroll-smooth;
+  }
+}

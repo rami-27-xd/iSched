@@ -1,0 +1,586 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN // Department/College Chairpersons — final approval, algorithm execution
+  ADMIN       // Program Chairpersons — data submission, managed within their program
+  FACULTY     // End users — view assigned schedule only
+}
+
+enum SubjectType {
+  LECTURE
+  LABORATORY
+}
+
+enum RoomType {
+  LECTURE_ROOM
+  LABORATORY
+  COMPUTER_LAB
+  LECTURE_LAB
+}
+
+// Explicit academic specialization categories for laboratory rooms.
+// A subject with a requiredLabSpecialization can ONLY be assigned to a room
+// whose labSpecialization matches exactly — this is a Hard Constraint.
+enum LabSpecialization {
+  CISCO_NETWORKING
+  MULTIMEDIA_DESIGN
+  SOFTWARE_DEVELOPMENT
+  GENERAL_COMPUTING
+  ELECTRONICS
+  NETWORK_SECURITY
+  DATABASE_ADMINISTRATION
+  WEB_DEVELOPMENT
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+}
+
+enum ScheduleStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+  ARCHIVED
+}
+
+enum SemesterType {
+  FIRST
+  SECOND
+  SUMMER
+}
+
+// Tracks the sequential submission lifecycle for a department/semester pair.
+// The backtracking algorithm is locked behind SUBMITTED_TO_CHAIR.
+enum DepartmentWorkflowStatus {
+  DRAFT           // Program Chair is still inputting/configuring data
+  SUBMITTED_TO_CHAIR // Program Chair has submitted; Department Chair can now process
+  UNDER_REVIEW    // Department Chair is actively reviewing before running algorithm
+  APPROVED        // Department Chair approved; schedule is official
+  REJECTED        // Returned to Program Chair for revision with a note
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id           String          @id @default(cuid())
+  supabaseId   String          @unique
+  email        String?         @unique
+  firstName    String
+  lastName     String
+  role         UserRole        @default(FACULTY)
+  isApproved   Boolean         @default(false)
+  isActive     Boolean         @default(true)
+  departmentId String?
+  // Faculty cluster this SUPER_ADMIN is scoped to (null = access all clusters)
+  clusterId    String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  department      Department?      @relation(fields: [departmentId], references: [id])
+  cluster         FacultyCluster?  @relation(fields: [clusterId], references: [id])
+  faculty         Faculty?
+  departmentChair DepartmentChair?
+  programHead     ProgramHead?
+}
+
+model College {
+  id           String           @id @default(cuid())
+  name         String           @unique
+  abbreviation String           @unique
+  departments  Department[]
+  clusters     FacultyCluster[]
+}
+
+model Department {
+  id           String          @id @default(cuid())
+  name         String
+  abbreviation String
+  collegeId    String
+  // Which faculty cluster this department belongs to (drives SUPER_ADMIN scoping)
+  clusterId    String?
+
+  college        College                   @relation(fields: [collegeId], references: [id])
+  cluster        FacultyCluster?           @relation(fields: [clusterId], references: [id])
+  chair          DepartmentChair?
+  users          User[]
+  programs       Program[]
+  faculty        Faculty[]
+  subjects       Subject[]
+  schedules      Schedule[]
+  buildings      DepartmentBuilding[]
+  rooms          DepartmentRoom[]
+  workflowStates DepartmentWorkflowState[]
+
+  @@unique([abbreviation, collegeId])
+}
+
+// Groups departments into academic divisions (e.g. "Social Sciences Faculty").
+// A SUPER_ADMIN assigned to a cluster can only see/approve data from
+// departments in that cluster.
+model FacultyCluster {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  collegeId   String?  // optional: a cluster can span the whole college
+  createdAt   DateTime @default(now())
+
+  college     College?     @relation(fields: [collegeId], references: [id])
+  departments Department[]
+  supervisors User[]       // SUPER_ADMINs assigned to this cluster
+  programs    Program[]    // programs that belong to this cluster
+  faculty     Faculty[]    // faculty members assigned to this cluster
+}
+
+model DepartmentChair {
+  id           String     @id @default(cuid())
+  userId       String     @unique
+  departmentId String     @unique
+
+  user         User       @relation(fields: [userId], references: [id])
+  department   Department @relation(fields: [departmentId], references: [id])
+}
+
+model Program {
+  id           String      @id @default(cuid())
+  name         String
+  abbreviation String
+  departmentId String
+  clusterId    String?
+
+  department   Department     @relation(fields: [departmentId], references: [id])
+  cluster      FacultyCluster? @relation(fields: [clusterId], references: [id])
+  head         ProgramHead?
+  yearLevels   YearLevel[]
+  faculty      Faculty[]   // faculty assigned to this program
+  subjects     Subject[]   // program-specific subjects (null programId = shared/GEC)
+  rooms        ProgramRoom[] // rooms restricted to this program (course-level access)
+
+  @@unique([abbreviation, departmentId])
+}
+
+model ProgramHead {
+  id        String  @id @default(cuid())
+  userId    String  @unique
+  programId String  @unique
+
+  user      User    @relation(fields: [userId], references: [id])
+  program   Program @relation(fields: [programId], references: [id])
+}
+
+model YearLevel {
+  id        String    @id @default(cuid())
+  level     Int
+  programId String
+
+  program   Program   @relation(fields: [programId], references: [id])
+  sections  Section[]
+  subjects  Subject[]
+
+  @@unique([level, programId])
+}
+
+model Section {
+  id          String          @id @default(cuid())
+  name        String
+  yearLevelId String
+  capacity    Int             @default(40)
+
+  yearLevel        YearLevel         @relation(fields: [yearLevelId], references: [id])
+  assignments      ScheduleEntry[]
+  unassignedEntries UnassignedEntry[]
+}
+
+model Faculty {
+  id              String                       @id @default(cuid())
+  userId          String                       @unique
+  departmentId    String
+  programId       String?                      // assigned to a specific program; null = dept-wide pool
+  // CAS cluster (Social Sciences / Languages, Literature, and Humanities /
+  // Mathematics and Natural Sciences) this faculty member primarily belongs to.
+  // Null = unassigned, or a non-CAS faculty (clusters only exist within CAS).
+  // Lets a cluster chair's write access (checkFacultyWriteAccess) be scoped to
+  // their own cluster, not just their (CAS-wide, shared-by-all-3-chairs) department.
+  clusterId       String?
+  employeeId      String                       @unique
+  specializations String[]
+  sectionCounts   Json?                        @default("{}") // { "Subject Title": numberOfSections }
+  maxUnitsPerWeek Int                          @default(21)
+  hoursPerWeek    Int                          @default(0)
+  isActive        Boolean                      @default(true)
+  createdAt       DateTime                     @default(now())
+  updatedAt       DateTime                     @updatedAt
+
+  user                    User                         @relation(fields: [userId], references: [id])
+  department              Department                   @relation(fields: [departmentId], references: [id])
+  program                 Program?                     @relation(fields: [programId], references: [id])
+  cluster                 FacultyCluster?              @relation(fields: [clusterId], references: [id])
+  availability            FacultyAvailability[]
+  buildingAvailability    FacultyBuildingAvailability[]
+  scheduleEntries         ScheduleEntry[]
+  teachingLoads           TeachingLoad[]
+}
+
+model FacultyAvailability {
+  id         String    @id @default(cuid())
+  facultyId  String
+  day        DayOfWeek
+  startTime  String
+  endTime    String
+  semesterId String
+
+  faculty    Faculty   @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  semester   Semester  @relation(fields: [semesterId], references: [id])
+
+  @@unique([facultyId, day, startTime, semesterId])
+}
+
+// Records which buildings a faculty member is available to teach in,
+// per semester. The algorithm enforces this as a Hard Constraint —
+// a faculty member cannot be assigned to a room in a building not listed here.
+model FacultyBuildingAvailability {
+  id         String    @id @default(cuid())
+  facultyId  String
+  buildingId String
+  semesterId String
+
+  faculty    Faculty   @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  building   Building  @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  semester   Semester  @relation(fields: [semesterId], references: [id])
+
+  @@unique([facultyId, buildingId, semesterId])
+  @@index([facultyId, semesterId])
+}
+
+model Building {
+  id          String               @id @default(cuid())
+  name        String               @unique
+  code        String               @unique
+  isActive    Boolean              @default(true)
+
+  rooms                Room[]
+  departments          DepartmentBuilding[]
+  facultyAvailability  FacultyBuildingAvailability[]
+}
+
+// Many-to-many: a department may operate across multiple buildings,
+// and a building may house multiple departments.
+model DepartmentBuilding {
+  id           String     @id @default(cuid())
+  departmentId String
+  buildingId   String
+
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  building     Building   @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@unique([departmentId, buildingId])
+}
+
+model Room {
+  id                String             @id @default(cuid())
+  name              String
+  code              String             @unique
+  buildingId        String
+  type              RoomType
+  // Only populated for LABORATORY / COMPUTER_LAB rooms.
+  // Used as a Hard Constraint by the scheduling engine.
+  labSpecialization LabSpecialization?
+  equipment         String[]
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+
+  building        Building        @relation(fields: [buildingId], references: [id])
+  scheduleEntries ScheduleEntry[]
+  departments     DepartmentRoom[]
+  programs        ProgramRoom[]
+}
+
+// Per-room department access control.
+// Zero entries = unrestricted (any department may use this room).
+// One or more entries = only those departments may be scheduled here.
+model DepartmentRoom {
+  id           String @id @default(cuid())
+  departmentId String
+  roomId       String
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  room       Room       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([departmentId, roomId])
+}
+
+// Per-room program (course) access control — finer-grained than DepartmentRoom.
+// Access semantics (union): a room is open to a section when it has no
+// department AND no program entries, OR its departments include the section's
+// department, OR its programs include the section's program.
+model ProgramRoom {
+  id        String @id @default(cuid())
+  programId String
+  roomId    String
+
+  program Program @relation(fields: [programId], references: [id], onDelete: Cascade)
+  room    Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, roomId])
+}
+
+model AcademicYear {
+  id        String     @id @default(cuid())
+  label     String     @unique
+  startYear Int
+  endYear   Int
+  isCurrent Boolean    @default(false)
+
+  semesters Semester[]
+}
+
+model Semester {
+  id             String      @id @default(cuid())
+  type           SemesterType
+  academicYearId String
+  startDate      DateTime
+  endDate        DateTime
+  isActive       Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+
+  academicYear        AcademicYear                  @relation(fields: [academicYearId], references: [id])
+  schedules           Schedule[]
+  availability        FacultyAvailability[]
+  buildingAvailability FacultyBuildingAvailability[]
+  teachingLoads       TeachingLoad[]
+  workflowStates      DepartmentWorkflowState[]
+
+  @@unique([type, academicYearId])
+}
+
+model Subject {
+  id                       String             @id @default(cuid())
+  code                     String
+  title                    String
+  units                    Int
+  hoursPerWeek             Int
+  type                     SubjectType
+  semester                 SemesterType       @default(FIRST)
+  year                     Int                @default(1)
+  departmentId             String
+  programId                String?            // null = GEC/shared; set = specific to this program
+  yearLevelId              String?
+  requiredRoomType         RoomType[]
+  // When set, the backtracking engine will only match rooms whose
+  // labSpecialization equals this value (Hard Constraint).
+  requiredLabSpecialization LabSpecialization?
+  createdAt                DateTime           @default(now())
+
+  department      Department      @relation(fields: [departmentId], references: [id])
+  program         Program?        @relation(fields: [programId], references: [id])
+  yearLevel       YearLevel?      @relation(fields: [yearLevelId], references: [id])
+  scheduleEntries   ScheduleEntry[]
+  teachingLoads     TeachingLoad[]
+  unassignedEntries UnassignedEntry[]
+
+  @@unique([code, departmentId])
+}
+
+model TeachingLoad {
+  id         String   @id @default(cuid())
+  facultyId  String
+  subjectId  String
+  semesterId String
+  units      Int
+  assignedAt DateTime @default(now())
+
+  faculty    Faculty  @relation(fields: [facultyId], references: [id])
+  subject    Subject  @relation(fields: [subjectId], references: [id])
+  semester   Semester @relation(fields: [semesterId], references: [id])
+
+  @@unique([facultyId, subjectId, semesterId])
+}
+
+model Schedule {
+  id           String         @id @default(cuid())
+  semesterId   String
+  departmentId String?
+  status       ScheduleStatus @default(DRAFT)
+  isArchived   Boolean        @default(false)
+  generatedAt  DateTime?
+  publishedAt  DateTime?
+  // Note from the Dept Chair (SUPER_ADMIN) explaining why this schedule was
+  // returned to DRAFT. Cleared on the next submit/approve/reset.
+  rejectionReason String?
+  createdBy    String
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  semester   Semester        @relation(fields: [semesterId], references: [id])
+  department Department?     @relation(fields: [departmentId], references: [id])
+  entries    ScheduleEntry[]
+  conflicts  ConflictLog[]
+  unassigned UnassignedEntry[]
+
+  @@index([departmentId])
+}
+
+model ScheduleEntry {
+  id           String    @id @default(cuid())
+  scheduleId   String
+  subjectId    String
+  facultyId    String
+  // Free-text faculty name typed by the Program Chair. When set, this is
+  // displayed instead of the linked faculty record's name.
+  facultyName  String?
+  roomId       String
+  sectionId    String
+  day          DayOfWeek
+  startTime    String
+  endTime      String
+  set          String?   // null = LECTURE; "A" or "B" = LABORATORY split groups
+  // Shared by all session-rows of one multi-day (MWF/TTh) auto-generated
+  // assignment, so PATCH/DELETE can treat them as one logical entry. Null
+  // for single-session or manually-added entries.
+  groupId      String?
+  createdBy    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  subject  Subject  @relation(fields: [subjectId], references: [id])
+  faculty  Faculty  @relation(fields: [facultyId], references: [id])
+  room     Room     @relation(fields: [roomId], references: [id])
+  section  Section  @relation(fields: [sectionId], references: [id])
+
+  @@index([scheduleId])
+  @@index([facultyId, day])
+  @@index([roomId, day])
+  @@index([sectionId, day])
+  @@index([groupId])
+}
+
+model UnassignedEntry {
+  id         String   @id @default(cuid())
+  scheduleId String
+  subjectId  String
+  sectionId  String
+  reason     String?
+  // Who ran the generate that produced this row. A schedule can receive
+  // multiple generate runs by different chairs (e.g. a CIT schedule gets the
+  // Dept Chair's GEC pass, then that program's own major-subject pass) — the
+  // Unassigned Queue is scoped to only the chair who caused each failure, not
+  // to everyone who can see the schedule. Nullable so pre-existing rows from
+  // before this column don't break; only ever null on rows created before it.
+  generatedBy String?
+  createdAt  DateTime @default(now())
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  subject  Subject  @relation(fields: [subjectId], references: [id])
+  section  Section  @relation(fields: [sectionId], references: [id])
+
+  @@index([scheduleId])
+  @@index([generatedBy])
+  @@map("unassigned_entries")
+}
+
+model ConflictLog {
+  id          String   @id @default(cuid())
+  scheduleId  String
+  type        String
+  description String
+  entityIds   String[]
+  resolved    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+}
+
+// Tracks the submission/approval lifecycle for each department per semester.
+// The SUPER_ADMIN (Department Chair) cannot trigger schedule generation unless
+// the ADMIN (Program Chair) has moved status to SUBMITTED_TO_CHAIR.
+model DepartmentWorkflowState {
+  id           String                   @id @default(cuid())
+  departmentId String
+  semesterId   String
+  status       DepartmentWorkflowStatus @default(DRAFT)
+  submittedBy  String?  // userId of the Program Chair who submitted
+  submittedAt  DateTime?
+  reviewedBy   String?  // userId of the Department Chair who last reviewed
+  reviewedAt   DateTime?
+  reviewNote   String?  // populated on REJECTED status
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id])
+  semester   Semester   @relation(fields: [semesterId], references: [id])
+
+  @@unique([departmentId, semesterId])
+  @@index([departmentId, status])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+}
+
+model FacultyRequest {
+  id           String    @id @default(cuid())
+  requesterId  String
+  departmentId String
+  subjectId    String?
+  reason       String
+  status       String    @default("PENDING") // PENDING, APPROVED, DENIED
+  respondedBy  String?
+  respondedAt  DateTime?
+  responseNote String?
+  createdAt    DateTime  @default(now())
+
+  @@index([departmentId, status])
+  @@index([requesterId])
+}
+
+model ScheduleSwapRequest {
+  id              String    @id @default(cuid())
+  requesterId     String
+  entryId         String
+  requestedRoomId String
+  requestedDay    String
+  requestedStart  String
+  requestedEnd    String
+  reason          String
+  status          String    @default("PENDING") // PENDING, RESOLVED, DENIED
+  respondedBy     String?
+  respondedAt     DateTime?
+  responseNote    String?
+  createdAt       DateTime  @default(now())
+  // Lab-change requests (spec Section 2): the Dept Chair asks the owning CIT
+  // Program Chair to move a CIT lab that blocks GEC. kind distinguishes these from
+  // any future generic swap; scheduleId scopes them; targetUserId is the CIT chair
+  // asked to act (may be null when the program has no assigned chair yet).
+  kind            String    @default("SWAP") // "SWAP" | "LAB_CHANGE"
+  scheduleId      String?
+  targetUserId    String?
+
+  @@index([requesterId])
+  @@index([status])
+  @@index([targetUserId, status])
+  @@index([scheduleId])
+}
