@@ -130,6 +130,36 @@ function sectionAllowsSaturday(section: any): boolean {
 // dependency check the way a fresh `?? []` literal would on every render.
 const EMPTY_STRING_ARRAY: string[] = []
 
+/**
+ * Does this faculty member's specialization list cover this subject?
+ * Matching is deliberately fuzzy in both directions — a specialization of
+ * "Programming" should cover "Fundamentals of Programming", and a specialization
+ * of "Data Structures and Algorithms" should cover a subject titled "Data
+ * Structures". Used by the Add and Edit Entry pickers so the subject→faculty and
+ * faculty→subject directions can never disagree about who is qualified.
+ */
+function facultyMatchesSubject(faculty: any, subject: any): boolean {
+  const title = (subject?.title ?? "").toLowerCase().trim()
+  if (!title) return true
+  const specs: string[] = faculty?.specializations ?? []
+  if (specs.length === 0) return false
+  return specs.some((raw: string) => {
+    const sp = (raw ?? "").toLowerCase().trim()
+    if (!sp) return false
+    return sp === title || title.includes(sp) || sp.includes(title)
+  })
+}
+
+/**
+ * Item 7 — the class a required field gets once a save attempt found it blank.
+ * Applied on top of each control's own classes so the red ring wins.
+ */
+function missingRing(missing: string[], field: string): string {
+  return missing.includes(field)
+    ? " border-red-500 ring-1 ring-red-500 focus:ring-red-500 focus-visible:ring-red-500"
+    : ""
+}
+
 const TIME_OPTIONS = Array.from({ length: 28 }, (_, i) => {
   const totalMins = 7 * 60 + 30 + i * 30
   const h = String(Math.floor(totalMins / 60)).padStart(2, "0")
@@ -179,6 +209,11 @@ export default function SchedulesPage() {
   // schedule for each department before plotting GEC); Program Chairs are
   // locked to their own department server-side, so the picker stays hidden.
   const [newDeptId, setNewDeptId] = useState("")
+  // Item 7 — names of required fields left blank on the last save attempt, so the
+  // form can ring them in red instead of only firing a toast that names one of them.
+  const [createMissing, setCreateMissing] = useState<string[]>([])
+  const [entryMissing, setEntryMissing] = useState<string[]>([])
+  const [editMissing, setEditMissing] = useState<string[]>([])
   const [newStartDate, setNewStartDate] = useState("")
   const [newEndDate, setNewEndDate] = useState("")
 
@@ -491,17 +526,11 @@ export default function SchedulesPage() {
     // 3. CAS cluster ownership — Dept Chairs only manage their own cluster's territory
     pool = narrowSubjectsByCluster(pool)
 
-    // 4. Faculty specialization filtering
+    // 4. Faculty specialization filtering — same matcher as the faculty dropdown,
+    //    so the two directions always agree on who is qualified for what.
     if (entryForm.facultyId && selectedFacultyForEntry) {
-      const specs: string[] = selectedFacultyForEntry.specializations ?? []
-      if (specs.length > 0) {
-        const specLower = specs.map((sp: string) => sp.toLowerCase().trim())
-        const matched = pool.filter((s: any) => {
-          const titleLower = (s.title ?? "").toLowerCase().trim()
-          return specLower.some((sp: string) => sp === titleLower || titleLower.includes(sp) || sp.includes(titleLower))
-        })
-        if (matched.length > 0) return matched
-      }
+      const matched = pool.filter((s: any) => facultyMatchesSubject(selectedFacultyForEntry, s))
+      if (matched.length > 0) return matched
     }
 
     // Always include the pre-selected subject (set via "Manually Assign") even if
@@ -529,15 +558,13 @@ export default function SchedulesPage() {
     const pool = deptScoped.length > 0 ? deptScoped : activeFaculty
 
     if (!entryForm.subjectId || !selectedSubjectForEntry) return pool
-    const subjectTitle = (selectedSubjectForEntry.title ?? "").toLowerCase()
-    if (!subjectTitle) return pool
-    // Strict: only faculty specializing in the selected subject — no fallback to the
-    // full pool, so the dropdown never offers an unqualified instructor for the pick.
-    return pool.filter((f: any) => {
-      const specs: string[] = f.specializations ?? []
-      if (specs.length === 0) return false
-      return specs.some((sp: string) => sp.toLowerCase() === subjectTitle || subjectTitle.includes(sp.toLowerCase()))
-    })
+    // Strict: only faculty specializing in the selected subject, so the dropdown
+    // never offers an unqualified instructor. Department scoping is relaxed if it
+    // would hide every qualified candidate — a GEC subject is frequently taught by
+    // faculty recorded under a different department than the subject itself.
+    const scoped = pool.filter((f: any) => facultyMatchesSubject(f, selectedSubjectForEntry))
+    if (scoped.length > 0) return scoped
+    return activeFaculty.filter((f: any) => facultyMatchesSubject(f, selectedSubjectForEntry))
   }, [facultyList, entryForm.subjectId, selectedSubjectForEntry])
 
   // Room access check shared by Add/Edit Entry: a room restricted to
@@ -841,17 +868,10 @@ export default function SchedulesPage() {
       }
     }
 
-    // 4. Faculty specialization filtering
+    // 4. Faculty specialization filtering — shared matcher (see Add Entry).
     if (editEntryForm.facultyId && editSelectedFaculty) {
-      const specs: string[] = editSelectedFaculty.specializations ?? []
-      if (specs.length > 0) {
-        const specLower = specs.map((sp: string) => sp.toLowerCase().trim())
-        const matched = pool.filter((s: any) => {
-          const titleLower = (s.title ?? "").toLowerCase().trim()
-          return specLower.some((sp: string) => sp === titleLower || titleLower.includes(sp) || sp.includes(titleLower))
-        })
-        if (matched.length > 0) pool = matched
-      }
+      const matched = pool.filter((s: any) => facultyMatchesSubject(editSelectedFaculty, s))
+      if (matched.length > 0) pool = matched
     }
 
     // Always keep the entry's current subject in the pool even if the filtering above
@@ -868,16 +888,22 @@ export default function SchedulesPage() {
   // Edit: filter faculty by selected subject
   const editFilteredFaculty = useMemo(() => {
     const activeFaculty = facultyList.filter((f: any) => f.isActive !== false && f.user?.isActive !== false)
-    if (!editEntryForm.subjectId || !editSelectedSubject) return activeFaculty
+    // Always keep whoever is currently on the entry selectable, even when they fail
+    // the specialization filter below. Without this the assigned faculty dropped out
+    // of the list, the <select> had no option matching its value, and the whole
+    // dialog rendered as if nothing was set.
+    const keepCurrent = (pool: any[]) => {
+      const id = editEntryForm.facultyId
+      if (!id || pool.some((f: any) => f.id === id)) return pool
+      const forced = facultyList.find((f: any) => f.id === id)
+      return forced ? [forced, ...pool] : pool
+    }
+    if (!editEntryForm.subjectId || !editSelectedSubject) return keepCurrent(activeFaculty)
     const subjectTitle = (editSelectedSubject.title ?? "").toLowerCase()
-    if (!subjectTitle) return activeFaculty
+    if (!subjectTitle) return keepCurrent(activeFaculty)
     // Strict: only faculty specializing in the selected subject — same rule as Add Entry.
-    return activeFaculty.filter((f: any) => {
-      const specs: string[] = f.specializations ?? []
-      if (specs.length === 0) return false
-      return specs.some((sp: string) => sp.toLowerCase() === subjectTitle || subjectTitle.includes(sp.toLowerCase()))
-    })
-  }, [facultyList, editEntryForm.subjectId, editSelectedSubject])
+    return keepCurrent(activeFaculty.filter((f: any) => facultyMatchesSubject(f, editSelectedSubject)))
+  }, [facultyList, editEntryForm.subjectId, editEntryForm.facultyId, editSelectedSubject])
 
   // Edit: filter rooms by subject's required room type, falling back to subject type
   const editFilteredRooms = useMemo(() => {
@@ -910,6 +936,16 @@ export default function SchedulesPage() {
     }
     return ensureTbaRoom(pool, pool)
   }, [departmentRooms, editEntryForm.subjectId, editEntryForm.sectionId, editSelectedSubject, editSelectedSection])
+
+  // The entry's own room must stay in the list even if the filters above would drop
+  // it (a room whose access rules changed after the entry was created, say) —
+  // otherwise the Room select renders blank on a perfectly valid entry.
+  const editRoomOptions = useMemo(() => {
+    const id = editEntryForm.roomId
+    if (!id || editFilteredRooms.some((r: any) => r.id === id)) return editFilteredRooms
+    const forced = (departmentRooms as any[]).find((r: any) => r.id === id)
+    return forced ? [forced, ...editFilteredRooms] : editFilteredRooms
+  }, [editFilteredRooms, editEntryForm.roomId, departmentRooms])
 
   // Edit: filter sections by subject alignment (year level + department)
   const editFilteredSections = useMemo(() => {
@@ -956,6 +992,15 @@ export default function SchedulesPage() {
     }
     return result
   }, [sections, editEntryForm.subjectId, editSelectedSubject, editSectionSearch, scheduleDeptId, isAdmin, adminProgramId])
+
+  // Same guarantee for the section combobox: whatever the entry already points at
+  // stays resolvable, so the field shows its real value rather than empty.
+  const editSectionOptions = useMemo(() => {
+    const id = editEntryForm.sectionId
+    if (!id || editSectionSearch.trim() || editFilteredSections.some((s: any) => s.id === id)) return editFilteredSections
+    const forced = (sections as any[]).find((s: any) => s.id === id)
+    return forced ? [forced, ...editFilteredSections] : editFilteredSections
+  }, [editFilteredSections, editEntryForm.sectionId, editSectionSearch, sections])
 
   // Edit: filter days by faculty availability + Saturday restriction (CAM/NSTP only)
   const editAvailableDays = useMemo(() => {
@@ -1357,7 +1402,18 @@ export default function SchedulesPage() {
   }, [entries])
 
   async function handleCreate() {
-    if (!newSemType || !newSchoolYear || !newStartDate || !newEndDate) return toast.error("Please fill in all fields")
+    // Item 7 — report EVERY blank field at once and mark them, rather than a
+    // toast that names none of them and leaves the user hunting.
+    const missing: string[] = []
+    if (isSuperAdmin && !newDeptId) missing.push("department")
+    if (!newSemType) missing.push("semester")
+    if (!newSchoolYear) missing.push("schoolYear")
+    if (!newStartDate) missing.push("startDate")
+    if (!newEndDate) missing.push("endDate")
+    setCreateMissing(missing)
+    if (missing.length > 0) {
+      return toast.error(`Please fill in ${missing.length} required field${missing.length === 1 ? "" : "s"} — highlighted in red`)
+    }
     const normalizedSY = newSchoolYear.trim().replace(/[\s_]+/, '-')
     if (!/^\d{4}-\d{4}$/.test(normalizedSY)) return toast.error("School year format: YYYY-YYYY (e.g. 2025-2026 or 2025 2026)")
     if (new Date(newStartDate) >= new Date(newEndDate)) return toast.error("End date must be after start date")
@@ -1377,6 +1433,7 @@ export default function SchedulesPage() {
       setNewStartDate("")
       setNewEndDate("")
       setNewDeptId("")
+      setCreateMissing([])
       // ── Auto-select the new schedule so it is immediately visible ──
       if (newSchedule?.id) {
         setTab("active")      // new schedules are always active
@@ -1445,8 +1502,21 @@ export default function SchedulesPage() {
       return handleAddSplitLabSets()
     }
 
-    if (!subjectId || !roomId || !sectionId || patternDays.length === 0 || !startTime || !endTime) {
-      return toast.error(dayPattern === "custom" && patternDays.length === 0 ? "Please select at least one day" : "Please fill in all required fields")
+    const missing: string[] = []
+    if (!sectionId) missing.push("section")
+    if (!subjectId) missing.push("subject")
+    if (!facultyId && !facultyName?.trim()) missing.push("faculty")
+    if (!roomId) missing.push("room")
+    if (patternDays.length === 0) missing.push("day")
+    if (!startTime) missing.push("startTime")
+    if (!endTime) missing.push("endTime")
+    setEntryMissing(missing)
+    if (missing.length > 0) {
+      return toast.error(
+        dayPattern === "custom" && patternDays.length === 0 && missing.length === 1
+          ? "Please select at least one day"
+          : `Please fill in ${missing.length} required field${missing.length === 1 ? "" : "s"} — highlighted in red`
+      )
     }
 
     // Inactive faculty check
@@ -1659,6 +1729,7 @@ export default function SchedulesPage() {
     setSplitLabSets(false)
     setSetAEntry({ roomId: "", day: "", startTime: "", endTime: "" })
     setSetBEntry({ roomId: "", day: "", startTime: "", endTime: "" })
+    setEntryMissing([])
   }
 
   function handleOpenEditEntry(entryId: string) {
@@ -1676,6 +1747,7 @@ export default function SchedulesPage() {
       set: (entry.set ?? "") as "" | "A" | "B",
     })
     setEditSectionSearch("")
+    setEditMissing([])
     setEditEntryOpen(true)
   }
 
@@ -1692,8 +1764,17 @@ export default function SchedulesPage() {
       return toast.error("No sections found for this subject. Please create sections in Courses / Departments first.")
     }
 
-    if (!subjectId || !facultyId || !roomId || !sectionId || !day || !startTime || !endTime) {
-      return toast.error("Please fill in all fields")
+    const missing: string[] = []
+    if (!facultyId) missing.push("faculty")
+    if (!subjectId) missing.push("subject")
+    if (!sectionId) missing.push("section")
+    if (!roomId) missing.push("room")
+    if (!day) missing.push("day")
+    if (!startTime) missing.push("startTime")
+    if (!endTime) missing.push("endTime")
+    setEditMissing(missing)
+    if (missing.length > 0) {
+      return toast.error(`Please fill in ${missing.length} required field${missing.length === 1 ? "" : "s"} — highlighted in red`)
     }
 
     // Inactive faculty check
@@ -2705,7 +2786,7 @@ export default function SchedulesPage() {
       )}
 
       {/* Create Schedule Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) setCreateMissing([]) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>New Schedule</DialogTitle>
@@ -2720,10 +2801,10 @@ export default function SchedulesPage() {
                 <Label>Department</Label>
                 <select
                   value={newDeptId}
-                  onChange={(e) => setNewDeptId(e.target.value)}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  onChange={(e) => { setNewDeptId(e.target.value); setCreateMissing((m) => m.filter((x) => x !== "department")) }}
+                  className={`w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 ${createMissing.includes("department") ? "border-red-500 ring-1 ring-red-500 focus:ring-red-500" : "border-input focus:ring-ring"}`}
                 >
-                  <option value="">My own department</option>
+                  <option value="">Select department</option>
                   {(allDepartments as any[]).map((d: any) => (
                     <option key={d.id} value={d.id}>
                       {d.college?.abbreviation ? `${d.college.abbreviation} — ` : ""}{d.name}
@@ -2739,8 +2820,8 @@ export default function SchedulesPage() {
               <Label>Semester</Label>
               <select
                 value={newSemType}
-                onChange={(e) => setNewSemType(e.target.value)}
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                onChange={(e) => { setNewSemType(e.target.value); setCreateMissing((m) => m.filter((x) => x !== "semester")) }}
+                className={`w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 ${createMissing.includes("semester") ? "border-red-500 ring-1 ring-red-500 focus:ring-red-500" : "border-input focus:ring-ring"}`}
               >
                 <option value="">Select semester</option>
                 <option value="FIRST">1st Semester</option>
@@ -2752,7 +2833,8 @@ export default function SchedulesPage() {
               <Input
                 placeholder="e.g. 2025-2026 or 2025 2026"
                 value={newSchoolYear}
-                onChange={(e) => setNewSchoolYear(e.target.value)}
+                onChange={(e) => { setNewSchoolYear(e.target.value); setCreateMissing((m) => m.filter((x) => x !== "schoolYear")) }}
+                className={createMissing.includes("schoolYear") ? "border-red-500 ring-1 ring-red-500 focus-visible:ring-red-500" : undefined}
               />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2761,7 +2843,8 @@ export default function SchedulesPage() {
                 <Input
                   type="date"
                   value={newStartDate}
-                  onChange={(e) => setNewStartDate(e.target.value)}
+                  onChange={(e) => { setNewStartDate(e.target.value); setCreateMissing((m) => m.filter((x) => x !== "startDate")) }}
+                  className={createMissing.includes("startDate") ? "border-red-500 ring-1 ring-red-500 focus-visible:ring-red-500" : undefined}
                 />
               </div>
               <div className="grid gap-2">
@@ -2769,7 +2852,8 @@ export default function SchedulesPage() {
                 <Input
                   type="date"
                   value={newEndDate}
-                  onChange={(e) => setNewEndDate(e.target.value)}
+                  onChange={(e) => { setNewEndDate(e.target.value); setCreateMissing((m) => m.filter((x) => x !== "endDate")) }}
+                  className={createMissing.includes("endDate") ? "border-red-500 ring-1 ring-red-500 focus-visible:ring-red-500" : undefined}
                 />
               </div>
             </div>
@@ -2779,7 +2863,7 @@ export default function SchedulesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={createSchedule.isPending || !newSemType || !newSchoolYear || !newStartDate || !newEndDate}>
+            <Button onClick={handleCreate} disabled={createSchedule.isPending}>
               {createSchedule.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create
             </Button>
@@ -2874,6 +2958,7 @@ export default function SchedulesPage() {
                 <div className="relative" ref={sectionComboRef}>
                   <Input
                     placeholder="Search section..."
+                    className={`w-full${missingRing(entryMissing, "section")}`}
                     value={sectionSearch || sections.find((s: any) => s.id === entryForm.sectionId)?.name || ""}
                     onChange={(e) => {
                       setSectionSearch(e.target.value)
@@ -2884,7 +2969,6 @@ export default function SchedulesPage() {
                       setSectionDropdownOpen(true)
                       if (entryForm.sectionId) setSectionSearch("")
                     }}
-                    className="w-full"
                   />
                   {sectionDropdownOpen && (
                     <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border bg-popover shadow-lg">
@@ -2926,8 +3010,8 @@ export default function SchedulesPage() {
                 <Label>Subject</Label>
                 <select
                   value={entryForm.subjectId}
-                  onChange={(e) => { setEntryForm((f) => ({ ...f, subjectId: e.target.value, set: "" })); setSplitLabSets(false) }}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  onChange={(e) => { setEntryForm((f) => ({ ...f, subjectId: e.target.value, set: "" })); setSplitLabSets(false); setEntryMissing((m) => m.filter((x) => x !== "subject")) }}
+                  className={`w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(entryMissing, "subject")}`}
                 >
                   <option value="">Select subject</option>
                   {filteredSubjects.map((s: any) => (
@@ -3013,6 +3097,7 @@ export default function SchedulesPage() {
                 <div className="relative" ref={facultyComboRef}>
                   <Input
                     placeholder="Type faculty name..."
+                    className={`w-full${missingRing(entryMissing, "faculty")}`}
                     value={
                       facultySearch ||
                       entryForm.facultyName ||
@@ -3045,7 +3130,6 @@ export default function SchedulesPage() {
                         setFacultySearch(f ? `${f.user?.firstName} ${f.user?.lastName}` : "")
                       }
                     }}
-                    className="w-full"
                   />
                   {facultyDropdownOpen && (facultySearch || !entryForm.facultyId) && (
                     <div className="absolute z-50 mt-1 w-full max-h-52 overflow-y-auto rounded-lg border bg-popover shadow-lg">
@@ -3400,8 +3484,8 @@ export default function SchedulesPage() {
                 <Label className="text-xs font-medium text-foreground/80 uppercase tracking-wide">Faculty</Label>
                 <select
                   value={editEntryForm.facultyId}
-                  onChange={(e) => setEditEntryForm((f) => ({ ...f, facultyId: e.target.value, day: "", startTime: "", endTime: "" }))}
-                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  onChange={(e) => { setEditEntryForm((f) => ({ ...f, facultyId: e.target.value, day: "", startTime: "", endTime: "" })); setEditMissing((m) => m.filter((x) => x !== "faculty")) }}
+                  className={`w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(editMissing, "faculty")}`}
                 >
                   <option value="">— Select faculty —</option>
                   {editFilteredFaculty.map((f: any) => (
@@ -3421,6 +3505,7 @@ export default function SchedulesPage() {
                   value={editEntryForm.subjectId}
                   onChange={(e) => {
                     setEditEntryForm((f) => ({ ...f, subjectId: e.target.value, sectionId: "", set: "" }))
+                    setEditMissing((m) => m.filter((x) => x !== "subject"))
                     setEditSectionSearch("")
                   }}
                   className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -3443,6 +3528,7 @@ export default function SchedulesPage() {
                 <div className="relative" ref={editSectionComboRef}>
                   <Input
                     placeholder="Search section..."
+                    className={`h-9 w-full text-sm${missingRing(editMissing, "section")}`}
                     value={editSectionSearch || sections.find((s: any) => s.id === editEntryForm.sectionId)?.name || ""}
                     onChange={(e) => {
                       setEditSectionSearch(e.target.value)
@@ -3453,14 +3539,13 @@ export default function SchedulesPage() {
                       setEditSectionDropdownOpen(true)
                       if (editEntryForm.sectionId) setEditSectionSearch("")
                     }}
-                    className="h-9 w-full text-sm"
                   />
                   {editSectionDropdownOpen && (
                     <div className="absolute z-50 mt-1 w-full max-h-44 overflow-y-auto rounded-md border bg-popover shadow-md">
-                      {editFilteredSections.length === 0 ? (
+                      {editSectionOptions.length === 0 ? (
                         <div className="px-3 py-2 text-xs text-destructive">No matching sections found.</div>
                       ) : (
-                        editFilteredSections.map((s: any) => (
+                        editSectionOptions.map((s: any) => (
                           <button
                             key={s.id}
                             type="button"
@@ -3495,7 +3580,7 @@ export default function SchedulesPage() {
                   className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">— Select room —</option>
-                  {editFilteredRooms.map((r: any) => (
+                  {editRoomOptions.map((r: any) => (
                     <option key={r.id} value={r.id}>{r.code} ({r.name}) — {r.type?.replace(/_/g, " ")}</option>
                   ))}
                 </select>
@@ -3717,6 +3802,33 @@ export default function SchedulesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Generation loading overlay ──────────────────────────────────────────
+          Covers the page while the backtracking engine runs. It is deliberately
+          blocking: entries are cleared and rewritten server-side, so clicking
+          around mid-run would show a half-written schedule. */}
+      {generateSchedule.isPending && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="mx-4 flex max-w-sm flex-col items-center gap-4 rounded-xl border border-border bg-card p-8 text-center shadow-lg">
+            <div className="relative">
+              <Loader2 className="h-10 w-10 animate-spin text-[#1B4332]" />
+              <Cpu className="absolute inset-0 m-auto h-4 w-4 text-[#1B4332]" />
+            </div>
+            <div className="space-y-1">
+              <p className="font-semibold">Generating schedule…</p>
+              <p className="text-sm text-muted-foreground">
+                Running the backtracking algorithm across subjects, faculty availability
+                and room constraints. This can take up to a minute — please don&apos;t
+                close this tab.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Pre-Publish Validation Dialog ── */}
       <Dialog open={publishValidationOpen} onOpenChange={setPublishValidationOpen}>

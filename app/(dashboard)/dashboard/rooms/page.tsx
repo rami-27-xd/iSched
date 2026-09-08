@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { PageHeader } from "@/components/shared/page-header"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
@@ -69,6 +69,10 @@ export default function RoomsPage() {
   // Room-level program (course) access — finer-grained than college/department
   const [addRoomProgramIds, setAddRoomProgramIds] = useState<string[]>([])
   const [editRoomProgramIds, setEditRoomProgramIds] = useState<string[]>([])
+  // Item 3 — the program list runs to dozens of entries across every college, so
+  // each dialog gets its own filter box rather than making the chair scroll.
+  const [addProgramSearch, setAddProgramSearch] = useState("")
+  const [editProgramSearch, setEditProgramSearch] = useState("")
 
   const { data: buildings = [], isLoading: loadingBuildings } = useBuildings()
   const { data: rooms = [], isLoading: loadingRooms } = useRoomList()
@@ -91,11 +95,41 @@ export default function RoomsPage() {
     const list: any[] = []
     for (const dept of (allDepartments as any[])) {
       for (const prog of dept.programs ?? []) {
-        list.push({ ...prog, collegeAbbr: dept.college?.abbreviation ?? "" })
+        list.push({
+          ...prog,
+          collegeAbbr: dept.college?.abbreviation ?? "",
+          collegeId: dept.college?.id ?? null,
+        })
       }
     }
     return list.sort((a, b) => a.abbreviation.localeCompare(b.abbreviation))
   }, [allDepartments])
+
+  /**
+   * Item 4 — a room open to every program in a college is just "open to that
+   * college". Selecting the last program of a college therefore folds those
+   * individual ticks into the single College Access tick, so the room reads as
+   * "CIT" rather than listing all seven CIT programs back at you.
+   * Returns the rolled-up pair; leaves partial selections untouched.
+   */
+  const rollUpCompleteColleges = useCallback(
+    (programIds: string[], collegeIds: string[]): { programIds: string[]; collegeIds: string[] } => {
+      let nextPrograms = [...programIds]
+      const nextColleges = [...collegeIds]
+      for (const college of collegeOptions) {
+        const collegeProgramIds = programOptions
+          .filter((pr: any) => pr.collegeId === college.id)
+          .map((pr: any) => pr.id)
+        if (collegeProgramIds.length === 0) continue
+        const allSelected = collegeProgramIds.every((id: string) => nextPrograms.includes(id))
+        if (!allSelected) continue
+        if (!nextColleges.includes(college.id)) nextColleges.push(college.id)
+        nextPrograms = nextPrograms.filter((id) => !collegeProgramIds.includes(id))
+      }
+      return { programIds: nextPrograms, collegeIds: nextColleges }
+    },
+    [collegeOptions, programOptions]
+  )
 
   // For badge display: convert stored ProgramRoom rows to program abbreviations.
   function programAbbrs(programs: any[]): string {
@@ -592,26 +626,65 @@ export default function RoomsPage() {
                 Restrict this room to specific programs. Works together with college access — a
                 section may use the room if its college OR its program is selected.
               </p>
-              <div className="max-h-40 overflow-y-auto rounded-lg border divide-y">
-                {programOptions.map((prog: any) => (
-                  <label key={prog.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-[#1B4332]"
-                      checked={addRoomProgramIds.includes(prog.id)}
-                      onChange={(e) =>
-                        setAddRoomProgramIds((prev) =>
-                          e.target.checked ? [...prev, prog.id] : prev.filter((id) => id !== prog.id)
-                        )
-                      }
-                    />
-                    <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{prog.abbreviation}</span>
-                    <span className="truncate">{prog.name}</span>
-                    {prog.collegeAbbr && (
-                      <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{prog.collegeAbbr}</span>
-                    )}
-                  </label>
-                ))}
+              <Input
+                value={addProgramSearch}
+                onChange={(e) => setAddProgramSearch(e.target.value)}
+                placeholder="Search programs…"
+                className="h-8 text-sm"
+              />
+              <div className="max-h-56 overflow-y-auto rounded-lg border divide-y">
+                {programOptions.filter((prog: any) => {
+                  const q = addProgramSearch.trim().toLowerCase()
+                  if (!q) return true
+                  return (
+                    (prog.abbreviation ?? "").toLowerCase().includes(q) ||
+                    (prog.name ?? "").toLowerCase().includes(q) ||
+                    (prog.collegeAbbr ?? "").toLowerCase().includes(q)
+                  )
+                }).length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No programs match &ldquo;{addProgramSearch}&rdquo;.</p>
+                ) : (
+                  programOptions.filter((prog: any) => {
+                    const q = addProgramSearch.trim().toLowerCase()
+                    if (!q) return true
+                    return (
+                      (prog.abbreviation ?? "").toLowerCase().includes(q) ||
+                      (prog.name ?? "").toLowerCase().includes(q) ||
+                      (prog.collegeAbbr ?? "").toLowerCase().includes(q)
+                    )
+                  }).map((prog: any) => {
+                    // A program reads as selected when its whole college is ticked —
+                    // that is what the roll-up in item 4 collapsed it into.
+                    const viaCollege = prog.collegeId && addRoomCollegeIds.includes(prog.collegeId)
+                    return (
+                      <label
+                        key={prog.id}
+                        className={`flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 ${viaCollege ? "cursor-default opacity-60" : "cursor-pointer"}`}
+                        title={viaCollege ? `Already covered by ${prog.collegeAbbr} college access` : ""}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-[#1B4332]"
+                          checked={viaCollege || addRoomProgramIds.includes(prog.id)}
+                          disabled={!!viaCollege}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...addRoomProgramIds, prog.id]
+                              : addRoomProgramIds.filter((id) => id !== prog.id)
+                            const rolled = rollUpCompleteColleges(next, addRoomCollegeIds)
+                            setAddRoomProgramIds(rolled.programIds)
+                            setAddRoomCollegeIds(rolled.collegeIds)
+                          }}
+                        />
+                        <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{prog.abbreviation}</span>
+                        <span className="truncate">{prog.name}</span>
+                        {prog.collegeAbbr && (
+                          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{prog.collegeAbbr}</span>
+                        )}
+                      </label>
+                    )
+                  })
+                )}
               </div>
             </div>
           </div>
@@ -755,26 +828,65 @@ export default function RoomsPage() {
                 Restrict this room to specific programs. Works together with college access — a
                 section may use the room if its college OR its program is selected.
               </p>
-              <div className="max-h-40 overflow-y-auto rounded-lg border divide-y">
-                {programOptions.map((prog: any) => (
-                  <label key={prog.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-[#1B4332]"
-                      checked={editRoomProgramIds.includes(prog.id)}
-                      onChange={(e) =>
-                        setEditRoomProgramIds((prev) =>
-                          e.target.checked ? [...prev, prog.id] : prev.filter((id) => id !== prog.id)
-                        )
-                      }
-                    />
-                    <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{prog.abbreviation}</span>
-                    <span className="truncate">{prog.name}</span>
-                    {prog.collegeAbbr && (
-                      <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{prog.collegeAbbr}</span>
-                    )}
-                  </label>
-                ))}
+              <Input
+                value={editProgramSearch}
+                onChange={(e) => setEditProgramSearch(e.target.value)}
+                placeholder="Search programs…"
+                className="h-8 text-sm"
+              />
+              <div className="max-h-56 overflow-y-auto rounded-lg border divide-y">
+                {programOptions.filter((prog: any) => {
+                  const q = editProgramSearch.trim().toLowerCase()
+                  if (!q) return true
+                  return (
+                    (prog.abbreviation ?? "").toLowerCase().includes(q) ||
+                    (prog.name ?? "").toLowerCase().includes(q) ||
+                    (prog.collegeAbbr ?? "").toLowerCase().includes(q)
+                  )
+                }).length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">No programs match &ldquo;{editProgramSearch}&rdquo;.</p>
+                ) : (
+                  programOptions.filter((prog: any) => {
+                    const q = editProgramSearch.trim().toLowerCase()
+                    if (!q) return true
+                    return (
+                      (prog.abbreviation ?? "").toLowerCase().includes(q) ||
+                      (prog.name ?? "").toLowerCase().includes(q) ||
+                      (prog.collegeAbbr ?? "").toLowerCase().includes(q)
+                    )
+                  }).map((prog: any) => {
+                    // A program reads as selected when its whole college is ticked —
+                    // that is what the roll-up in item 4 collapsed it into.
+                    const viaCollege = prog.collegeId && editRoomCollegeIds.includes(prog.collegeId)
+                    return (
+                      <label
+                        key={prog.id}
+                        className={`flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted/50 ${viaCollege ? "cursor-default opacity-60" : "cursor-pointer"}`}
+                        title={viaCollege ? `Already covered by ${prog.collegeAbbr} college access` : ""}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-[#1B4332]"
+                          checked={viaCollege || editRoomProgramIds.includes(prog.id)}
+                          disabled={!!viaCollege}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...editRoomProgramIds, prog.id]
+                              : editRoomProgramIds.filter((id) => id !== prog.id)
+                            const rolled = rollUpCompleteColleges(next, editRoomCollegeIds)
+                            setEditRoomProgramIds(rolled.programIds)
+                            setEditRoomCollegeIds(rolled.collegeIds)
+                          }}
+                        />
+                        <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{prog.abbreviation}</span>
+                        <span className="truncate">{prog.name}</span>
+                        {prog.collegeAbbr && (
+                          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{prog.collegeAbbr}</span>
+                        )}
+                      </label>
+                    )
+                  })
+                )}
               </div>
             </div>
           </div>

@@ -184,8 +184,9 @@ export function useDeleteSchedule() {
       if (json.error) throw new Error(json.error)
       return json.data
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["schedules"] })
+    onSuccess: async (_data, scheduleId) => {
+      queryClient.removeQueries({ queryKey: ["schedules", scheduleId] })
+      await queryClient.invalidateQueries({ queryKey: ["schedules"], refetchType: "all" })
     },
   })
 }

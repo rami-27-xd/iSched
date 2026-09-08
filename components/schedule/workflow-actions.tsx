@@ -36,7 +36,7 @@
  */
 
 import * as React from 'react'
-import { CheckCircle2, SendHorizontal, XCircle, Clock, ShieldCheck, AlertTriangle, BookOpen, RotateCcw } from 'lucide-react'
+import { CheckCircle2, SendHorizontal, XCircle, Clock, ShieldCheck, AlertTriangle, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -229,26 +229,10 @@ export function WorkflowActions({
       if (isOwnSchedule) {
         return null
       }
-      // Another college's schedule: the Dept Chair generates GEC/GEL into it
-      // directly — NOT gated on that college's Program Chair submitting first
-      // (that was the old, pre-inversion workflow). Any laboratory subjects the
-      // owning Program Chair has already pre-plotted (CIT's labs-only stage) are
-      // treated as locked slots — GEC is generated around them automatically.
-      return (
-        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-          <BookOpen className="h-4 w-4 shrink-0 mt-0.5 text-blue-600" />
-          <div>
-            <p className="font-medium">GEC/GEL Assignment — {departmentName ?? 'This department'}</p>
-            <p className="mt-0.5 text-blue-700">
-              Use <strong>Generate Schedule</strong> to auto-assign GEC/GEL subjects into{' '}
-              <strong>{departmentName ?? 'this department'}</strong>&apos;s schedule, then{' '}
-              <strong>Publish Schedule</strong> when ready. Any laboratory subjects{' '}
-              {departmentName ?? 'this department'} has already pre-plotted are locked in place — GEC
-              generation works around them.
-            </p>
-          </div>
-        </div>
-      )
+      // Another college's schedule. The banner that used to sit here only
+      // restated the Generate Schedule / Publish Schedule buttons already in
+      // the toolbar, so it was vertical noise pushing the schedule down.
+      return null
     }
 
     if (status === 'PENDING_APPROVAL') {

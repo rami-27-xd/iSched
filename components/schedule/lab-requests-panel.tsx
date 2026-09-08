@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { FlaskConical, Loader2, Send, Check, X } from "lucide-react"
+import { FlaskConical, Loader2, Send, Check, X, ChevronDown, ChevronUp } from "lucide-react"
 import { toast } from "sonner"
 
 interface LabRequest {
@@ -76,6 +76,12 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
   const [dialogOpen, setDialogOpen] = useState(false)
   // Resolved / denied / withdrawn requests are hidden by default — see below.
   const [showSettled, setShowSettled] = useState(false)
+  // The panel sits directly above the schedule and pushes it down the page. Chairs
+  // who have already read the requests need it out of the way, so the whole card
+  // collapses to its header row. Collapsed by default once nothing is pending —
+  // an open request is the only reason to take up the space unprompted.
+  const [collapsed, setCollapsed] = useState(false)
+  const [collapsedTouched, setCollapsedTouched] = useState(false)
   const [selectedEntryId, setSelectedEntryId] = useState("")
   const [reason, setReason] = useState("")
 
@@ -136,6 +142,7 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
   const pending = requests.filter((r) => r.status === "PENDING")
   const settled = requests.filter((r) => r.status !== "PENDING")
   const visible = showSettled ? requests : pending
+  const isCollapsed = collapsed || (pending.length === 0 && !showSettled && !collapsedTouched)
 
   // Hide entirely only when this role has nothing at all to show. A Dept Chair keeps
   // the panel because the "Request a lab change" button lives in it; a Program Chair
@@ -165,20 +172,32 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
               </button>
             )}
           </CardTitle>
-          {isSuperAdmin && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={requestableEntries.length === 0}
-              title={requestableEntries.length === 0 ? "No CIT labs available to request a change on" : ""}
-              onClick={() => setDialogOpen(true)}
+          <div className="flex items-center gap-2">
+            {isSuperAdmin && !isCollapsed && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={requestableEntries.length === 0}
+                title={requestableEntries.length === 0 ? "No CIT labs available to request a change on" : ""}
+                onClick={() => setDialogOpen(true)}
+              >
+                <Send className="mr-2 h-3.5 w-3.5" /> Request a lab change
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={() => { setCollapsedTouched(true); setCollapsed(!isCollapsed) }}
+              aria-expanded={!isCollapsed}
+              title={isCollapsed ? "Expand" : "Minimize"}
+              className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
-              <Send className="mr-2 h-3.5 w-3.5" /> Request a lab change
-            </Button>
-          )}
+              {isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
-        <CardDescriptionText isSuperAdmin={isSuperAdmin} />
+        {!isCollapsed && <CardDescriptionText isSuperAdmin={isSuperAdmin} />}
       </CardHeader>
+      {!isCollapsed && (
       <CardContent className="space-y-2">
         {visible.length === 0 ? (
           <p className="text-xs text-muted-foreground">
@@ -221,6 +240,7 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
           ))
         )}
       </CardContent>
+      )}
 
       {/* DC: raise a new request */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
