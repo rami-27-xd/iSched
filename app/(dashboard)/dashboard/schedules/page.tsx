@@ -61,6 +61,7 @@ import {
   Rows3,
   ChevronDown,
   ChevronUp,
+  Users,
 } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -178,6 +179,14 @@ export default function SchedulesPage() {
   // so list/calendar grouping and delete-as-one-unit work unchanged.
   const [dayPattern, setDayPattern] = useState<"single" | "MWF" | "TTH" | "custom">("single")
   const [customDays, setCustomDays] = useState<string[]>([])
+  // "Split into lab sets" — creates Set A and Set B in one submission, each with
+  // its own Room/Day/Time, sharing the Section/Subject/Faculty above. Only offered
+  // when neither set has been placed yet (see the toggle's gating condition below) —
+  // once one exists, the ordinary single-Set picker (already in the form) covers
+  // adding the other.
+  const [splitLabSets, setSplitLabSets] = useState(false)
+  const [setAEntry, setSetAEntry] = useState({ roomId: "", day: "", startTime: "", endTime: "" })
+  const [setBEntry, setSetBEntry] = useState({ roomId: "", day: "", startTime: "", endTime: "" })
   // Controls the faculty autocomplete dropdown visibility
   const [facultySearch, setFacultySearch] = useState("")
   const [facultyDropdownOpen, setFacultyDropdownOpen] = useState(false)
@@ -566,6 +575,23 @@ export default function SchedulesPage() {
       })
     })
   }, [entryForm.facultyId, entryForm.day, facultyAvailability])
+
+  // Same faculty-availability time filter as availableTimeOptions above, but
+  // callable per day — needed because the split-lab-sets Set A/Set B pickers each
+  // have their own Day and must filter times against THAT day, not entryForm.day.
+  const timeOptionsForDay = useCallback((day: string) => {
+    if (!entryForm.facultyId || !day || facultyAvailability.length === 0) return TIME_OPTIONS
+    const daySlots = facultyAvailability.filter((a: any) => a.day === day)
+    if (daySlots.length === 0) return TIME_OPTIONS
+    return TIME_OPTIONS.filter((t) => {
+      const tMins = parseInt(t.split(":")[0]) * 60 + parseInt(t.split(":")[1])
+      return daySlots.some((slot: any) => {
+        const startMins = parseInt(slot.startTime.split(":")[0]) * 60 + parseInt(slot.startTime.split(":")[1])
+        const endMins = parseInt(slot.endTime.split(":")[0]) * 60 + parseInt(slot.endTime.split(":")[1])
+        return tMins >= startMins && tMins < endMins
+      })
+    })
+  }, [entryForm.facultyId, facultyAvailability])
 
   // Filter sections by subject year level, department alignment + search text
   // ADMIN (Program Chair): restrict sections to their own department
@@ -1263,6 +1289,19 @@ export default function SchedulesPage() {
     )
   }, [groupedFilteredEntries])
 
+  // tableEntries bucketed under the day they fall on, in week order — the Table
+  // view renders one full-width day banner per bucket instead of a Day column,
+  // so a printed-timetable read doesn't repeat "Monday" on every row.
+  const tableEntriesByDay = useMemo(() => {
+    const buckets = new Map<string, any[]>()
+    for (const e of tableEntries) {
+      const day = e.__groupSize > 1 ? e.__groupDayLabel : e.day
+      if (!buckets.has(day)) buckets.set(day, [])
+      buckets.get(day)!.push(e)
+    }
+    return [...buckets.entries()]
+  }, [tableEntries])
+
   // Unique faculty/sections/rooms in current schedule for filter dropdowns
   const entryFacultyOptions = useMemo(() => {
     const map = new Map<string, string>()
@@ -1371,6 +1410,13 @@ export default function SchedulesPage() {
     // Check if subject has matching sections
     if (subjectId && filteredSections.length === 0) {
       return toast.error("No sections found for this subject. Please create sections in Courses / Departments first.")
+    }
+
+    // Split-lab-sets: Section/Subject/Faculty above are shared, but Room/Day/Time
+    // are per-set — hand off to the dedicated submit path instead of falling
+    // through to the single-entry fields below (which this mode doesn't fill in).
+    if (splitLabSets) {
+      return handleAddSplitLabSets()
     }
 
     if (!subjectId || !roomId || !sectionId || patternDays.length === 0 || !startTime || !endTime) {
@@ -1488,6 +1534,65 @@ export default function SchedulesPage() {
     }
   }
 
+  // Creates Set A and Set B together from one Add Entry submission. Section,
+  // Subject and Faculty come from the shared fields above; each set supplies its
+  // own Room/Day/Time. Conflict/specialization/availability checks are left to
+  // the server here — the same trust boundary the MWF/TTh/custom day patterns
+  // above already rely on (see the comment on the "single" dayPattern block).
+  async function handleAddSplitLabSets() {
+    if (!selectedScheduleId) return
+    const { subjectId, sectionId, facultyId, facultyName } = entryForm
+
+    if (!subjectId || !sectionId) {
+      return toast.error("Please fill in all required fields")
+    }
+    for (const [label, set] of [["Set A", setAEntry], ["Set B", setBEntry]] as const) {
+      if (!set.roomId || !set.day || !set.startTime || !set.endTime) {
+        return toast.error(`Please fill in Room, Day and Time for ${label}`)
+      }
+      if (set.startTime >= set.endTime) {
+        return toast.error(`${label}: End time must be after start time`)
+      }
+    }
+
+    const selectedFacForAdd = facultyList.find((f: any) => f.id === facultyId)
+    if (selectedFacForAdd && (selectedFacForAdd.isActive === false || selectedFacForAdd.user?.isActive === false)) {
+      const fname = `${selectedFacForAdd.user?.firstName ?? ""} ${selectedFacForAdd.user?.lastName ?? ""}`.trim()
+      return toast.error(`${fname || "This faculty member"} is inactive and cannot be assigned to a schedule entry`)
+    }
+
+    const shared = {
+      subjectId,
+      sectionId,
+      facultyId,
+      facultyName: facultyName?.trim() || null,
+    }
+
+    try {
+      // Sequential, not parallel: if Set A fails, nothing is created and the error
+      // is unambiguous. If Set A succeeds and Set B then fails, the message below
+      // says so explicitly rather than leaving the chair to guess which half exists.
+      await createEntry.mutateAsync({
+        scheduleId: selectedScheduleId,
+        entry: { ...shared, ...setAEntry, set: "A" },
+      })
+      try {
+        await createEntry.mutateAsync({
+          scheduleId: selectedScheduleId,
+          entry: { ...shared, ...setBEntry, set: "B" },
+        })
+      } catch (err: any) {
+        toast.error(`Set A was added, but Set B failed: ${err.message}`)
+        return
+      }
+      setAddEntryOpen(false)
+      resetEntryForm()
+      toast.success("Set A and Set B added")
+    } catch (err: any) {
+      toast.error(`Set A: ${err.message}`)
+    }
+  }
+
   // Clears every field the Add Entry dialog owns. Called on a successful save AND
   // whenever the dialog closes — previously only the save path reset, so cancelling
   // left the last section/subject/faculty selected and they reappeared on reopen.
@@ -1525,6 +1630,9 @@ export default function SchedulesPage() {
     // with a dropdown open reopened with that dropdown still hanging over the form.
     setFacultyDropdownOpen(false)
     setSectionDropdownOpen(false)
+    setSplitLabSets(false)
+    setSetAEntry({ roomId: "", day: "", startTime: "", endTime: "" })
+    setSetBEntry({ roomId: "", day: "", startTime: "", endTime: "" })
   }
 
   function handleOpenEditEntry(entryId: string) {
@@ -2450,78 +2558,84 @@ export default function SchedulesPage() {
                     </div>
                   ) : (
                     <div className="overflow-x-auto rounded-lg border border-border">
-                      <table className="w-full min-w-[820px] border-collapse text-sm">
+                      <table className="w-full min-w-[760px] border-collapse text-sm">
                         <thead>
                           <tr className="bg-muted/50 text-left">
-                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Day</th>
                             <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Time</th>
-                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Code</th>
-                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Subject</th>
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Course</th>
                             <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Faculty</th>
                             <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Room</th>
                             <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Section</th>
                             <th className="w-16 px-3 py-2"></th>
                           </tr>
                         </thead>
-                        <tbody>
-                          {tableEntries.map((entry: any) => (
-                            <tr
-                              key={entry.id}
-                              className={`border-t border-border transition-colors hover:bg-muted/40 ${canEditEntry(entry) ? "cursor-pointer" : ""}`}
-                              onClick={() => { if (canEditEntry(entry)) handleOpenEditEntry(entry.id) }}
-                            >
-                              <td className="whitespace-nowrap px-3 py-2">
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className={`inline-block h-2 w-2 rounded-full ${entry.subject?.type === "LABORATORY" ? "bg-[#2D6A4F]" : "bg-[#1B4332]"}`} />
-                                  {entry.__groupSize > 1
-                                    ? entry.__groupDayLabel
-                                    : entry.day.charAt(0) + entry.day.slice(1).toLowerCase()}
-                                </span>
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums">
-                                {entry.startTime}–{entry.endTime}
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-2 font-semibold">
-                                {entry.subject?.code}
-                                {entry.set && (
-                                  <span className="ml-1 rounded bg-[#1B4332]/10 px-1 py-0.5 text-[9px] font-semibold text-[#1B4332]">
-                                    Set {entry.set}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="max-w-[220px] truncate px-3 py-2 text-muted-foreground" title={entry.subject?.title}>
-                                {entry.subject?.title}
-                              </td>
-                              <td className="max-w-[160px] truncate px-3 py-2">
-                                {entry.facultyName ||
-                                  `${entry.faculty?.user?.firstName ?? ""} ${entry.faculty?.user?.lastName ?? ""}`.trim() ||
-                                  "—"}
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{entry.room?.code}</td>
-                              <td className="whitespace-nowrap px-3 py-2">{entry.section?.name}</td>
-                              <td className="px-3 py-2">
-                                {canEditEntry(entry) && (
-                                  <div className="flex items-center justify-end gap-0.5">
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleOpenEditEntry(entry.id) }}
-                                      className="rounded p-1 text-[#1B4332] transition-colors hover:bg-[#1B4332]/10"
-                                      title="Edit entry"
-                                    >
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); setDeleteEntryId(entry.id) }}
-                                      className="rounded p-1 text-red-600 transition-colors hover:bg-red-50"
-                                      title="Delete entry"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                  </div>
-                                )}
+                        {/* One <tbody> per day so the day banner's colSpan can't drift
+                            out of sync with the column count above. */}
+                        {tableEntriesByDay.map(([dayLabel, dayEntries]) => (
+                          <tbody key={dayLabel}>
+                            <tr>
+                              <td colSpan={6} className="bg-[#1B4332] px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white">
+                                {dayLabel.includes("/")
+                                  ? dayLabel
+                                  : dayLabel.charAt(0) + dayLabel.slice(1).toLowerCase()}
                               </td>
                             </tr>
-                          ))}
-                        </tbody>
+                            {dayEntries.map((entry: any) => (
+                              <tr
+                                key={entry.id}
+                                className={`border-t border-border transition-colors hover:bg-muted/40 ${canEditEntry(entry) ? "cursor-pointer" : ""}`}
+                                onClick={() => { if (canEditEntry(entry)) handleOpenEditEntry(entry.id) }}
+                              >
+                                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums">
+                                  {entry.startTime}–{entry.endTime}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${entry.subject?.type === "LABORATORY" ? "bg-[#2D6A4F]" : "bg-[#1B4332]"}`} />
+                                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-800">
+                                      {entry.subject?.code}
+                                    </span>
+                                    {entry.set && (
+                                      <span className="rounded bg-[#1B4332]/10 px-1 py-0.5 text-[9px] font-semibold text-[#1B4332]">
+                                        Set {entry.set}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="mt-0.5 max-w-[240px] truncate text-xs text-muted-foreground" title={entry.subject?.title}>
+                                    {entry.subject?.title}
+                                  </p>
+                                </td>
+                                <td className="max-w-[160px] truncate px-3 py-2">
+                                  {entry.facultyName ||
+                                    `${entry.faculty?.user?.firstName ?? ""} ${entry.faculty?.user?.lastName ?? ""}`.trim() ||
+                                    "—"}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{entry.room?.code}</td>
+                                <td className="whitespace-nowrap px-3 py-2">{entry.section?.name}</td>
+                                <td className="px-3 py-2">
+                                  {canEditEntry(entry) && (
+                                    <div className="flex items-center justify-end gap-0.5">
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); handleOpenEditEntry(entry.id) }}
+                                        className="rounded p-1 text-[#1B4332] transition-colors hover:bg-[#1B4332]/10"
+                                        title="Edit entry"
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setDeleteEntryId(entry.id) }}
+                                        className="rounded p-1 text-red-600 transition-colors hover:bg-red-50"
+                                        title="Delete entry"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        ))}
                       </table>
                     </div>
                   )}
@@ -2786,7 +2900,7 @@ export default function SchedulesPage() {
                 <Label>Subject</Label>
                 <select
                   value={entryForm.subjectId}
-                  onChange={(e) => setEntryForm((f) => ({ ...f, subjectId: e.target.value, set: "" }))}
+                  onChange={(e) => { setEntryForm((f) => ({ ...f, subjectId: e.target.value, set: "" })); setSplitLabSets(false) }}
                   className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">Select subject</option>
@@ -2803,29 +2917,65 @@ export default function SchedulesPage() {
             </div>
             {/* Set (A/B) — only for LABORATORY subjects */}
             {selectedSubjectForEntry?.type === "LABORATORY" && (
-              <div className="grid gap-2">
-                <Label>Set</Label>
-                <select
-                  value={entryForm.set}
-                  onChange={(e) => setEntryForm((f) => ({ ...f, set: e.target.value as "" | "A" | "B" }))}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">Select set</option>
-                  <option value="A" disabled={placedSetsForEntry.has("A")}>
-                    Set A (first half — ~20 students){placedSetsForEntry.has("A") ? " — already scheduled" : ""}
-                  </option>
-                  <option value="B" disabled={placedSetsForEntry.has("B")}>
-                    Set B (second half — ~20 students){placedSetsForEntry.has("B") ? " — already scheduled" : ""}
-                  </option>
-                </select>
-                <p className="text-[10px] text-muted-foreground">
-                  Lab subjects are split into two sets. Set A and Set B can overlap in time since they are different student groups.
-                  {placedSetsForEntry.size === 1 && " The remaining set is pre-selected for you."}
-                </p>
+              <div className="space-y-3">
+                {/* Only offered when creating a lab from scratch — once either half
+                    exists, the single Set picker below (unaffected by this toggle)
+                    is how the remaining one gets added. */}
+                {placedSetsForEntry.size === 0 && (
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-input bg-muted/30 px-3 py-2.5">
+                    <span className="flex items-center gap-2 text-sm font-medium">
+                      <Users className="h-4 w-4 text-[#1B4332]" />
+                      Split into lab sets
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={splitLabSets}
+                      onClick={() => setSplitLabSets((v) => !v)}
+                      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                        splitLabSets ? "bg-[#1B4332]" : "bg-input"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                          splitLabSets ? "translate-x-4" : "translate-x-0.5"
+                        }`}
+                      />
+                    </button>
+                  </label>
+                )}
+                {splitLabSets ? (
+                  <p className="text-[10px] text-muted-foreground">
+                    Set A and Set B will both be created from this one form — each with its own Room, Day and Time below.
+                  </p>
+                ) : (
+                  <div className="grid gap-2">
+                    <Label>Set</Label>
+                    <select
+                      value={entryForm.set}
+                      onChange={(e) => setEntryForm((f) => ({ ...f, set: e.target.value as "" | "A" | "B" }))}
+                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="">Select set</option>
+                      <option value="A" disabled={placedSetsForEntry.has("A")}>
+                        Set A (first half — ~20 students){placedSetsForEntry.has("A") ? " — already scheduled" : ""}
+                      </option>
+                      <option value="B" disabled={placedSetsForEntry.has("B")}>
+                        Set B (second half — ~20 students){placedSetsForEntry.has("B") ? " — already scheduled" : ""}
+                      </option>
+                    </select>
+                    <p className="text-[10px] text-muted-foreground">
+                      Lab subjects are split into two sets. Set A and Set B can overlap in time since they are different student groups.
+                      {placedSetsForEntry.size === 1 && " The remaining set is pre-selected for you."}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
-            {/* Faculty (text autocomplete) & Room (department-restricted) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Faculty (text autocomplete) & Room (department-restricted). Room drops
+                out of this row in split mode — it moves into the Set A/Set B cards
+                below instead, since each set can use a different room. */}
+            <div className={splitLabSets ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 sm:grid-cols-2 gap-4"}>
               {/* ── Faculty — free-text with autocomplete suggestions ────────
                   The user types a name; matching faculty appear as suggestions.
                   Selecting one fills both the display name and the internal facultyId.
@@ -2945,33 +3095,42 @@ export default function SchedulesPage() {
                 )}
               </div>
 
-              {/* ── Room — filtered to department-assigned buildings ──────── */}
-              <div className="grid gap-2">
-                <Label>Room</Label>
-                <select
-                  value={entryForm.roomId}
-                  onChange={(e) => setEntryForm((f) => ({ ...f, roomId: e.target.value }))}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">Select room</option>
-                  {filteredRooms.map((r: any) => (
-                    <option key={r.id} value={r.id}>
-                      {r.code} ({r.name}) — {r.building?.code ?? ""} · {r.type?.replace(/_/g, " ")}
-                    </option>
-                  ))}
-                </select>
-                {scheduleDeptId && departmentRooms.length > 0 && (
-                  <p className="text-[10px] text-muted-foreground">
-                    Showing {departmentRooms.length} room{departmentRooms.length !== 1 ? "s" : ""} in your department's buildings
-                  </p>
-                )}
-                {entryForm.subjectId && selectedSubjectForEntry?.requiredRoomType?.length > 0 && (
-                  <p className="text-[10px] text-muted-foreground">
-                    Filtered by subject type: {selectedSubjectForEntry.requiredRoomType.map((t: string) => t.replace(/_/g, " ")).join(", ")}
-                  </p>
-                )}
-              </div>
+              {/* ── Room — filtered to department-assigned buildings. Hidden in split
+                  mode; Set A/Set B each get their own Room field below instead. ── */}
+              {!splitLabSets && (
+                <div className="grid gap-2">
+                  <Label>Room</Label>
+                  <select
+                    value={entryForm.roomId}
+                    onChange={(e) => setEntryForm((f) => ({ ...f, roomId: e.target.value }))}
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">Select room</option>
+                    {filteredRooms.map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.code} ({r.name}) — {r.building?.code ?? ""} · {r.type?.replace(/_/g, " ")}
+                      </option>
+                    ))}
+                  </select>
+                  {scheduleDeptId && departmentRooms.length > 0 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Showing {departmentRooms.length} room{departmentRooms.length !== 1 ? "s" : ""} in your department's buildings
+                    </p>
+                  )}
+                  {entryForm.subjectId && selectedSubjectForEntry?.requiredRoomType?.length > 0 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Filtered by subject type: {selectedSubjectForEntry.requiredRoomType.map((t: string) => t.replace(/_/g, " ")).join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
+            {/* Day-pattern + Start/End Time — the single-entry path. Replaced
+                entirely by the Set A/Set B panels below when splitLabSets is on,
+                since each set needs its own Day and Time rather than one shared
+                pair. */}
+            {!splitLabSets && (
+            <>
             <div className="grid gap-2">
               <Label>Day{patternDays.length > 1 ? "s" : ""}</Label>
               {/* Pattern picker: Single Day keeps the classic one-day dropdown;
@@ -3104,6 +3263,88 @@ export default function SchedulesPage() {
                 {entryForm.startTime && constraintFilteredEndTimes.length > 0 && (
                   <p className="text-[10px] text-muted-foreground">Showing valid end times (no conflicts)</p>
                 )}
+              </div>
+            )}
+            </>
+            )}
+
+            {/* Split-lab-sets path: Set A and Set B side by side, each with its own
+                Room/Day/Time — mirrors the shared single-entry fields above but
+                doubled, since both halves are created from this one submission. */}
+            {splitLabSets && (
+              <div className="grid gap-2">
+                <Label>Set A &amp; Set B</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {([
+                    { label: "A", sub: "~20 students", value: setAEntry, setValue: setSetAEntry },
+                    { label: "B", sub: "~20 students", value: setBEntry, setValue: setSetBEntry },
+                  ] as const).map(({ label, sub, value, setValue }) => {
+                    const timeOptions = timeOptionsForDay(value.day)
+                    return (
+                      <div key={label} className="rounded-lg border border-input p-3 space-y-2.5">
+                        <p className="text-xs font-semibold text-[#1B4332]">Set {label} — {sub}</p>
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs text-muted-foreground">Room</Label>
+                          <select
+                            value={value.roomId}
+                            onChange={(e) => setValue((v) => ({ ...v, roomId: e.target.value }))}
+                            className="w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                          >
+                            <option value="">Select room</option>
+                            {filteredRooms.map((r: any) => (
+                              <option key={r.id} value={r.id}>
+                                {r.code} ({r.name}){r.building?.code ? ` — ${r.building.code}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs text-muted-foreground">Day</Label>
+                          <select
+                            value={value.day}
+                            onChange={(e) => setValue((v) => ({ ...v, day: e.target.value, startTime: "", endTime: "" }))}
+                            className="w-full rounded-lg border border-input bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                          >
+                            <option value="">Select day</option>
+                            {availableDays.map((d) => (
+                              <option key={d} value={d}>{d.charAt(0) + d.slice(1).toLowerCase()}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="grid gap-1.5">
+                            <Label className="text-xs text-muted-foreground">Start</Label>
+                            <select
+                              value={value.startTime}
+                              onChange={(e) => setValue((v) => ({ ...v, startTime: e.target.value, endTime: "" }))}
+                              className="w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="">--</option>
+                              {timeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          </div>
+                          <div className="grid gap-1.5">
+                            <Label className="text-xs text-muted-foreground">End</Label>
+                            <select
+                              value={value.endTime}
+                              onChange={(e) => setValue((v) => ({ ...v, endTime: e.target.value }))}
+                              className="w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                            >
+                              <option value="">--</option>
+                              {timeOptions.filter((t) => !value.startTime || t > value.startTime).map((t) => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                {entryForm.facultyId && facultyAvailability.length === 0 && (
+                  <p className="text-[10px] text-amber-600">No availability set for this faculty — they cannot be scheduled until availability is added in Faculty Availability.</p>
+                )}
+                <p className="text-[10px] text-muted-foreground">
+                  Room/day/time conflicts are checked when you save. Set A and Set B may share the same day and time since they are different student groups.
+                </p>
               </div>
             )}
           </div>
