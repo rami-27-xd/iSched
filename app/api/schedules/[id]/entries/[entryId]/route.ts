@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
-import { validateEntry, validateEntryCapacity } from "@/lib/services/entry-validation"
+import { validateEntry, validateEntryCapacity, isHardConflict, stripConflictMarker } from "@/lib/services/entry-validation"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 
@@ -70,12 +70,19 @@ export async function PATCH(
 
     const validationError = await validateEntry(id, merged, entryId)
     // force: true = soft-validation — save anyway and return warning instead of blocking.
-    // The Saturday restriction (CAM/NSTP only) is a compliance hard constraint and
-    // can never be force-overridden.
-    const force = body.force === true && !validationError?.includes("Saturday classes are reserved")
+    // Two classes of error are never overridable:
+    //   1. The Saturday restriction (CAM/NSTP only) — a compliance hard constraint.
+    //   2. Faculty/room double-booking (isHardConflict) — a physical impossibility,
+    //      and the one that let cross-department clashes through: adding a
+    //      conflicting entry was already blocked, but MOVING a clean entry onto
+    //      another department's slot and force-saving was not.
+    const force =
+      body.force === true &&
+      !validationError?.includes("Saturday classes are reserved") &&
+      !isHardConflict(validationError)
 
     if (validationError && !force) {
-      return NextResponse.json(apiError(validationError), { status: 409 })
+      return NextResponse.json(apiError(stripConflictMarker(validationError)), { status: 409 })
     }
 
     // Capacity checks (engine parity): weekly units / daily load / back-to-back

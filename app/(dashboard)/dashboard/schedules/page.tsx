@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import { PageHeader } from "@/components/shared/page-header"
-import { ScheduleCalendar } from "@/components/schedule/schedule-calendar"
+import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
@@ -87,9 +87,30 @@ import { RoleGuard } from "@/components/shared/role-guard"
 import { useRealtimeSchedules } from "@/hooks/use-realtime"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 import { WorkflowActions } from "@/components/schedule/workflow-actions"
-import { ExportDialog } from "@/components/schedule/export-dialog"
+
 import { LabRequestsPanel } from "@/components/schedule/lab-requests-panel"
 import { WorkflowGuideDialog } from "@/components/schedule/workflow-guide"
+
+// Both of these are heavy and neither is needed for the default List view, so they
+// load on demand instead of shipping in this route's initial JS:
+//   ScheduleCalendar — pulls in the four @fullcalendar packages.
+//   ExportDialog     — only ever opened from the Export action.
+// ssr:false because both are browser-only anyway (this is a "use client" page).
+const ScheduleCalendar = dynamic(
+  () => import("@/components/schedule/schedule-calendar").then((m) => m.ScheduleCalendar),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-64 items-center justify-center rounded-lg border border-border text-sm text-muted-foreground">
+        Loading calendar…
+      </div>
+    ),
+  }
+)
+const ExportDialog = dynamic(
+  () => import("@/components/schedule/export-dialog").then((m) => m.ExportDialog),
+  { ssr: false }
+)
 import { useCollege } from "@/lib/college-context"
 import { DAY_LABELS } from "@/lib/constants"
 
@@ -251,7 +272,12 @@ export default function SchedulesPage() {
   const scheduleCollegeFilter = isSuperAdmin ? undefined : selectedCollegeId
 
   const { data: activeSchedules = [], isLoading: loadingActive } = useSchedules(undefined, false, scheduleCollegeFilter)
-  const { data: archivedSchedules = [], isLoading: loadingArchived } = useSchedules(undefined, true, scheduleCollegeFilter)
+  // Archived schedules are behind their own tab, but this fired on every visit to
+  // the page — a second full schedules request nobody had asked to see yet. It now
+  // loads the first time that tab is opened, and React Query keeps it cached after.
+  const { data: archivedSchedules = [], isLoading: loadingArchived } = useSchedules(
+    undefined, true, scheduleCollegeFilter, { enabled: tab === "archived" }
+  )
   const { data: selectedSchedule, isLoading: loadingSchedule } = useSchedule(selectedScheduleId)
   const queryClient = useQueryClient()
   // Tracks which Mark-Resolved PATCH is in flight (per-item spinner)

@@ -223,19 +223,11 @@ export function WorkflowActions({
     if (status === 'DRAFT') {
       // Own (CAS) schedule: no Program Chair to wait on — generate cluster
       // majors/GEC and publish directly, same as before.
+      // Own (CAS) schedule: nothing to announce. The banner that used to sit here
+      // only restated what the Generate Schedule / Publish Schedule buttons in the
+      // toolbar already say, so it was pure vertical noise above the schedule.
       if (isOwnSchedule) {
-        return (
-          <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            <BookOpen className="h-4 w-4 shrink-0 mt-0.5 text-blue-600" />
-            <div>
-              <p className="font-medium">GEC/PATHFIT Assignment</p>
-              <p className="mt-0.5 text-blue-700">
-                Use <strong>Generate Schedule</strong> to auto-assign your department&apos;s GEC/PATHFIT subjects,
-                then click <strong>Publish Schedule</strong> in the toolbar above when ready.
-              </p>
-            </div>
-          </div>
-        )
+        return null
       }
       // Another college's schedule: the Dept Chair generates GEC/GEL into it
       // directly — NOT gated on that college's Program Chair submitting first

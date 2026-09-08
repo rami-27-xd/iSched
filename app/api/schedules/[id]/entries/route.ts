@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
-import { validateEntry, validateEntryCapacity } from "@/lib/services/entry-validation"
+import { validateEntry, validateEntryCapacity, stripConflictMarker } from "@/lib/services/entry-validation"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 
@@ -147,7 +147,7 @@ export async function POST(
         set: body.set ?? null,
       })
       if (validationError) {
-        return NextResponse.json(apiError(validationError), { status: 409 })
+        return NextResponse.json(apiError(stripConflictMarker(validationError)), { status: 409 })
       }
     }
 

@@ -25,6 +25,44 @@ function timesOverlap(s1: string, e1: string, s2: string, e2: string): boolean {
 }
 
 /**
+ * Marker prefix on conflicts that describe a PHYSICAL impossibility — one faculty
+ * member or one room occupied twice at the same moment. Unlike the capacity rules
+ * (weekly units, daily load), these are not judgment calls a chair may knowingly
+ * accept, so `force: true` must not override them. The prefix is stripped before
+ * the message reaches the user.
+ *
+ * Why a marker rather than a structured return: validateEntry returns
+ * `string | null` and is called from several routes; threading a new result type
+ * through all of them would be a much larger change than this problem warrants.
+ */
+export const HARD_CONFLICT_PREFIX = "[HARD]"
+
+/** True when this error must block even a force-save. */
+export function isHardConflict(message: string | null | undefined): boolean {
+  return typeof message === "string" && message.startsWith(HARD_CONFLICT_PREFIX)
+}
+
+/** Strips the internal marker so the message can be shown to a user. */
+export function stripConflictMarker(message: string): string {
+  return message.startsWith(HARD_CONFLICT_PREFIX)
+    ? message.slice(HARD_CONFLICT_PREFIX.length).trimStart()
+    : message
+}
+
+/**
+ * " (CIT)" when the conflicting entry lives in another department's schedule,
+ * "" when it is in this one (naming your own department adds nothing).
+ */
+function whereClause(
+  currentScheduleId: string,
+  conflicting: { scheduleId?: string; schedule?: { department?: { abbreviation?: string | null } | null } | null }
+): string {
+  if (!conflicting.scheduleId || conflicting.scheduleId === currentScheduleId) return ""
+  const abbr = conflicting.schedule?.department?.abbreviation
+  return abbr ? ` in the ${abbr} schedule` : " in another department's schedule"
+}
+
+/**
  * Validate a schedule entry against all constraints.
  * Returns null if valid, or an error message string if invalid.
  * Checks existing entries in the same schedule to detect overlaps.
@@ -55,6 +93,7 @@ export async function validateEntry(
         ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
       },
       select: {
+        scheduleId: true,
         facultyId: true,
         roomId: true,
         sectionId: true,
@@ -66,6 +105,7 @@ export async function validateEntry(
         faculty: { select: { user: { select: { firstName: true, lastName: true } } } },
         room: { select: { code: true } },
         section: { select: { name: true } },
+        schedule: { select: { department: { select: { abbreviation: true } } } },
       },
     }),
     // ALL entries across non-archived schedules in the same semester —
@@ -78,6 +118,7 @@ export async function validateEntry(
             ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
           },
           select: {
+            scheduleId: true,
             facultyId: true,
             roomId: true,
             sectionId: true,
@@ -89,6 +130,7 @@ export async function validateEntry(
             faculty: { select: { user: { select: { firstName: true, lastName: true } } } },
             room: { select: { code: true } },
             section: { select: { name: true } },
+            schedule: { select: { department: { select: { abbreviation: true } } } },
           },
         })
       : Promise.resolve([]),
@@ -248,7 +290,10 @@ export async function validateEntry(
   )
   if (facultyConflict) {
     const fname = `${facultyConflict.faculty?.user?.lastName ?? ""}, ${facultyConflict.faculty?.user?.firstName ?? ""}`
-    return `Faculty conflict: ${fname} is already assigned to "${facultyConflict.subject?.code}" on ${entry.day} (${facultyConflict.startTime}-${facultyConflict.endTime})`
+    // Name the owning department when the clash is in a DIFFERENT schedule. That
+    // schedule may belong to a college this chair cannot open, so without it the
+    // block reads as unexplainable — the class it names is nowhere they can see.
+    return `${HARD_CONFLICT_PREFIX}Faculty conflict: ${fname} is already assigned to "${facultyConflict.subject?.code}"${whereClause(scheduleId, facultyConflict)} on ${entry.day} (${facultyConflict.startTime}-${facultyConflict.endTime})`
   }
 
   // 2. Room overlap — same room, same day, overlapping times (checked globally
@@ -260,7 +305,7 @@ export async function validateEntry(
       timesOverlap(e.startTime, e.endTime, entry.startTime, entry.endTime)
   )
   if (roomConflict) {
-    return `Room conflict: ${roomConflict.room?.code ?? "Room"} is already booked on ${entry.day} (${roomConflict.startTime}-${roomConflict.endTime}) for "${roomConflict.subject?.code}"`
+    return `${HARD_CONFLICT_PREFIX}Room conflict: ${roomConflict.room?.code ?? "Room"} is already booked on ${entry.day} (${roomConflict.startTime}-${roomConflict.endTime}) for "${roomConflict.subject?.code}"${whereClause(scheduleId, roomConflict)}`
   }
 
   // 3. Section overlap — same section, same day, overlapping times (within schedule only —
