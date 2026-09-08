@@ -204,8 +204,17 @@ export default function CoursesPage() {
   }
 
   async function handleSubjectSubmit() {
-    const { code, title, type, departmentId, yearLevelId, year, semester } = subjectForm
+    const { code, title, type, departmentId, yearLevelId, year, semester, units } = subjectForm
     if (!code || !title || !type || !departmentId) return toast.error("Fill in all required fields")
+
+    // Units is held as a string so the field can actually be emptied while typing
+    // (a numeric state would coerce "" back to 0 and make the default impossible to
+    // backspace). That means the emptied value has to be rejected here — otherwise
+    // PATCH turned "" into 0 units and saved it silently.
+    const unitsValue = Number(units)
+    if (String(units).trim() === "" || !Number.isFinite(unitsValue) || unitsValue <= 0) {
+      return toast.error("Units must be a number greater than 0")
+    }
 
     // ── Auto-align yearLevelId to match the selected year ───────────────────
     // If yearLevelId doesn't match the chosen year, find the correct one
@@ -279,8 +288,12 @@ export default function CoursesPage() {
   }
 
   async function handleSectionSubmit() {
-    const { name, yearLevelId } = sectionForm
+    const { name, yearLevelId, capacity } = sectionForm
     if (!name || !yearLevelId) return toast.error("Fill in all required fields")
+    const capacityValue = Number(capacity)
+    if (String(capacity).trim() === "" || !Number.isFinite(capacityValue) || capacityValue <= 0) {
+      return toast.error("Capacity must be a number greater than 0")
+    }
     try {
       if (editSectionTarget) {
         await updateSection.mutateAsync({ id: editSectionTarget.id, ...sectionForm, capacity: Number(sectionForm.capacity) })
@@ -614,7 +627,14 @@ export default function CoursesPage() {
               </div>
               <div className="grid gap-2">
                 <Label>Units</Label>
-                <Input type="number" value={subjectForm.units} onChange={(e) => setSubjectForm(f => ({ ...f, units: e.target.value }))} />
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  placeholder="e.g. 3"
+                  value={subjectForm.units}
+                  onChange={(e) => setSubjectForm(f => ({ ...f, units: e.target.value }))}
+                />
               </div>
             </div>
             <div className="grid gap-2">
@@ -679,7 +699,14 @@ export default function CoursesPage() {
             </div>
             <div className="grid gap-2">
               <Label>Capacity</Label>
-              <Input type="number" value={sectionForm.capacity} onChange={(e) => setSectionForm(f => ({ ...f, capacity: e.target.value }))} />
+              <Input
+                type="number"
+                min={1}
+                step={1}
+                placeholder="e.g. 40"
+                value={sectionForm.capacity}
+                onChange={(e) => setSectionForm(f => ({ ...f, capacity: e.target.value }))}
+              />
             </div>
             {editSectionTarget && (
               <Button variant="destructive" size="sm" onClick={() => setDeleteSectionTarget(editSectionTarget)}>

@@ -124,6 +124,35 @@ export function useUpdateSchedule() {
 }
 
 // ---------- Archive/unarchive schedule ----------
+// Correct the semester / school year / dates on a DRAFT schedule, so a typo does
+// not mean deleting the schedule and re-entering everything.
+export function useUpdateScheduleTerm() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (vars: {
+      scheduleId: string
+      semesterType: string
+      schoolYear: string
+      startDate: string
+      endDate: string
+    }) => {
+      const { scheduleId, ...rest } = vars
+      const { json } = await rawFetch(`/api/schedules/${scheduleId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update-term", ...rest }),
+      })
+      if (json.error) throw new Error(json.error)
+      return json.data
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["schedules"] })
+      queryClient.invalidateQueries({ queryKey: ["schedules", vars.scheduleId] })
+    },
+  })
+}
+
 export function useArchiveSchedule() {
   const queryClient = useQueryClient()
 
@@ -319,7 +348,8 @@ export function useFaculty(departmentId?: string, opts?: { enabled?: boolean }) 
       if (departmentId) params.set("departmentId", departmentId)
       return safeFetch<any[]>(`/api/faculty?${params}`)
     },
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    refetchOnMount: "always" as const,
     enabled: opts?.enabled ?? true,
   })
 }
@@ -333,7 +363,8 @@ export function useRooms(type?: string, opts?: { enabled?: boolean }) {
       if (type) params.set("type", type)
       return safeFetch<any[]>(`/api/rooms?${params}`)
     },
-    staleTime: 1000 * 60 * 5,
+    staleTime: 0,
+    refetchOnMount: "always" as const,
     enabled: opts?.enabled ?? true,
   })
 }

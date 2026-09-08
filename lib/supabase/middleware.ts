@@ -45,6 +45,11 @@ export async function updateSession(request: NextRequest) {
     pathname === '/' ||
     isAuthRoute ||
     pathname.startsWith('/auth/callback') ||
+    // Signing out must never be gated on being signed in. Without this, a POST to
+    // /auth/sign-out from an already-expired session was redirected here with a 307,
+    // which preserves the method — so the browser POSTed to /sign-in, a page with no
+    // POST handler, and the user got a 405 error screen instead of the landing page.
+    pathname.startsWith('/auth/sign-out') ||
     pathname.startsWith('/forgot-password') ||
     pathname.startsWith('/reset-password')
 

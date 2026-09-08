@@ -533,14 +533,14 @@ export default function AvailabilityPage() {
 
   // Add faculty dialog
   const [addOpen, setAddOpen] = useState(false)
-  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", email: "", employeeId: "", maxUnitsPerWeek: 21 })
+  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21 as number | string })
 
   // Edit faculty dialog
   const [editOpen, setEditOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
   // Faculty pending deactivation — drives the confirm dialog below.
   const [deactivateTarget, setDeactivateTarget] = useState<any>(null)
-  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", maxUnitsPerWeek: 21 })
+  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", maxUnitsPerWeek: 21 as number | string })
 
   // ── Faculty availability data ──
   const { data: allAvailability = [], isLoading: loadingAvailability } = useQuery({
@@ -614,7 +614,7 @@ export default function AvailabilityPage() {
 
   // ── Add faculty handler ──
   async function handleAddFaculty() {
-    const { firstName, lastName, email, employeeId, maxUnitsPerWeek } = addForm
+    const { firstName, lastName, employeeId, maxUnitsPerWeek } = addForm
     if (!firstName.trim()) return toast.error("First name is required")
     if (!lastName.trim()) return toast.error("Last name is required")
 
@@ -625,13 +625,12 @@ export default function AvailabilityPage() {
       await createFaculty.mutateAsync({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        ...(email.trim() ? { email: email.trim().toLowerCase() } : {}),
         ...(employeeId.trim() ? { employeeId: employeeId.trim() } : {}),
         departmentId,
-        maxUnitsPerWeek,
+        maxUnitsPerWeek: Number(maxUnitsPerWeek) || 21,
       })
       setAddOpen(false)
-      setAddForm({ firstName: "", lastName: "", email: "", employeeId: "", maxUnitsPerWeek: 21 })
+      setAddForm({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21 })
     } catch (err: any) {
       toast.error(err.message)
     }
@@ -658,7 +657,7 @@ export default function AvailabilityPage() {
         id: editTarget.id,
         firstName: editForm.firstName.trim(),
         lastName: editForm.lastName.trim(),
-        maxUnitsPerWeek: editForm.maxUnitsPerWeek,
+        maxUnitsPerWeek: Number(editForm.maxUnitsPerWeek) || 21,
       })
       setEditOpen(false)
       setEditTarget(null)
@@ -834,22 +833,6 @@ export default function AvailabilityPage() {
             </div>
             <div className="grid gap-2">
               <Label>
-                Email Address
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">(optional)</span>
-              </Label>
-              <Input
-                type="email"
-                placeholder="e.g. juan.santos@slsu.edu.ph"
-                value={addForm.email}
-                onChange={(e) => setAddForm(f => ({ ...f, email: e.target.value }))}
-              />
-              <p className="text-[11px] text-muted-foreground leading-snug">
-                Optional — stored for records only (faculty do not log in).
-                Leave blank to create a record-only entry with no login access.
-              </p>
-            </div>
-            <div className="grid gap-2">
-              <Label>
                 Employee ID
                 <span className="ml-1.5 text-xs font-normal text-muted-foreground">(optional — auto-generated if blank)</span>
               </Label>
@@ -866,7 +849,7 @@ export default function AvailabilityPage() {
                 min={1}
                 max={40}
                 value={addForm.maxUnitsPerWeek}
-                onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: Number(e.target.value) }))}
+                onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
               />
             </div>
           </div>
@@ -910,7 +893,7 @@ export default function AvailabilityPage() {
                 min={1}
                 max={40}
                 value={editForm.maxUnitsPerWeek}
-                onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: Number(e.target.value) }))}
+                onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
               />
             </div>
           </div>

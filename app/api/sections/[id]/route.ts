@@ -33,6 +33,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const body = await req.json()
     const { name, capacity } = body
 
+    // "" from an emptied number field becomes 0 under Number(); a 0-seat section is
+    // never intended, so reject it rather than storing it.
+    if (capacity !== undefined) {
+      const capacityValue = Number(capacity)
+      if (String(capacity).trim() === "" || !Number.isFinite(capacityValue) || capacityValue <= 0) {
+        return NextResponse.json(apiError("Capacity must be a number greater than 0"), { status: 400 })
+      }
+    }
+
     const section = await db.section.update({
       where: { id },
       data: {

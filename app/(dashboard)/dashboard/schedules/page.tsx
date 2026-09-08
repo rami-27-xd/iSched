@@ -58,6 +58,7 @@ import {
   Search,
   X,
   Workflow,
+  Rows3,
   ChevronDown,
   ChevronUp,
 } from "lucide-react"
@@ -67,6 +68,7 @@ import {
   useSchedule,
   useCreateSchedule,
   useGenerateSchedule,
+  useUpdateScheduleTerm,
   useCreateEntry,
   useUpdateEntry,
   useDeleteEntry,
@@ -139,6 +141,9 @@ export default function SchedulesPage() {
   // ── Supabase Realtime: live updates when other users add/edit/delete entries ──
   useRealtimeSchedules(selectedScheduleId)
   const [createOpen, setCreateOpen] = useState(false)
+  // Term correction on a DRAFT schedule — see the Edit Term dialog below.
+  const [editTermOpen, setEditTermOpen] = useState(false)
+  const [termForm, setTermForm] = useState({ semesterType: "", schoolYear: "", startDate: "", endDate: "" })
   const [generateOpen, setGenerateOpen] = useState(false)
   const [addEntryOpen, setAddEntryOpen] = useState(false)
   const [editEntryOpen, setEditEntryOpen] = useState(false)
@@ -313,8 +318,14 @@ export default function SchedulesPage() {
   // Sole room source for the Add/Edit Entry dialogs — /api/rooms already returns
   // every room when the department has no building restrictions, so a separate
   // unscoped useRooms() call would just duplicate this same payload.
+  // Key starts with "rooms" on purpose: useCreateRoom/useUpdateRoom invalidate
+  // ["rooms"], and React Query matches keys by prefix element-for-element — the old
+  // "rooms-by-department" key was a different first element, so it was never
+  // invalidated and a room added on the Rooms page stayed missing from this dropdown
+  // until a hard refresh. staleTime 0 covers the same case for buildings, whose
+  // restrictions change which rooms this endpoint returns.
   const { data: departmentRooms = [] } = useQuery({
-    queryKey: ["rooms-by-department", scheduleDeptId],
+    queryKey: ["rooms", "by-department", scheduleDeptId],
     queryFn: async () => {
       const url = scheduleDeptId ? `/api/rooms?departmentId=${scheduleDeptId}` : "/api/rooms"
       const res = await fetch(url)
@@ -323,7 +334,8 @@ export default function SchedulesPage() {
       return json.data ?? []
     },
     enabled: entryDialogOpen,
-    staleTime: 60_000,
+    staleTime: 0,
+    refetchOnMount: "always",
   })
 
   // Fetch availability for the selected faculty (for time slot filtering in Add
@@ -932,6 +944,7 @@ export default function SchedulesPage() {
   // creating one for a department that has no schedule yet.
   const { data: allDepartments = [] } = useDepartments()
   const generateSchedule = useGenerateSchedule()
+  const updateTerm = useUpdateScheduleTerm()
   const createEntry = useCreateEntry()
   const updateEntry = useUpdateEntry()
   const deleteEntry = useDeleteEntry()
@@ -1238,6 +1251,18 @@ export default function SchedulesPage() {
     })
   }, [filteredEntries])
 
+  // Flat, week-ordered rows for the Table view. Uses the same collapsed grouping as
+  // the List so an MWF class is one row, not three, then sorts by day-of-week and
+  // start time — the order someone reads a printed timetable in.
+  const tableEntries = useMemo(() => {
+    const dayIndex = (d: string) => { const i = DAYS.indexOf(d as any); return i === -1 ? 99 : i }
+    return [...groupedFilteredEntries].sort((a: any, b: any) =>
+      dayIndex(a.day) - dayIndex(b.day) ||
+      a.startTime.localeCompare(b.startTime) ||
+      (a.subject?.code ?? "").localeCompare(b.subject?.code ?? "")
+    )
+  }, [groupedFilteredEntries])
+
   // Unique faculty/sections/rooms in current schedule for filter dropdowns
   const entryFacultyOptions = useMemo(() => {
     const map = new Map<string, string>()
@@ -1456,14 +1481,50 @@ export default function SchedulesPage() {
         },
       })
       setAddEntryOpen(false)
-      setEntryForm({ subjectId: "", facultyId: "", facultyName: "", roomId: "", sectionId: "", day: "", startTime: "", endTime: "", set: "" })
-      setDayPattern("single")
-      setCustomDays([])
-      setFacultySearch("")
+      resetEntryForm()
       toast.success(patternDays.length > 1 ? `Entry added on ${patternDays.length} days` : "Entry added")
     } catch (err: any) {
       toast.error(err.message)
     }
+  }
+
+  // Clears every field the Add Entry dialog owns. Called on a successful save AND
+  // whenever the dialog closes — previously only the save path reset, so cancelling
+  // left the last section/subject/faculty selected and they reappeared on reopen.
+  // Seeds the edit dialog from whatever the schedule currently says, so the chair
+  // corrects one wrong field instead of retyping the term.
+  function openEditTerm() {
+    const sem = selectedSchedule?.semester
+    setTermForm({
+      semesterType: sem?.type ?? "",
+      schoolYear: sem?.academicYear?.label ?? "",
+      startDate: sem?.startDate ? String(sem.startDate).slice(0, 10) : "",
+      endDate: sem?.endDate ? String(sem.endDate).slice(0, 10) : "",
+    })
+    setEditTermOpen(true)
+  }
+
+  async function handleUpdateTerm() {
+    if (!selectedScheduleId) return
+    try {
+      await updateTerm.mutateAsync({ scheduleId: selectedScheduleId, ...termForm })
+      setEditTermOpen(false)
+      toast.success("Schedule term updated")
+    } catch (err: any) {
+      toast.error(err.message)
+    }
+  }
+
+  function resetEntryForm() {
+    setEntryForm({ subjectId: "", facultyId: "", facultyName: "", roomId: "", sectionId: "", day: "", startTime: "", endTime: "", set: "" })
+    setDayPattern("single")
+    setCustomDays([])
+    setFacultySearch("")
+    setSectionSearch("")
+    // The two comboboxes keep their own open/closed flag. Left set, a dialog closed
+    // with a dropdown open reopened with that dropdown still hanging over the form.
+    setFacultyDropdownOpen(false)
+    setSectionDropdownOpen(false)
   }
 
   function handleOpenEditEntry(entryId: string) {
@@ -2158,16 +2219,32 @@ export default function SchedulesPage() {
                     live in the page's ⋯ action menu. */}
                 <div className="flex flex-wrap items-center gap-3">
                   {selectedSchedule?.semester?.startDate && selectedSchedule?.semester?.endDate && (
-                    <p className="shrink-0 text-sm text-muted-foreground">
+                    <p className="flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground">
                       {new Date(selectedSchedule.semester.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                       {" \u2014 "}
                       {new Date(selectedSchedule.semester.endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      {/* Correct a mistyped semester, school year or date without deleting
+                          the schedule and re-entering everything. Drafts only \u2014 the API
+                          refuses once the schedule has been submitted or published. */}
+                      {isDraft && canArchiveOrDelete && (
+                        <button
+                          onClick={openEditTerm}
+                          title="Edit semester, school year and dates"
+                          className="rounded p-1 text-[#1B4332] transition-colors hover:bg-[#1B4332]/10"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </p>
                   )}
                   <TabsList className="shrink-0">
                     <TabsTrigger value="list">
                       <Filter className="mr-1.5 h-3.5 w-3.5" />
                       List
+                    </TabsTrigger>
+                    <TabsTrigger value="table">
+                      <Rows3 className="mr-1.5 h-3.5 w-3.5" />
+                      Table
                     </TabsTrigger>
                     <TabsTrigger value="calendar">
                       <CalendarDays className="mr-1.5 h-3.5 w-3.5" />
@@ -2358,6 +2435,98 @@ export default function SchedulesPage() {
                   )}
                 </TabsContent>
 
+                <TabsContent value="table" className="mt-4">
+                  {/* Table view — the same entries as the List, but as a scannable
+                      grid. The List groups by day into cards, which reads well for a
+                      light schedule and poorly for a dense one; this sorts flat by day
+                      then start time so a whole week is comparable at a glance. */}
+                  {entries.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+                      No entries yet. Use &ldquo;Add Entry&rdquo; to add one manually, or &ldquo;Generate Schedule&rdquo; to auto-assign.
+                    </div>
+                  ) : filteredEntries.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+                      No entries match your search/filter criteria.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border border-border">
+                      <table className="w-full min-w-[820px] border-collapse text-sm">
+                        <thead>
+                          <tr className="bg-muted/50 text-left">
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Day</th>
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Time</th>
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Code</th>
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Subject</th>
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Faculty</th>
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Room</th>
+                            <th className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Section</th>
+                            <th className="w-16 px-3 py-2"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableEntries.map((entry: any) => (
+                            <tr
+                              key={entry.id}
+                              className={`border-t border-border transition-colors hover:bg-muted/40 ${canEditEntry(entry) ? "cursor-pointer" : ""}`}
+                              onClick={() => { if (canEditEntry(entry)) handleOpenEditEntry(entry.id) }}
+                            >
+                              <td className="whitespace-nowrap px-3 py-2">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span className={`inline-block h-2 w-2 rounded-full ${entry.subject?.type === "LABORATORY" ? "bg-[#2D6A4F]" : "bg-[#1B4332]"}`} />
+                                  {entry.__groupSize > 1
+                                    ? entry.__groupDayLabel
+                                    : entry.day.charAt(0) + entry.day.slice(1).toLowerCase()}
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums">
+                                {entry.startTime}–{entry.endTime}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 font-semibold">
+                                {entry.subject?.code}
+                                {entry.set && (
+                                  <span className="ml-1 rounded bg-[#1B4332]/10 px-1 py-0.5 text-[9px] font-semibold text-[#1B4332]">
+                                    Set {entry.set}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="max-w-[220px] truncate px-3 py-2 text-muted-foreground" title={entry.subject?.title}>
+                                {entry.subject?.title}
+                              </td>
+                              <td className="max-w-[160px] truncate px-3 py-2">
+                                {entry.facultyName ||
+                                  `${entry.faculty?.user?.firstName ?? ""} ${entry.faculty?.user?.lastName ?? ""}`.trim() ||
+                                  "—"}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{entry.room?.code}</td>
+                              <td className="whitespace-nowrap px-3 py-2">{entry.section?.name}</td>
+                              <td className="px-3 py-2">
+                                {canEditEntry(entry) && (
+                                  <div className="flex items-center justify-end gap-0.5">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleOpenEditEntry(entry.id) }}
+                                      className="rounded p-1 text-[#1B4332] transition-colors hover:bg-[#1B4332]/10"
+                                      title="Edit entry"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); setDeleteEntryId(entry.id) }}
+                                      className="rounded p-1 text-red-600 transition-colors hover:bg-red-50"
+                                      title="Delete entry"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </TabsContent>
+
                 <TabsContent value="calendar" className="mt-4 space-y-3">
                   <ScheduleCalendar
                     entries={calendarEntries}
@@ -2478,8 +2647,81 @@ export default function SchedulesPage() {
         </DialogContent>
       </Dialog>
 
+
+      {/* Edit Term Dialog — corrects the semester / school year / dates on a DRAFT
+          schedule. Without this, a mistyped academic year meant deleting the whole
+          schedule and re-entering every entry. */}
+      <Dialog open={editTermOpen} onOpenChange={setEditTermOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit schedule term</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid gap-2">
+              <Label>Semester</Label>
+              <select
+                value={termForm.semesterType}
+                onChange={(e) => setTermForm((f) => ({ ...f, semesterType: e.target.value }))}
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Select semester</option>
+                <option value="FIRST">1st Semester</option>
+                <option value="SECOND">2nd Semester</option>
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <Label>School Year</Label>
+              <Input
+                placeholder="e.g. 2025-2026"
+                value={termForm.schoolYear}
+                onChange={(e) => setTermForm((f) => ({ ...f, schoolYear: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label>Start Date</Label>
+                <Input
+                  type="date"
+                  value={termForm.startDate}
+                  onChange={(e) => setTermForm((f) => ({ ...f, startDate: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>End Date</Label>
+                <Input
+                  type="date"
+                  value={termForm.endDate}
+                  onChange={(e) => setTermForm((f) => ({ ...f, endDate: e.target.value }))}
+                />
+              </div>
+            </div>
+            <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-800">
+              A semester&apos;s dates are shared by every department scheduling that term — changing
+              them here updates the term itself, not just this schedule. Only available while the
+              schedule is a draft.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTermOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleUpdateTerm}
+              disabled={
+                updateTerm.isPending ||
+                !termForm.semesterType || !termForm.schoolYear || !termForm.startDate || !termForm.endDate
+              }
+            >
+              {updateTerm.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Add Entry Dialog — using native selects to properly display labels */}
-      <Dialog open={addEntryOpen} onOpenChange={setAddEntryOpen}>
+      <Dialog
+        open={addEntryOpen}
+        onOpenChange={(o) => { setAddEntryOpen(o); if (!o) resetEntryForm() }}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Add Schedule Entry</DialogTitle>
@@ -2866,7 +3108,7 @@ export default function SchedulesPage() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddEntryOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setAddEntryOpen(false); resetEntryForm() }}>Cancel</Button>
             <Button onClick={handleAddEntry} disabled={createEntry.isPending}>
               {createEntry.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Add Entry

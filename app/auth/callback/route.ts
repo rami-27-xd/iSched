@@ -3,13 +3,34 @@ import { createClient } from '@/lib/supabase/server'
 import { ensureDbUser } from '@/lib/auth'
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url)
+  const url = new URL(request.url)
+  const searchParams = url.searchParams
   const code = searchParams.get('code')
+
+  // Behind Vercel's proxy, request.url carries the internal host, so redirecting
+  // to its origin sent the browser somewhere that isn't the site the user is on —
+  // OAuth then "worked" locally and dead-ended in production. Trust the forwarded
+  // headers the platform sets, and only fall back to the raw origin locally.
+  const forwardedHost = request.headers.get('x-forwarded-host')
+  const forwardedProto = request.headers.get('x-forwarded-proto') ?? 'https'
+  const origin = forwardedHost ? `${forwardedProto}://${forwardedHost}` : url.origin
 
   // Forwarded from sign-up page for Google OAuth: role + optional department/program
   const role = searchParams.get('role')
   const departmentId = searchParams.get('department_id')
   const programId = searchParams.get('program_id')
+
+  // Google/Supabase report a refused or cancelled consent by redirecting back here
+  // with ?error=..., not with a code. Reporting that as "missing_code" told the user
+  // the wrong thing, so pass the real reason through to the sign-in page.
+  const providerError = searchParams.get('error')
+  const providerErrorDescription = searchParams.get('error_description')
+  if (providerError) {
+    console.error('[auth/callback] provider error:', providerError, providerErrorDescription)
+    const params = new URLSearchParams({ error: 'provider_error' })
+    if (providerErrorDescription) params.set('error_description', providerErrorDescription)
+    return NextResponse.redirect(`${origin}/sign-in?${params.toString()}`)
+  }
 
   if (!code) {
     return NextResponse.redirect(`${origin}/sign-in?error=missing_code`)

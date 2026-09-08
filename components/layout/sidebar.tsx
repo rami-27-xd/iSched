@@ -104,13 +104,15 @@ export function Sidebar({ userRole, userName, userEmail, collapsed = false, onTo
           ? 'h-16 flex-col justify-center gap-1 px-2'
           : 'h-16 flex-row justify-between px-4'
       )}>
-        {/* Logo */}
-        <div className={cn('flex items-center gap-2.5 min-w-0', collapsed && 'justify-center')}>
-          <Logo size="sm" className="rounded-full shrink-0" />
-          {!collapsed && (
+        {/* Logo — hidden when the sidebar is collapsed. At 44px the mark crowds
+            the narrow rail and leaves no room for the expand control, so the
+            collapsed state drops it entirely rather than shrinking it. */}
+        {!collapsed && (
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Logo size="sm" className="rounded-full shrink-0" />
             <span className="text-base font-bold text-sidebar-foreground tracking-wide truncate">iSched</span>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Toggle button — desktop only */}
         {onToggleCollapse && (

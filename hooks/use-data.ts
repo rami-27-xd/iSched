@@ -22,6 +22,8 @@ export function useBuildings() {
   return useQuery({
     queryKey: ["buildings"],
     queryFn: () => apiFetch<any[]>("/api/buildings"),
+    staleTime: 0,
+    refetchOnMount: "always" as const,
   })
 }
 
@@ -36,6 +38,10 @@ export function useCreateBuilding() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["buildings"] })
+      // A building's department restrictions decide which rooms /api/rooms returns
+      // for a department, so every room list downstream (schedule Add Entry included)
+      // is stale the moment a building changes.
+      queryClient.invalidateQueries({ queryKey: ["rooms"] })
       toast.success("Building created")
     },
     onError: (err: Error) => toast.error(err.message),
@@ -53,6 +59,7 @@ export function useUpdateBuilding() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["buildings"] })
+      queryClient.invalidateQueries({ queryKey: ["rooms"] })
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -90,6 +97,8 @@ export function useSubjects(params?: { departmentId?: string; type?: string; sem
   return useQuery({
     queryKey: ["subjects", filterParams],
     queryFn: () => apiFetch<any[]>(`/api/subjects?${query}`),
+    staleTime: 0,
+    refetchOnMount: "always" as const,
     enabled: enabled ?? true,
   })
 }
@@ -155,6 +164,8 @@ export function useSections(params?: { programId?: string; yearLevelId?: string;
   return useQuery({
     queryKey: ["sections", filterParams],
     queryFn: () => apiFetch<any[]>(`/api/sections?${query}`),
+    staleTime: 0,
+    refetchOnMount: "always" as const,
     enabled: enabled ?? true,
   })
 }
@@ -290,6 +301,8 @@ export function useRoomList(params?: { type?: string; buildingId?: string }) {
   return useQuery({
     queryKey: ["rooms", params],
     queryFn: () => apiFetch<any[]>(`/api/rooms?${query}`),
+    staleTime: 0,
+    refetchOnMount: "always" as const,
   })
 }
 

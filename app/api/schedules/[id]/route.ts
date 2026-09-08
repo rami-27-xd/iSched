@@ -139,6 +139,107 @@ export async function PATCH(
       return NextResponse.json(apiResponse(schedule))
     }
 
+    // Correct the term on a DRAFT schedule — semester, academic year, and dates.
+    // Previously the only way to fix a typo in the school year or a wrong start
+    // date was to delete the schedule and start over, losing every entry.
+    if (body.action === "update-term") {
+      if (!ownsSchedule) {
+        return NextResponse.json(apiError("You can only edit schedules in your own department"), { status: 403 })
+      }
+
+      const schedule = await db.schedule.findUnique({
+        where: { id },
+        select: { status: true, departmentId: true, semesterId: true },
+      })
+      if (!schedule) return NextResponse.json(apiError("Schedule not found"), { status: 404 })
+      // Only while it is still a draft — once submitted or published, other people
+      // are reading these dates.
+      if (schedule.status !== "DRAFT") {
+        return NextResponse.json(
+          apiError(`The term can only be changed while the schedule is a draft (this one is ${schedule.status}).`),
+          { status: 400 }
+        )
+      }
+
+      const { semesterType, schoolYear, startDate: startStr, endDate: endStr } = body
+      if (!semesterType || !schoolYear || !startStr || !endStr) {
+        return NextResponse.json(apiError("Semester, school year, start date and end date are all required"), { status: 400 })
+      }
+
+      // Same school-year validation the create route applies.
+      const normalized = String(schoolYear).trim().replace(/[\s_]+/, "-")
+      const m = normalized.match(/^(\d{4})-(\d{4})$/)
+      if (!m) {
+        return NextResponse.json(apiError("School year must look like 2025-2026"), { status: 400 })
+      }
+      const startYear = Number(m[1])
+      const endYear = Number(m[2])
+      if (endYear !== startYear + 1) {
+        return NextResponse.json(apiError("School year must span two consecutive years, e.g. 2025-2026"), { status: 400 })
+      }
+      if (new Date(startStr) >= new Date(endStr)) {
+        return NextResponse.json(apiError("End date must be after the start date"), { status: 400 })
+      }
+
+      let academicYear = await db.academicYear.findUnique({ where: { label: normalized } })
+      if (!academicYear) {
+        academicYear = await db.academicYear.create({
+          data: { label: normalized, startYear, endYear, isCurrent: false },
+        })
+      }
+
+      let semester = await db.semester.findUnique({
+        where: { type_academicYearId: { type: semesterType, academicYearId: academicYear.id } },
+      })
+
+      // Moving to a different term? Re-apply the create route's guard so editing
+      // can't sidestep the "this year is already fully scheduled" rule.
+      if (!semester || semester.id !== schedule.semesterId) {
+        const covered = await db.schedule.findMany({
+          where: {
+            departmentId: schedule.departmentId,
+            isArchived: false,
+            id: { not: id },
+            semester: { academicYearId: academicYear.id },
+          },
+          select: { semester: { select: { type: true } } },
+        })
+        if (covered.some((s: any) => s.semester?.type === semesterType)) {
+          return NextResponse.json(
+            apiError(`This department already has a ${semesterType === "FIRST" ? "1st" : semesterType === "SECOND" ? "2nd" : "Summer"} semester schedule for ${normalized}.`),
+            { status: 409 }
+          )
+        }
+      }
+
+      if (!semester) {
+        semester = await db.semester.create({
+          data: {
+            type: semesterType,
+            academicYearId: academicYear.id,
+            startDate: new Date(startStr),
+            endDate: new Date(endStr),
+            isActive: false,
+          },
+        })
+      } else {
+        // The Semester row is shared by every department scheduling that term, so
+        // a date correction here applies to all of them — which is right, a term
+        // has one set of dates.
+        semester = await db.semester.update({
+          where: { id: semester.id },
+          data: { startDate: new Date(startStr), endDate: new Date(endStr) },
+        })
+      }
+
+      const updated = await db.schedule.update({
+        where: { id },
+        data: { semesterId: semester.id },
+        include: { semester: { include: { academicYear: true } } },
+      })
+      return NextResponse.json(apiResponse(updated))
+    }
+
     // Everything below (unpublish, approval-status changes) stays Department-Chair-only.
     if (!isSuperAdmin) {
       return NextResponse.json(

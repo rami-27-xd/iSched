@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { PageHeader } from "@/components/shared/page-header"
+import { FacultyRequestsPanel } from "@/components/faculty/faculty-requests-panel"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -248,9 +249,6 @@ function MobileFacultyList({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="font-semibold text-sm truncate">{f.user?.firstName} {f.user?.lastName}</p>
-                      {f.user?.email && !f.user.email.endsWith('@faculty.slsu.edu.ph') && !f.user.email.endsWith('@stub.local') && (
-                        <p className="text-xs text-muted-foreground truncate">{f.user.email}</p>
-                      )}
                       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                         <Badge variant="outline" className="text-xs">{f.department?.abbreviation}</Badge>
                         <Badge variant={f.isActive ? "default" : "secondary"} className="text-xs">
@@ -323,7 +321,7 @@ export default function FacultyPage() {
     firstName: "",
     lastName: "",
     sectionCounts: {} as SectionCountMap,
-    maxUnitsPerWeek: 21,
+    maxUnitsPerWeek: 21 as number | string,
     hoursPerWeek: 0,
   })
   const [editOpen, setEditOpen] = useState(false)
@@ -331,7 +329,7 @@ export default function FacultyPage() {
   const [editForm, setEditForm] = useState({
     firstName: "", lastName: "",
     sectionCounts: {} as SectionCountMap,
-    maxUnitsPerWeek: 21, hoursPerWeek: 0, isActive: true,
+    maxUnitsPerWeek: 21 as number | string, hoursPerWeek: 0, isActive: true,
     clusterId: "",
   })
 
@@ -482,10 +480,11 @@ export default function FacultyPage() {
     [availableUsers, addForm.userId]
   )
 
+  // Name only. Email is no longer surfaced anywhere in this page, and matching on a
+  // hidden field returned rows with no visible reason for being there.
   const filtered = faculty.filter((f: any) => {
     const name = `${f.user?.firstName ?? ""} ${f.user?.lastName ?? ""}`.toLowerCase()
-    const email = f.user?.email?.toLowerCase() ?? ""
-    return name.includes(search.toLowerCase()) || email.includes(search.toLowerCase())
+    return name.includes(search.toLowerCase())
   })
 
   // Group filtered faculty by department for the desktop table
@@ -533,7 +532,7 @@ export default function FacultyPage() {
           departmentId: userDeptId,
           specializations: specs,
           sectionCounts,
-          maxUnitsPerWeek,
+          maxUnitsPerWeek: Number(maxUnitsPerWeek) || 21,
           hoursPerWeek,
         })
       } else {
@@ -542,7 +541,7 @@ export default function FacultyPage() {
         const user = availableUsers.find((u: any) => u.id === userId)
         const departmentId = user?.department?.id ?? user?.departmentId
         if (!departmentId) return toast.error("No department found. Please ensure your account has a department assigned.")
-        await createFaculty.mutateAsync({ userId, departmentId, specializations: specs, sectionCounts, maxUnitsPerWeek, hoursPerWeek })
+        await createFaculty.mutateAsync({ userId, departmentId, specializations: specs, sectionCounts, maxUnitsPerWeek: Number(maxUnitsPerWeek) || 21, hoursPerWeek })
       }
       setAddOpen(false)
       setAddForm({ userId: "", firstName: "", lastName: "", sectionCounts: {}, maxUnitsPerWeek: 21, hoursPerWeek: 0 })
@@ -588,7 +587,7 @@ export default function FacultyPage() {
         lastName: editForm.lastName,
         specializations: specs,
         sectionCounts: mergedCounts,
-        maxUnitsPerWeek: editForm.maxUnitsPerWeek,
+        maxUnitsPerWeek: Number(editForm.maxUnitsPerWeek) || 21,
         hoursPerWeek: editForm.hoursPerWeek,
         isActive: editForm.isActive,
       })
@@ -683,7 +682,8 @@ export default function FacultyPage() {
                       <option value="">Select a faculty member...</option>
                       {availableUsers.map((u: any) => (
                         <option key={u.id} value={u.id}>
-                          {u.firstName} {u.lastName} ({u.email})
+                          {u.firstName} {u.lastName}
+                          {u.department?.abbreviation ? ` (${u.department.abbreviation})` : ""}
                         </option>
                       ))}
                     </select>
@@ -711,7 +711,7 @@ export default function FacultyPage() {
                     <Input
                       type="number"
                       value={addForm.maxUnitsPerWeek}
-                      onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: Number(e.target.value) }))}
+                      onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
                     />
                   </div>
                   <div className="grid gap-2">
@@ -723,7 +723,7 @@ export default function FacultyPage() {
 
                 <SpecializationPicker
                   sectionCounts={addForm.sectionCounts}
-                  maxUnits={addForm.maxUnitsPerWeek}
+                  maxUnits={Number(addForm.maxUnitsPerWeek) || 21}
                   subjectTitles={subjectTitles}
                   subjectInfoMap={subjectInfoMap}
                   sectionCountByYear={sectionCountByYear}
@@ -753,6 +753,11 @@ export default function FacultyPage() {
         }
       />
       </div>
+
+      {/* Faculty requests — a Program Chair raises one here and tracks the answer;
+          the Department Chairperson approves or declines. The API existed and already
+          sent notifications, but nothing rendered it, so requests went into a void. */}
+      <FacultyRequestsPanel isSuperAdmin={isSuperAdminEditor} />
 
       {isLoading ? (
         <div className="flex h-24 items-center justify-center text-muted-foreground text-sm">
@@ -811,9 +816,6 @@ export default function FacultyPage() {
                           <TableCell>
                             <div>
                               <p className="font-medium">{f.user?.firstName} {f.user?.lastName}</p>
-                              {f.user?.email && !f.user.email.endsWith("@faculty.slsu.edu.ph") && (
-                                <p className="text-xs text-muted-foreground">{f.user.email}</p>
-                              )}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -902,7 +904,7 @@ export default function FacultyPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="grid gap-2">
                 <Label>Max Units / Week</Label>
-                <Input type="number" value={editForm.maxUnitsPerWeek} onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: Number(e.target.value) }))} />
+                <Input type="number" value={editForm.maxUnitsPerWeek} onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))} />
               </div>
               <div className="grid gap-2">
                 <Label className="text-muted-foreground">Hours / Week</Label>
@@ -924,7 +926,7 @@ export default function FacultyPage() {
 
             <SpecializationPicker
               sectionCounts={editForm.sectionCounts}
-              maxUnits={editForm.maxUnitsPerWeek}
+              maxUnits={Number(editForm.maxUnitsPerWeek) || 21}
               subjectTitles={subjectTitles}
               subjectInfoMap={subjectInfoMap}
               sectionCountByYear={sectionCountByYear}

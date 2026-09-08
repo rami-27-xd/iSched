@@ -31,6 +31,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const body = await req.json()
     const { code, title, units, hoursPerWeek, type, departmentId, yearLevelId, requiredRoomType, semester, year } = body
 
+    // An emptied Units field arrives as "", which Number() turns into 0 — that used
+    // to save a 0-unit subject without complaint. The create route already rejects a
+    // falsy units; match it here.
+    if (units !== undefined) {
+      const unitsValue = Number(units)
+      if (String(units).trim() === "" || !Number.isFinite(unitsValue) || unitsValue <= 0) {
+        return NextResponse.json(apiError("Units must be a number greater than 0"), { status: 400 })
+      }
+    }
+
     const subject = await db.subject.update({
       where: { id },
       data: {

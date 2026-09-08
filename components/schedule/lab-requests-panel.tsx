@@ -74,6 +74,8 @@ function entryLabel(e: { subjectCode?: string; sectionName?: string; day?: strin
 export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: string; isSuperAdmin: boolean }) {
   const qc = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
+  // Resolved / denied / withdrawn requests are hidden by default — see below.
+  const [showSettled, setShowSettled] = useState(false)
   const [selectedEntryId, setSelectedEntryId] = useState("")
   const [reason, setReason] = useState("")
 
@@ -131,14 +133,20 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
     onError: (e: any) => toast.error(e.message),
   })
 
-  // Hide entirely when there's nothing to show for this role.
+  const pending = requests.filter((r) => r.status === "PENDING")
+  const settled = requests.filter((r) => r.status !== "PENDING")
+  const visible = showSettled ? requests : pending
+
+  // Hide entirely only when this role has nothing at all to show. A Dept Chair keeps
+  // the panel because the "Request a lab change" button lives in it; a Program Chair
+  // with only closed history keeps a collapsed header carrying the "Show N resolved"
+  // toggle — gating that return on !showSettled hid the very button that sets it, so
+  // resolved requests became unreachable rather than merely tidied away.
   if (isSuperAdmin) {
     if (citLabEntries.length === 0 && requests.length === 0) return null
   } else {
     if (requests.length === 0) return null
   }
-
-  const pending = requests.filter((r) => r.status === "PENDING")
 
   return (
     <Card>
@@ -148,6 +156,14 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
             <FlaskConical className="h-4 w-4 text-[#1B4332]" />
             CIT Lab Change Requests
             {pending.length > 0 && <Badge className="bg-amber-100 text-amber-800 text-[10px]">{pending.length} pending</Badge>}
+            {settled.length > 0 && (
+              <button
+                onClick={() => setShowSettled((v) => !v)}
+                className="text-[11px] font-normal text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                {showSettled ? "Hide" : "Show"} {settled.length} resolved
+              </button>
+            )}
           </CardTitle>
           {isSuperAdmin && (
             <Button
@@ -164,10 +180,12 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
         <CardDescriptionText isSuperAdmin={isSuperAdmin} />
       </CardHeader>
       <CardContent className="space-y-2">
-        {requests.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No requests yet.</p>
+        {visible.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {settled.length > 0 ? "No pending requests." : "No requests yet."}
+          </p>
         ) : (
-          requests.map((r) => (
+          visible.map((r) => (
             <div key={r.id} className="rounded-md border p-3 text-xs">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="font-medium">
