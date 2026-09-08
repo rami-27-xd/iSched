@@ -13,10 +13,13 @@ const poppins = Poppins({
 })
 
 export const metadata: Metadata = {
-  title: "iSched — Scheduling Management System",
+  title: "iSched",
   description:
     "Web-Based Scheduling Management System with Constraint-Based Assignment — SLSU Lucban Campus",
-  icons: { icon: "/favicon.ico" },
+  // No explicit `icons` entry — Next's App Router file convention picks up
+  // app/icon.png (browser tab) and app/apple-icon.png (iOS home screen)
+  // automatically and generates the right <link rel="icon"> tags itself.
+  // An explicit `icons` key here would override that auto-detection.
 }
 
 export default function RootLayout({
