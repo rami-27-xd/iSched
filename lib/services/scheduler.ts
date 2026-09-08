@@ -187,9 +187,6 @@ const TIMEOUT_CHECK_INTERVAL = 200
 // Keep low so GEC/PATHFIT runs (many sections) always use fast greedy mode.
 const GREEDY_ONLY_THRESHOLD = 60
 
-// Room types that count as a laboratory for the specialization rules.
-const LAB_ROOM_TYPES = new Set(['LABORATORY', 'COMPUTER_LAB', 'LECTURE_LAB'])
-
 // Predefined day-group patterns per total credit hours.
 // Lectures are distributed across multiple days; labs run as one continuous block.
 // Each entry: { days — the days to use in order; minutesEach — session length per day }
@@ -262,10 +259,6 @@ export class SchedulingEngine {
   private startTime = 0
   private candidateChecks = 0
 
-  // True when at least one laboratory room carries no specialization. Governs how
-  // strictly a SPECIALIZED room is reserved — see checkLabSpecialization.
-  private hasUnspecializedLab = false
-
   constructor(
     private subjects: SubjectInput[],
     private faculty: FacultyInput[],
@@ -279,9 +272,6 @@ export class SchedulingEngine {
     this.subjectMap = new Map(subjects.map(s => [s.id, s]))
     this.facultyMap = new Map(faculty.map(f => [f.id, f]))
     this.roomMap = new Map(rooms.map(r => [r.id, r]))
-    this.hasUnspecializedLab = rooms.some(
-      r => LAB_ROOM_TYPES.has(r.type) && !r.labSpecialization
-    )
     this.buildLectureLabPairs()
 
     this.tasks = this.buildTasks()
@@ -637,22 +627,6 @@ export class SchedulingEngine {
    * Cisco-tagged subject). Subjects without a requiredLabSpecialization pass
    * automatically, so lecture courses are unaffected.
    */
-  /**
-   * Hard Constraint — Laboratory specialization, enforced in BOTH directions.
-   *
-   * Forward: a subject that names a required specialization may only be placed in
-   * a room carrying exactly that specialization.
-   *
-   * Reverse: a specialized room is reserved for the subjects that actually need
-   * it. Previously only the forward rule existed, so a subject with no
-   * specialization requirement could be dropped into the computer lab while a
-   * general laboratory sat empty — the room read as "a lab" and nothing more.
-   *
-   * The reverse rule is relaxed automatically when no unspecialized laboratory
-   * exists in the pool: if every lab is specialized, reserving them all would
-   * leave general lab subjects with an empty domain and push them straight to the
-   * Unassigned Queue, which is worse than an imperfect room.
-   */
   private checkLabSpecialization(subjectId: string, roomId: string): boolean {
     if (!this.constraints.enforceLabSpecialization) return true
 
@@ -660,13 +634,9 @@ export class SchedulingEngine {
     const room = this.roomMap.get(roomId)
     if (!subject || !room) return false
 
-    if (subject.requiredLabSpecialization) {
-      return room.labSpecialization === subject.requiredLabSpecialization
-    }
+    if (!subject.requiredLabSpecialization) return true
 
-    if (room.labSpecialization && this.hasUnspecializedLab) return false
-
-    return true
+    return room.labSpecialization === subject.requiredLabSpecialization
   }
 
   // ── Candidate Initialization ─────────────────────────────────────────────
@@ -990,15 +960,6 @@ export class SchedulingEngine {
       if (specCompatible.length === 0) {
         reasons.push(
           `No lab with specialization "${subject.requiredLabSpecialization}" exists — add or configure a room with that specialization`
-        )
-      }
-    } else if (subject.type === 'LABORATORY' && this.hasUnspecializedLab) {
-      // Reverse specialization rule (see checkLabSpecialization): specialized labs
-      // are reserved, so this subject can only use the general ones.
-      const generalLabs = typeCompatible.filter(r => !r.labSpecialization)
-      if (generalLabs.length === 0) {
-        reasons.push(
-          `Every compatible laboratory is reserved for a specialization — set a required lab specialization on "${subject.code}" so it can claim the matching room, or add a general laboratory`
         )
       }
     }
