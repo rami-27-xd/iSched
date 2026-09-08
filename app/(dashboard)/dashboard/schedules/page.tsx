@@ -333,7 +333,10 @@ export default function SchedulesPage() {
   const entryDialogOpen = addEntryOpen || editEntryOpen
   // Fetch ALL subjects (no semester filter) — the curriculum map handles semester placement
   const { data: subjects = [] } = useSubjects({ enabled: entryDialogOpen })
-  const { data: facultyList = [] } = useFaculty(undefined, { enabled: entryDialogOpen })
+  // "schedulable" widens a CAS Dept Chair's pool from their own cluster to the whole
+  // CAS college — the same set auto-generation already draws from, so a faculty
+  // member the engine can assign is also one the chair can pick by hand.
+  const { data: facultyList = [] } = useFaculty(undefined, { enabled: entryDialogOpen, scope: "schedulable" })
   const { data: sections = [] } = useSections({ enabled: entryDialogOpen })
 
   // Department-restricted rooms: only rooms in buildings assigned to the

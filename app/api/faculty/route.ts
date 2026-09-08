@@ -4,7 +4,7 @@ import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { notifyAllSuperAdmins } from "@/lib/notifications"
 
-export async function GET(_req: Request) {
+export async function GET(req: Request) {
   try {
     const user = await getAuthenticatedUser()
     if (!user) {
@@ -35,6 +35,28 @@ export async function GET(_req: Request) {
     const clusterScope =
       dbUser?.role === "SUPER_ADMIN" && chairClusterId ? { clusterId: chairClusterId } : {}
 
+    // ── scope=schedulable ────────────────────────────────────────────────────
+    // The Add/Edit Entry pickers need everyone who could legitimately be placed on
+    // a schedule entry, which is NOT the same set as the Faculty page's management
+    // list. For a CAS Dept Chair the two had drifted apart badly:
+    //
+    //   auto-generation  -> every CAS faculty member (see the generate route: the
+    //                       records were never redistributed across the three CAS
+    //                       sub-departments, so college-wide is the real pool)
+    //   this endpoint    -> the chair's own cluster only
+    //
+    // The result was that generation would assign a faculty member the manual
+    // picker then refused to show, and plotting a GEC subject whose specialists sit
+    // in another cluster reported "No faculty found" with no way forward.
+    //
+    // Opt-in so the Faculty management page keeps its deliberate cluster scoping.
+    const { searchParams } = new URL(req.url)
+    const schedulable = searchParams.get("scope") === "schedulable"
+
+    const scopeFilter = schedulable && dbUser?.role === "SUPER_ADMIN"
+      ? { department: { college: { abbreviation: "CAS" } } }
+      : { departmentId: userDeptId, ...clusterScope }
+
     // Inactive faculty are still returned so a deactivated member remains
     // visible (badged "Inactive") to the chair who manages them — otherwise
     // deactivating would look identical to deleting. Consumers that need only
@@ -48,7 +70,7 @@ export async function GET(_req: Request) {
     const faculty = await db.faculty.findMany({
       where: {
         OR: [
-          { departmentId: userDeptId, ...clusterScope },
+          scopeFilter,
           { employeeId: "TBA" },
         ],
       },

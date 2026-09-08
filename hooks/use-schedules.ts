@@ -341,12 +341,18 @@ export function useCreateEntry() {
 }
 
 // ---------- Fetch faculty ----------
-export function useFaculty(departmentId?: string, opts?: { enabled?: boolean }) {
+export function useFaculty(
+  departmentId?: string,
+  opts?: { enabled?: boolean; scope?: "schedulable" }
+) {
   return useQuery({
-    queryKey: ["faculty", { departmentId }],
+    // scope is part of the key: the schedulable pool is wider than the management
+    // list, so the two must not share a cache entry.
+    queryKey: ["faculty", { departmentId, scope: opts?.scope ?? null }],
     queryFn: async () => {
       const params = new URLSearchParams()
       if (departmentId) params.set("departmentId", departmentId)
+      if (opts?.scope) params.set("scope", opts.scope)
       return safeFetch<any[]>(`/api/faculty?${params}`)
     },
     staleTime: 0,
