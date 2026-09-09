@@ -355,8 +355,14 @@ export function useFaculty(
       if (opts?.scope) params.set("scope", opts.scope)
       return safeFetch<any[]>(`/api/faculty?${params}`)
     },
-    staleTime: 0,
-    refetchOnMount: "always" as const,
+    // 30s rather than 0. Freshness after a CHANGE does not depend on this: every
+    // mutation that touches this data invalidates its key, which forces a refetch
+    // regardless of staleTime. All "staleTime: 0 + refetchOnMount: always" bought
+    // was a blocking round-trip on every single page visit, which is what made
+    // navigation feel slow — the cached rows render instantly and a background
+    // refetch follows if they have gone stale.
+    staleTime: 30_000,
+    refetchOnMount: true as const,
     enabled: opts?.enabled ?? true,
   })
 }
@@ -370,8 +376,14 @@ export function useRooms(type?: string, opts?: { enabled?: boolean }) {
       if (type) params.set("type", type)
       return safeFetch<any[]>(`/api/rooms?${params}`)
     },
-    staleTime: 0,
-    refetchOnMount: "always" as const,
+    // 30s rather than 0. Freshness after a CHANGE does not depend on this: every
+    // mutation that touches this data invalidates its key, which forces a refetch
+    // regardless of staleTime. All "staleTime: 0 + refetchOnMount: always" bought
+    // was a blocking round-trip on every single page visit, which is what made
+    // navigation feel slow — the cached rows render instantly and a background
+    // refetch follows if they have gone stale.
+    staleTime: 30_000,
+    refetchOnMount: true as const,
     enabled: opts?.enabled ?? true,
   })
 }

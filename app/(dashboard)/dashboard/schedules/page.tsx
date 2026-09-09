@@ -392,8 +392,10 @@ export default function SchedulesPage() {
       return json.data ?? []
     },
     enabled: entryDialogOpen,
-    staleTime: 0,
-    refetchOnMount: "always",
+    // Covered by the ["rooms"] invalidation noted above, so a blocking refetch on
+    // every dialog open is not needed to stay correct.
+    staleTime: 15_000,
+    refetchOnMount: true,
   })
 
   // Fetch availability for the selected faculty (for time slot filtering in Add

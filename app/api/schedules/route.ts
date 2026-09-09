@@ -34,10 +34,19 @@ export async function GET(req: Request) {
     }
 
     if (dbUser?.role === "ADMIN") {
-      // ADMIN (Program Chair): sees all schedules including those from all colleges.
-      // They need visibility of Dept Chair schedules to know when Phase 1 is complete,
-      // and their own generated schedules are visible to all Dept Chairs for conflict review.
-      // No status or department restriction — full read access for workflow participation.
+      // ADMIN (Program Chair): their own department only.
+      //
+      // This previously returned EVERY schedule in the university, justified as
+      // needing visibility of the Dept Chair's work to know when GEC plotting was
+      // done. That reasoning does not hold: the Dept Chair plots GEC *into this
+      // chair's own department schedule*, which is in scope either way. All the
+      // extra rows bought was every other college's schedules showing up in the
+      // sidebar — contradicting the rule in CLAUDE.md that a Program Chair is
+      // locked to their own college.
+      //
+      // A chair with no department resolves to no schedules rather than all of
+      // them, so a misconfigured account fails closed.
+      where.departmentId = departmentId ?? "__none__"
     } else if (dbUser?.role === "SUPER_ADMIN") {
       // SUPER_ADMIN (Dept Chair): full visibility across ALL colleges and statuses.
       // They must be able to review every Program Chair's schedule to detect and

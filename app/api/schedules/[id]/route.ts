@@ -84,6 +84,17 @@ export async function GET(
       return NextResponse.json(apiError("Schedule not found"), { status: 404 })
     }
 
+    // A Program Chair is scoped to their own department. Entry rows were already
+    // filtered above, but the schedule shell itself was returned for ANY id, so a
+    // guessed or shared URL still exposed another department schedule (its owner,
+    // term and workflow status). Refuse it outright instead.
+    if (adminDeptId && schedule.departmentId && schedule.departmentId !== adminDeptId) {
+      return NextResponse.json(
+        apiError("This schedule belongs to another department"),
+        { status: 403 }
+      )
+    }
+
     return NextResponse.json(apiResponse(schedule))
   } catch (error) {
     console.error("GET /api/schedules/[id] error:", error)

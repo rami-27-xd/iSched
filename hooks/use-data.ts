@@ -22,8 +22,14 @@ export function useBuildings() {
   return useQuery({
     queryKey: ["buildings"],
     queryFn: () => apiFetch<any[]>("/api/buildings"),
-    staleTime: 0,
-    refetchOnMount: "always" as const,
+    // 30s rather than 0. Freshness after a CHANGE does not depend on this: every
+    // mutation that touches this data invalidates its key, which forces a refetch
+    // regardless of staleTime. All "staleTime: 0 + refetchOnMount: always" bought
+    // was a blocking round-trip on every single page visit, which is what made
+    // navigation feel slow — the cached rows render instantly and a background
+    // refetch follows if they have gone stale.
+    staleTime: 30_000,
+    refetchOnMount: true as const,
   })
 }
 
@@ -97,8 +103,14 @@ export function useSubjects(params?: { departmentId?: string; type?: string; sem
   return useQuery({
     queryKey: ["subjects", filterParams],
     queryFn: () => apiFetch<any[]>(`/api/subjects?${query}`),
-    staleTime: 0,
-    refetchOnMount: "always" as const,
+    // 30s rather than 0. Freshness after a CHANGE does not depend on this: every
+    // mutation that touches this data invalidates its key, which forces a refetch
+    // regardless of staleTime. All "staleTime: 0 + refetchOnMount: always" bought
+    // was a blocking round-trip on every single page visit, which is what made
+    // navigation feel slow — the cached rows render instantly and a background
+    // refetch follows if they have gone stale.
+    staleTime: 30_000,
+    refetchOnMount: true as const,
     enabled: enabled ?? true,
   })
 }
@@ -164,8 +176,14 @@ export function useSections(params?: { programId?: string; yearLevelId?: string;
   return useQuery({
     queryKey: ["sections", filterParams],
     queryFn: () => apiFetch<any[]>(`/api/sections?${query}`),
-    staleTime: 0,
-    refetchOnMount: "always" as const,
+    // 30s rather than 0. Freshness after a CHANGE does not depend on this: every
+    // mutation that touches this data invalidates its key, which forces a refetch
+    // regardless of staleTime. All "staleTime: 0 + refetchOnMount: always" bought
+    // was a blocking round-trip on every single page visit, which is what made
+    // navigation feel slow — the cached rows render instantly and a background
+    // refetch follows if they have gone stale.
+    staleTime: 30_000,
+    refetchOnMount: true as const,
     enabled: enabled ?? true,
   })
 }
@@ -301,8 +319,14 @@ export function useRoomList(params?: { type?: string; buildingId?: string }) {
   return useQuery({
     queryKey: ["rooms", params],
     queryFn: () => apiFetch<any[]>(`/api/rooms?${query}`),
-    staleTime: 0,
-    refetchOnMount: "always" as const,
+    // 30s rather than 0. Freshness after a CHANGE does not depend on this: every
+    // mutation that touches this data invalidates its key, which forces a refetch
+    // regardless of staleTime. All "staleTime: 0 + refetchOnMount: always" bought
+    // was a blocking round-trip on every single page visit, which is what made
+    // navigation feel slow — the cached rows render instantly and a background
+    // refetch follows if they have gone stale.
+    staleTime: 30_000,
+    refetchOnMount: true as const,
   })
 }
 
