@@ -24,5 +24,11 @@ export const config = {
      * - favicon.ico, images/, static files
      */
     '/((?!_next/static|_next/image|favicon.ico|images/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Listed again, deliberately: the proxy is what strips any client-supplied
+    // x-isched-auth-* header before setting the real one (see
+    // lib/supabase/middleware.ts). Every route that trusts those headers must be
+    // guaranteed to pass through here, with no chance of the exclusion pattern
+    // above letting one slip past.
+    '/api/:path*',
   ],
 }

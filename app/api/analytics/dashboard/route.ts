@@ -13,17 +13,26 @@ export async function GET(_req: Request) {
     const role = dbUser?.role ?? "FACULTY"
 
     // Build schedule filters: role-based.
-    // scheduleWhere drives the "Recent Schedules" LIST — a Program Chair browses
-    // PUBLISHED schedules from any department (that's where the Dept Chair's GEC
-    // lands), which is why it is status-filtered.
+    // scheduleWhere drives the "Recent Schedules" LIST and the active-schedule KPI.
+    //
+    // A Program Chair used to get `status: PUBLISHED` with NO department filter,
+    // on the reasoning that they need to see the Dept Chair's GEC work. That
+    // reasoning is wrong for the same reason it was wrong in GET /api/schedules:
+    // the Dept Chair plots GEC into this chair's OWN department schedule, which
+    // is in scope either way. What the missing filter actually did was put every
+    // other college's published schedules on a Program Chair's dashboard — the
+    // CEN chair seeing CIT's and CAS's schedules — contradicting the rule in
+    // CLAUDE.md that a Program Chair is locked to their own college.
+    //
+    // Every role is now scoped to its own department, and a chair with no
+    // department configured resolves to no schedules rather than all of them,
+    // so a misconfigured account fails closed.
     const scheduleWhere: any = { isArchived: false }
     if (role === "ADMIN") {
-      // Program Chair: see PUBLISHED schedules from any department
-      // (CAS Dept Chair adds GEC entries for all programs)
-      scheduleWhere.status = "PUBLISHED"
-    } else {
+      scheduleWhere.departmentId = departmentId ?? "__none__"
+    } else if (departmentId) {
       // SUPER_ADMIN / FACULTY: scope to own department
-      if (departmentId) scheduleWhere.departmentId = departmentId
+      scheduleWhere.departmentId = departmentId
     }
 
     // Separate scope for the "work in progress" KPIs (unassigned + conflicts).

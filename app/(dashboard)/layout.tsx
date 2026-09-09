@@ -1,18 +1,26 @@
+import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { DashboardShell } from "@/components/layout/dashboard-shell"
 import { createClient } from "@/lib/supabase/server"
-import { ensureDbUser } from "@/lib/auth"
-import { ShieldAlert } from "lucide-react"
+import { ensureDbUser, getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
+import { ShieldAlert, WifiOff } from "lucide-react"
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // Header-first (set by the proxy, already verified) — no Supabase round-trip
+  // on every single dashboard navigation.
+  const user = await getAuthenticatedUser()
 
   if (!user) {
+    // A session cookie with no resolvable user means the auth round-trip failed,
+    // not that the user signed out. Bouncing to /sign-in here is what made tab
+    // clicks land on the login page at random; show the real problem instead.
+    const cookieStore = await cookies()
+    const hasSession = cookieStore.getAll().some((c) => /^sb-.+-auth-token(\.\d+)?$/.test(c.name))
+    if (hasSession) return <ConnectionProblemScreen />
     redirect("/sign-in")
   }
 
@@ -23,7 +31,16 @@ export default async function DashboardLayout({
   let defaultCollegeId: string | null = null
 
   try {
-    const dbUser = await ensureDbUser(user)
+    // The common case — an existing, approved account — is a single cached
+    // query. ensureDbUser() is only needed for accounts that still have
+    // bootstrap work pending (first-chair auto-approval, a requested-role
+    // update, or a missing record), so it is not paid for on every navigation.
+    let dbUser: any = await getCurrentUser()
+    if (!dbUser || !dbUser.isApproved) {
+      const supabase = await createClient()
+      const { data: { user: fullUser } } = await supabase.auth.getUser()
+      if (fullUser) dbUser = await ensureDbUser(fullUser)
+    }
     if (dbUser) {
       userRole = dbUser.role
       userName = `${dbUser.firstName} ${dbUser.lastName}`.trim() || "User"
@@ -39,8 +56,8 @@ export default async function DashboardLayout({
         null
     }
   } catch {
-    // DB not connected — use Supabase user data, treat as unapproved
-    userName = user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "User"
+    // DB not connected — fall back to the signed-in email, treat as unapproved
+    userName = user.email?.split("@")[0] ?? "User"
     isApproved = false
   }
 
@@ -58,6 +75,44 @@ export default async function DashboardLayout({
     >
       {children}
     </DashboardShell>
+  )
+}
+
+/**
+ * Shown when the browser still holds a session cookie but the identity could not
+ * be resolved — a Supabase auth timeout, a 5xx, or the auth rate limiter. The
+ * session is almost certainly still valid, so offering "sign in again" would be
+ * both wrong and useless; reloading is what actually fixes it.
+ */
+function ConnectionProblemScreen() {
+  return (
+    <div className="min-h-screen bg-[#1B4332] flex items-center justify-center px-4">
+      <div className="w-full max-w-md text-center">
+        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-[#D4AF37]/20 mb-6">
+          <WifiOff className="h-8 w-8 text-[#D4AF37]" />
+        </div>
+        <h1 className="text-2xl font-bold text-white">Couldn&apos;t reach the sign-in service</h1>
+        <p className="mt-3 text-sm text-white/60">
+          You are still signed in — the server just couldn&apos;t confirm it in time. Reload to try again.
+        </p>
+        <div className="mt-6 flex items-center justify-center gap-3">
+          <a
+            href="/dashboard"
+            className="rounded-lg bg-[#D4AF37] px-6 py-2.5 text-sm font-semibold text-[#1B4332] transition-colors hover:bg-[#D4AF37]/90"
+          >
+            Reload
+          </a>
+          <form action="/auth/sign-out" method="POST">
+            <button
+              type="submit"
+              className="rounded-lg bg-white/10 border border-white/20 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/20"
+            >
+              Sign Out
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
   )
 }
 

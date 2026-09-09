@@ -1,39 +1,82 @@
+import { cache } from 'react'
+import { headers } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { db } from '@/lib/db'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
 import { notifyAllSuperAdmins } from '@/lib/notifications'
+import { AUTH_EMAIL_HEADER, AUTH_USER_ID_HEADER } from '@/lib/auth-headers'
 
 type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'FACULTY'
 
-export async function getAuthenticatedUser() {
+/** The identity every route needs: who is signed in. */
+export type AuthIdentity = { id: string; email: string | null }
+
+/**
+ * supabase.auth.getUser() over the network. Deliberately private and cached —
+ * this is the expensive call the rest of this module exists to avoid making
+ * more than once.
+ */
+const fetchAuthUserFromSupabase = cache(async (): Promise<SupabaseUser | null> => {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   return user
-}
+})
 
-export async function getCurrentUser() {
-  const user = await getAuthenticatedUser()
-  if (!user) return null
-
-  const include = {
-    department: { include: { college: true } },
-    faculty: { include: { department: { include: { college: true } } } },
-    departmentChair: { include: { department: { include: { college: true } } } },
-    programHead: { include: { program: { include: { department: { include: { college: true } } } } } },
+/**
+ * Who is signed in, without a network round-trip.
+ *
+ * The proxy already called getUser() for this request and forwarded the verified
+ * id/email as request headers (lib/supabase/middleware.ts), so reading them here
+ * is both authoritative and free. Every API route used to repeat that call
+ * twice — once for its own guard, once inside getCurrentUser() — which on a
+ * deployed app meant two extra Supabase round-trips per request, times ten or
+ * more requests per page.
+ *
+ * Falls back to the real call when the header is absent (a context the proxy
+ * doesn't cover), and is request-cached either way.
+ */
+export const getAuthenticatedUser = cache(async (): Promise<AuthIdentity | null> => {
+  try {
+    const h = await headers()
+    const id = h.get(AUTH_USER_ID_HEADER)
+    if (id) return { id, email: h.get(AUTH_EMAIL_HEADER) }
+  } catch {
+    // headers() is unavailable outside a request scope — fall through.
   }
+  const user = await fetchAuthUserFromSupabase()
+  return user ? { id: user.id, email: user.email ?? null } : null
+})
 
-  const existing = await db.user.findUnique({ where: { supabaseId: user.id }, include })
+const CURRENT_USER_INCLUDE = {
+  department: { include: { college: true } },
+  faculty: { include: { department: { include: { college: true } } } },
+  departmentChair: { include: { department: { include: { college: true } } } },
+  programHead: { include: { program: { include: { department: { include: { college: true } } } } } },
+} as const
+
+export const getCurrentUser = cache(async () => {
+  const identity = await getAuthenticatedUser()
+  if (!identity) return null
+
+  const existing = await db.user.findUnique({
+    where: { supabaseId: identity.id },
+    include: CURRENT_USER_INCLUDE,
+  })
   if (existing) return existing
 
   // Self-heal: Supabase auth user exists but DB record is missing (e.g. callback was
-  // missed during email confirmation). Create the record now so the user isn't locked out.
+  // missed during email confirmation). Create the record now so the user isn't locked
+  // out. ensureDbUser reads user_metadata (names, requested role, department), which
+  // the forwarded headers don't carry — so this rare path takes the full record.
   try {
-    await ensureDbUser(user)
-    return db.user.findUnique({ where: { supabaseId: user.id }, include })
+    const fullUser = await fetchAuthUserFromSupabase()
+    if (!fullUser) return null
+    await ensureDbUser(fullUser)
+    return db.user.findUnique({ where: { supabaseId: fullUser.id }, include: CURRENT_USER_INCLUDE })
   } catch {
     return null
   }
-}
+})
 
 /** Get the department ID for the current user based on their role */
 export function getUserDepartmentId(dbUser: any): string | null {

@@ -81,10 +81,13 @@ export function Sidebar({ userRole, userName, userEmail, collapsed = false, onTo
 
   const departmentName = React.useMemo(() => {
     if (!userInfo) return null
-    return userInfo.departmentChair?.department?.name
-      ?? userInfo.programHead?.program?.department?.name
-      ?? userInfo.faculty?.department?.name
-      ?? null
+    // /api/users/me already resolves this across every source (User.departmentId
+    // first, then the chair/program-head/faculty relations) — the same order
+    // getUserDepartmentId() uses to decide what this account can see. Reading only
+    // the relations here missed the most common case, so a chair whose department
+    // comes from User.departmentId showed no department at all, and one with no
+    // department configured looked identical to one that was set up correctly.
+    return userInfo.departmentName ?? null
   }, [userInfo])
 
   async function handleSignOut() {

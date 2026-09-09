@@ -312,17 +312,31 @@ export default function SchedulesPage() {
   const [dismissedRejectionKey, setDismissedRejectionKey] = useState<string | null>(null)
   // Derive schedule semester type (FIRST | SECOND | SUMMER) for subject filtering
   const scheduleSemesterType = selectedSchedule?.semester?.type as string | undefined
-  // These four are only ever read inside the Add/Edit Entry dialogs — gate them so a
-  // plain visit to the schedule list/calendar (the common case) doesn't fetch and hold
-  // several hundred KB of university-wide sections/subjects/faculty/rooms in memory.
+  // These are only ever read inside the Add/Edit Entry dialogs, so they stay gated —
+  // the schedule list on its own must not fetch and hold several hundred KB of
+  // university-wide sections/subjects/faculty.
+  //
+  // They warm on schedule SELECTION rather than on dialog open, though. Gated on the
+  // dialog, every one of these started from cold the moment the dialog appeared, so
+  // the faculty and subject pickers rendered their "no match" empty states for as
+  // long as the round-trips took — which read as "it doesn't show the faculty who
+  // specialize in this subject" rather than as loading. Selecting a schedule is
+  // already the step before editing it, so fetching there costs nothing extra in
+  // practice and the pickers are populated by the time they are opened.
   const entryDialogOpen = addEntryOpen || editEntryOpen
+  const entryDataEnabled = entryDialogOpen || !!selectedScheduleId
   // Fetch ALL subjects (no semester filter) — the curriculum map handles semester placement
-  const { data: subjects = [] } = useSubjects({ enabled: entryDialogOpen })
+  const { data: subjects = [], isPending: subjectsPending } = useSubjects({ enabled: entryDataEnabled })
   // "schedulable" widens a CAS Dept Chair's pool from their own cluster to the whole
   // CAS college — the same set auto-generation already draws from, so a faculty
   // member the engine can assign is also one the chair can pick by hand.
-  const { data: facultyList = [] } = useFaculty(undefined, { enabled: entryDialogOpen, scope: "schedulable" })
-  const { data: sections = [] } = useSections({ enabled: entryDialogOpen })
+  const { data: facultyList = [], isPending: facultyPending } = useFaculty(undefined, { enabled: entryDataEnabled, scope: "schedulable" })
+  const { data: sections = [] } = useSections({ enabled: entryDataEnabled })
+  // A picker must never claim "nobody specializes in this" while the pool it would
+  // search is still in flight. React Query reports `isPending` until the first
+  // successful load, which is exactly the window the empty states must not fire in.
+  const facultyPoolLoading = facultyPending
+  const subjectPoolLoading = subjectsPending
 
   // Department-restricted rooms: only rooms in buildings assigned to the
   // schedule's department. Falls back to all rooms if no department is set.
@@ -2242,9 +2256,20 @@ export default function SchedulesPage() {
             </div>
           ) : schedules.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-              {deptFilter
-                ? `No ${tab} schedules for this department`
-                : `No ${tab} schedules`}
+              {isAdmin && !adminDeptId ? (
+                <>
+                  <p className="font-medium text-amber-700">Your account isn&apos;t linked to a department</p>
+                  <p className="mt-1">
+                    Schedules are scoped to a Program Chairperson&apos;s own department, so none can be shown
+                    until yours is set. Ask a Department Chairperson to open <strong>User Management</strong>{" "}
+                    and assign your department and program.
+                  </p>
+                </>
+              ) : deptFilter ? (
+                `No ${tab} schedules for this department`
+              ) : (
+                `No ${tab} schedules`
+              )}
             </div>
           ) : (
             <div className="space-y-2">
@@ -2968,7 +2993,9 @@ export default function SchedulesPage() {
                   {sectionDropdownOpen && (
                     <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border bg-popover shadow-lg">
                       {filteredSections.length === 0 ? (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">No sections found</div>
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                          {subjectPoolLoading ? "Loading sections…" : "No sections found"}
+                        </div>
                       ) : (
                         filteredSections.map((s: any) => (
                           <button
@@ -3008,7 +3035,7 @@ export default function SchedulesPage() {
                   onChange={(e) => { setEntryForm((f) => ({ ...f, subjectId: e.target.value, set: "" })); setSplitLabSets(false); setEntryMissing((m) => m.filter((x) => x !== "subject")) }}
                   className={`w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(entryMissing, "subject")}`}
                 >
-                  <option value="">Select subject</option>
+                  <option value="">{subjectPoolLoading ? "Loading subjects…" : "Select subject"}</option>
                   {filteredSubjects.map((s: any) => (
                     <option key={s.id} value={s.id}>{s.code} — {s.title}</option>
                   ))}
@@ -3188,7 +3215,9 @@ export default function SchedulesPage() {
                         return full.includes(facultySearch.toLowerCase())
                       }).length === 0 && !facultySearch && (
                         <div className="px-3 py-2.5 text-xs text-muted-foreground">
-                          {selectedSubjectForEntry ? (
+                          {facultyPoolLoading ? (
+                            <p className="animate-pulse">Loading faculty…</p>
+                          ) : selectedSubjectForEntry ? (
                             <>
                               <p className="font-medium text-amber-700">
                                 No faculty specializes in &ldquo;{selectedSubjectForEntry.title}&rdquo;
@@ -3198,6 +3227,10 @@ export default function SchedulesPage() {
                                 who can actually be assigned. Open the <strong>Faculty</strong> page and add
                                 this subject to the right instructor&apos;s specializations, or type a name
                                 above to record it as free text.
+                              </p>
+                              <p className="mt-1.5 text-[10px] text-muted-foreground/70">
+                                Searched {facultyList.length} faculty record{facultyList.length === 1 ? "" : "s"} you
+                                have access to.
                               </p>
                             </>
                           ) : (
@@ -3498,16 +3531,19 @@ export default function SchedulesPage() {
                   onChange={(e) => { setEditEntryForm((f) => ({ ...f, facultyId: e.target.value, day: "", startTime: "", endTime: "" })); setEditMissing((m) => m.filter((x) => x !== "faculty")) }}
                   className={`w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(editMissing, "faculty")}`}
                 >
-                  <option value="">— Select faculty —</option>
+                  <option value="">{facultyPoolLoading ? "Loading faculty…" : "— Select faculty —"}</option>
                   {editFilteredFaculty.map((f: any) => (
                     <option key={f.id} value={f.id}>{f.user?.firstName} {f.user?.lastName}</option>
                   ))}
                 </select>
-                {editEntryForm.subjectId && !editEntryForm.facultyId && (
+                {editEntryForm.subjectId && !editEntryForm.facultyId && !facultyPoolLoading && (
                   <p className="text-[10px] text-muted-foreground">Filtered by subject specialization</p>
                 )}
-                {editEntryForm.subjectId && editFilteredFaculty.length === 0 && (
-                  <p className="text-[10px] text-destructive">No faculty specializes in this subject.</p>
+                {editEntryForm.subjectId && editFilteredFaculty.length === 0 && !facultyPoolLoading && (
+                  <p className="text-[10px] text-destructive">
+                    No faculty specializes in this subject ({facultyList.length} record
+                    {facultyList.length === 1 ? "" : "s"} searched).
+                  </p>
                 )}
               </div>
               <div className="space-y-1.5">
@@ -3521,12 +3557,12 @@ export default function SchedulesPage() {
                   }}
                   className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
-                  <option value="">— Select subject —</option>
+                  <option value="">{subjectPoolLoading ? "Loading subjects…" : "— Select subject —"}</option>
                   {editFilteredSubjects.map((s: any) => (
                     <option key={s.id} value={s.id}>{s.code} — {s.title}</option>
                   ))}
                 </select>
-                {editFilteredSubjects.length === 0 && editEntryForm.facultyId && (
+                {editFilteredSubjects.length === 0 && editEntryForm.facultyId && !subjectPoolLoading && (
                   <p className="text-[10px] text-destructive">No subjects match this faculty&apos;s specialization.</p>
                 )}
               </div>
