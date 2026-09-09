@@ -130,23 +130,59 @@ function sectionAllowsSaturday(section: any): boolean {
 // dependency check the way a fresh `?? []` literal would on every render.
 const EMPTY_STRING_ARRAY: string[] = []
 
+// Filler words carry no subject meaning, so they are dropped before comparing.
+const SPEC_STOPWORDS = new Set(["and", "of", "the", "for", "to", "in", "a", "an", "with", "&"])
+
+/** Lowercase, strip punctuation, drop filler words → significant word list. */
+function specTokens(value: string): string[] {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9s]/g, " ")
+    .split(/s+/)
+    .filter((t) => t.length > 0 && !SPEC_STOPWORDS.has(t))
+}
+
+/**
+ * Is every significant word in `needle` accounted for in `haystack`?
+ * Words match exactly or by prefix, so an abbreviated specialization still lines
+ * up with the full subject title — "tech" covers "technology".
+ */
+function tokensCover(needle: string[], haystack: string[]): boolean {
+  if (needle.length === 0) return false
+  return needle.every((t) =>
+    haystack.some(
+      (u) => u === t || (t.length >= 3 && u.startsWith(t)) || (u.length >= 3 && t.startsWith(u))
+    )
+  )
+}
+
 /**
  * Does this faculty member's specialization list cover this subject?
- * Matching is deliberately fuzzy in both directions — a specialization of
- * "Programming" should cover "Fundamentals of Programming", and a specialization
- * of "Data Structures and Algorithms" should cover a subject titled "Data
- * Structures". Used by the Add and Edit Entry pickers so the subject→faculty and
- * faculty→subject directions can never disagree about who is qualified.
+ *
+ * Specializations are chair-entered and drift from the exact subject title —
+ * "Science, Tech, Society" against a subject titled "Science, Technology and
+ * Society" is the same expertise written shorter, but a plain substring test says
+ * no (neither string contains the other, and "Tech" is not "Technology"). That
+ * mismatch showed up as "No faculty found" on a subject that had specialists.
+ *
+ * So: try the cheap exact/substring test first, then fall back to comparing the
+ * significant words in either direction with prefix matching.
+ *
+ * Used by both the Add and Edit Entry pickers, in both the subject→faculty and
+ * faculty→subject directions, so the two can never disagree about who qualifies.
  */
 function facultyMatchesSubject(faculty: any, subject: any): boolean {
   const title = (subject?.title ?? "").toLowerCase().trim()
   if (!title) return true
   const specs: string[] = faculty?.specializations ?? []
   if (specs.length === 0) return false
+  const titleTokens = specTokens(title)
   return specs.some((raw: string) => {
     const sp = (raw ?? "").toLowerCase().trim()
     if (!sp) return false
-    return sp === title || title.includes(sp) || sp.includes(title)
+    if (sp === title || title.includes(sp) || sp.includes(title)) return true
+    const spTokens = specTokens(sp)
+    return tokensCover(spTokens, titleTokens) || tokensCover(titleTokens, spTokens)
   })
 }
 
@@ -561,13 +597,27 @@ export default function SchedulesPage() {
     const pool = deptScoped.length > 0 ? deptScoped : activeFaculty
 
     if (!entryForm.subjectId || !selectedSubjectForEntry) return pool
-    // Strict: only faculty specializing in the selected subject, so the dropdown
-    // never offers an unqualified instructor. Department scoping is relaxed if it
-    // would hide every qualified candidate — a GEC subject is frequently taught by
-    // faculty recorded under a different department than the subject itself.
+    // Prefer faculty who specialize in the selected subject. Department scoping is
+    // relaxed first — a GEC subject is often taught by faculty recorded under a
+    // different department than the subject itself.
     const scoped = pool.filter((f: any) => facultyMatchesSubject(f, selectedSubjectForEntry))
     if (scoped.length > 0) return scoped
-    return activeFaculty.filter((f: any) => facultyMatchesSubject(f, selectedSubjectForEntry))
+    const anyQualified = activeFaculty.filter((f: any) => facultyMatchesSubject(f, selectedSubjectForEntry))
+    if (anyQualified.length > 0) return anyQualified
+    // Nobody's recorded specialization lines up with this subject's title. That is
+    // a data problem (a specialization worded differently from the title), not a
+    // reason to make the subject unschedulable — an empty dropdown left the chair
+    // with no way forward at all. Offer everyone, and let the UI say why.
+    return activeFaculty
+  }, [facultyList, entryForm.subjectId, selectedSubjectForEntry])
+
+  // True when the list above fell back to "everyone" because no recorded
+  // specialization matched — drives the warning shown under the Faculty field.
+  const facultySpecMismatch = useMemo(() => {
+    if (!entryForm.subjectId || !selectedSubjectForEntry) return false
+    const active = facultyList.filter((f: any) => f.isActive !== false && f.user?.isActive !== false)
+    if (active.length === 0) return false
+    return !active.some((f: any) => facultyMatchesSubject(f, selectedSubjectForEntry))
   }, [facultyList, entryForm.subjectId, selectedSubjectForEntry])
 
   // Room access check shared by Add/Edit Entry: a room restricted to
@@ -905,7 +955,9 @@ export default function SchedulesPage() {
     const subjectTitle = (editSelectedSubject.title ?? "").toLowerCase()
     if (!subjectTitle) return keepCurrent(activeFaculty)
     // Strict: only faculty specializing in the selected subject — same rule as Add Entry.
-    return keepCurrent(activeFaculty.filter((f: any) => facultyMatchesSubject(f, editSelectedSubject)))
+    const matched = activeFaculty.filter((f: any) => facultyMatchesSubject(f, editSelectedSubject))
+    // Same reasoning as Add Entry: never hand back an empty list.
+    return keepCurrent(matched.length > 0 ? matched : activeFaculty)
   }, [facultyList, editEntryForm.subjectId, editEntryForm.facultyId, editSelectedSubject])
 
   // Edit: filter rooms by subject's required room type, falling back to subject type
@@ -3205,6 +3257,13 @@ export default function SchedulesPage() {
                 )}
                 {!entryForm.facultyId && entryForm.facultyName && (
                   <p className="text-[10px] text-amber-600">⚠ Free-text name — not linked to a faculty record</p>
+                )}
+                {facultySpecMismatch && (
+                  <p className="text-[10px] text-amber-600">
+                    ⚠ No recorded specialization matches &ldquo;{selectedSubjectForEntry?.title}&rdquo;, so every
+                    faculty member is listed. Add that subject to the right instructor&apos;s specializations on
+                    the Faculty page to narrow this list.
+                  </p>
                 )}
               </div>
 
