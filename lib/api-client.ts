@@ -25,7 +25,18 @@ export async function safeFetch<T = any>(
 
   let res: Response
   try {
-    res = await fetch(url, { ...options, redirect: "follow", signal: controller.signal })
+    // cache: "no-store" is deliberate. The proxy returns early for /api/* routes
+    // (see lib/supabase/middleware.ts) so API responses never receive the
+    // Cache-Control: no-store header the page routes get, which left the browser
+    // free to replay a cached GET. "Mark all read" was the visible symptom: the
+    // PATCH committed, the refetch was served from cache, and the unread badge
+    // stayed put — the action looked like it had done nothing.
+    res = await fetch(url, {
+      ...options,
+      cache: "no-store",
+      redirect: "follow",
+      signal: controller.signal,
+    })
   } catch (err: any) {
     if (err?.name === "AbortError") {
       throw new Error("Request timed out. Please check your connection and try again.")

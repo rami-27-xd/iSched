@@ -728,7 +728,13 @@ export default function AvailabilityPage() {
                   </option>
                 ))}
               </select>
-              <CollegeFilter userRole={currentUser?.role ?? "FACULTY"} />
+              {/* Only a Dept Chair can actually switch colleges. For a Program Chair
+                  CollegeFilter renders a read-only badge naming the one college they are
+                  already locked to — a control that cannot be operated and states
+                  something the page never varies by, so it is not shown to them. */}
+              {currentUser?.role === "SUPER_ADMIN" && (
+                <CollegeFilter userRole={currentUser.role} />
+              )}
             </>
           }
         />

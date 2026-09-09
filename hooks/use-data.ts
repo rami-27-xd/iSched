@@ -377,8 +377,10 @@ export function useMarkNotificationRead() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["notifications"] })
+    onSuccess: async () => {
+      // refetchType "all" so the badge updates even if the popover has closed and
+      // its query observer is no longer mounted.
+      await queryClient.invalidateQueries({ queryKey: ["notifications"], refetchType: "all" })
     },
     onError: (err: Error) => toast.error(err.message),
   })

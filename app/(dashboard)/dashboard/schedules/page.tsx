@@ -3013,7 +3013,7 @@ export default function SchedulesPage() {
                 <div className="relative" ref={sectionComboRef}>
                   <Input
                     placeholder="Search section..."
-                    className={`w-full${missingRing(entryMissing, "section")}`}
+                    className={`h-10 w-full px-3${missingRing(entryMissing, "section")}`}
                     value={sectionSearch || sections.find((s: any) => s.id === entryForm.sectionId)?.name || ""}
                     onChange={(e) => {
                       setSectionSearch(e.target.value)
@@ -3066,7 +3066,7 @@ export default function SchedulesPage() {
                 <select
                   value={entryForm.subjectId}
                   onChange={(e) => { setEntryForm((f) => ({ ...f, subjectId: e.target.value, set: "" })); setSplitLabSets(false); setEntryMissing((m) => m.filter((x) => x !== "subject")) }}
-                  className={`w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(entryMissing, "subject")}`}
+                  className={`w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(entryMissing, "subject")}`}
                 >
                   <option value="">Select subject</option>
                   {filteredSubjects.map((s: any) => (
@@ -3119,7 +3119,7 @@ export default function SchedulesPage() {
                     <select
                       value={entryForm.set}
                       onChange={(e) => setEntryForm((f) => ({ ...f, set: e.target.value as "" | "A" | "B" }))}
-                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     >
                       <option value="">Select set</option>
                       <option value="A" disabled={placedSetsForEntry.has("A")}>
@@ -3152,7 +3152,7 @@ export default function SchedulesPage() {
                 <div className="relative" ref={facultyComboRef}>
                   <Input
                     placeholder="Type faculty name..."
-                    className={`w-full${missingRing(entryMissing, "faculty")}`}
+                    className={`h-10 w-full px-3${missingRing(entryMissing, "faculty")}`}
                     value={
                       facultySearch ||
                       entryForm.facultyName ||
@@ -3275,7 +3275,7 @@ export default function SchedulesPage() {
                   <select
                     value={entryForm.roomId}
                     onChange={(e) => setEntryForm((f) => ({ ...f, roomId: e.target.value }))}
-                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   >
                     <option value="">Select room</option>
                     {filteredRooms.map((r: any) => (
@@ -3331,7 +3331,7 @@ export default function SchedulesPage() {
                 <select
                   value={entryForm.day}
                   onChange={(e) => setEntryForm((f) => ({ ...f, day: e.target.value, startTime: "", endTime: "" }))}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">Select day</option>
                   {availableDays.map((d) => (
@@ -3393,7 +3393,7 @@ export default function SchedulesPage() {
                 <select
                   value={entryForm.startTime}
                   onChange={(e) => setEntryForm((f) => ({ ...f, startTime: e.target.value, endTime: "" }))}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">Select time</option>
                   {constraintFilteredStartTimes.map(({ time, available, reasons }) => (
@@ -3408,7 +3408,7 @@ export default function SchedulesPage() {
                 <select
                   value={entryForm.endTime}
                   onChange={(e) => setEntryForm((f) => ({ ...f, endTime: e.target.value }))}
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">Select time</option>
                   {constraintFilteredEndTimes.map(({ time }) => (
