@@ -392,18 +392,24 @@ function FacultyCard({
         {/* Timeline */}
         <div className="relative select-none overflow-x-auto" style={{ userSelect: "none" }}>
           <div className="min-w-[600px]">
-            {/* Hour labels */}
-            <div className="flex text-[10px] text-muted-foreground mb-0.5 pl-0">
+            {/* Hour labels — anchored to each hour's slot boundary so they sit
+                directly over the gridlines drawn on the cells below (borderLeft =
+                the cell's left edge). The previous version centered each label
+                inside its 30-min cell, floating it half a slot to the right of
+                the boundary it marks, so a block that looked like it began at
+                8:00 was really being set to 7:45–8:15. */}
+            <div className="relative h-3 mb-0.5 text-[10px] text-muted-foreground">
               {SLOTS.map((slot, i) => {
                 const [, m] = slot.split(":").map(Number)
+                if (m !== 0) return null
                 return (
-                  <div
+                  <span
                     key={i}
-                    className="text-center"
-                    style={{ width: `${100 / SLOTS.length}%`, minWidth: 0 }}
+                    className="absolute top-0 -translate-x-1/2 whitespace-nowrap tabular-nums"
+                    style={{ left: `${(i / SLOTS.length) * 100}%` }}
                   >
-                    {m === 0 ? formatTime12(slot).replace(":00 ", "").replace(" ", "") : ""}
-                  </div>
+                    {formatTime12(slot).replace(":00 ", "").replace(" ", "")}
+                  </span>
                 )
               })}
             </div>

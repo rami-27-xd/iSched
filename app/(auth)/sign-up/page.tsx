@@ -13,6 +13,19 @@ const ALLOWED_ROLES: Record<string, { label: string; description: string }> = {
   SUPER_ADMIN: { label: 'Department Chair', description: 'Full system access — manage all schedules, faculty, and settings' },
 }
 
+// Supabase reports a taken email in two ways: an explicit error, OR — when
+// email-enumeration protection is on (the default) — a "success" response whose
+// user has an empty `identities` array. Treat both as "account already exists".
+function isDuplicateEmailError(message: string): boolean {
+  const m = message.toLowerCase()
+  return (
+    m.includes('already registered') ||
+    m.includes('already been registered') ||
+    m.includes('user already exists') ||
+    m.includes('email address is already')
+  )
+}
+
 function SignUpForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -40,6 +53,8 @@ function SignUpForm() {
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [success, setSuccess] = useState(false)
+  // Blocking popup shown when the email is already registered — routes back to sign-in.
+  const [existingAccountEmail, setExistingAccountEmail] = useState('')
   // Whether an approved Department Chair already exists. When none does, the
   // first person to register as Department Chair is auto-approved (no approver
   // needed) — see ensureDbUser() bootstrap in lib/auth.ts. Default true so we
@@ -118,7 +133,7 @@ function SignUpForm() {
       return
     }
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -138,17 +153,19 @@ function SignUpForm() {
     })
 
     if (error) {
-      // Give a clear message for the most common error — duplicate email
-      if (
-        error.message.toLowerCase().includes('already registered') ||
-        error.message.toLowerCase().includes('already been registered') ||
-        error.message.toLowerCase().includes('user already exists') ||
-        error.message.toLowerCase().includes('email address is already')
-      ) {
-        setError('An account with this email already exists. Please sign in instead.')
+      if (isDuplicateEmailError(error.message)) {
+        setExistingAccountEmail(email)
       } else {
         setError(error.message)
       }
+      setLoading(false)
+      return
+    }
+
+    // No error, but an empty `identities` array means the email is already taken
+    // (Supabase hides this behind a fake success when enumeration protection is on).
+    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      setExistingAccountEmail(email)
       setLoading(false)
       return
     }
@@ -545,6 +562,43 @@ function SignUpForm() {
           </Link>
         </p>
       </div>
+
+      {/* Account-already-exists popup — blocks the form and sends the user to sign in. */}
+      {existingAccountEmail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 text-center shadow-2xl">
+            <div className="mx-auto mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#D4AF37]">
+              <ShieldCheck className="h-6 w-6 text-[#1B4332]" />
+            </div>
+            <h2 className="text-lg font-bold text-gray-900">Account already exists</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              An account is already registered for{' '}
+              <strong className="text-gray-900">{existingAccountEmail}</strong>. Please sign in
+              instead.
+            </p>
+            <div className="mt-5 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => router.push('/sign-in')}
+                className="w-full rounded-lg bg-[#1B4332] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#2D6A4F]"
+              >
+                Go to Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => setExistingAccountEmail('')}
+                className="w-full rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+              >
+                Use a different email
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

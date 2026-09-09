@@ -32,7 +32,6 @@ export default function DashboardPage() {
     activeSchedules: 0,
     totalFaculty: 0,
     availableRooms: 0,
-    conflictsDetected: 0,
     unassignedSubjects: 0,
   }
 
@@ -182,12 +181,6 @@ export default function DashboardPage() {
       variant: "default" as const,
     },
     {
-      title: "Conflicts Detected",
-      value: isLoading ? "—" : String(stats.conflictsDetected),
-      icon: AlertTriangle,
-      variant: "error" as const,
-    },
-    {
       title: "Unassigned Subjects",
       value: isLoading ? "—" : String(stats.unassignedSubjects),
       icon: Inbox,
@@ -198,7 +191,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {kpiData.map((kpi) => (
           <KPICard
             key={kpi.title}
