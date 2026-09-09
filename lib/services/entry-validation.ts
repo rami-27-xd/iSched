@@ -3,6 +3,7 @@
 
 import { db } from "@/lib/db"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
+import { specializationsCoverSubject } from "@/lib/specialization-match"
 
 interface EntryData {
   subjectId: string
@@ -375,12 +376,10 @@ export async function validateEntry(
     return `${fname} has no specializations recorded, so they cannot be assigned to "${subject.code} - ${subject.title}". Add their specializations on the Faculty page first.`
   }
   if (faculty && subject && faculty.specializations.length > 0) {
-    const specLower = faculty.specializations.map((s: string) => s.toLowerCase().trim())
-    const titleLower = (subject.title ?? "").toLowerCase().trim()
-    const matches = specLower.some(
-      (sp: string) => sp === titleLower || titleLower.includes(sp) || sp.includes(titleLower)
-    )
-    if (!matches) {
+    // Shared with the Add/Edit Entry pickers — see lib/specialization-match.ts.
+    // Previously this used a stricter exact/substring test than the dropdown, so a
+    // faculty member the picker offered could still be refused here on save.
+    if (!specializationsCoverSubject(faculty.specializations, subject.title)) {
       return `Specialization mismatch: Faculty's specializations (${faculty.specializations.join(", ")}) do not match subject "${subject.code} - ${subject.title}"`
     }
   }
