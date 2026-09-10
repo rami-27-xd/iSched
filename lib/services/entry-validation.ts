@@ -137,6 +137,8 @@ export async function validateEntry(
       : Promise.resolve([]),
     // Faculty — active status, specializations, per-week cap, and the buildings
     // they're available to teach in (engine parity: enforceBuildingAvailability).
+    // Building availability is scoped to THIS schedule's semester — same rule the
+    // generator uses, so a manual entry can't lean on another semester's rows.
     db.faculty.findUnique({
       where: { id: entry.facultyId },
       select: {
@@ -144,7 +146,10 @@ export async function validateEntry(
         specializations: true,
         isActive: true,
         maxUnitsPerWeek: true,
-        buildingAvailability: { select: { buildingId: true } },
+        buildingAvailability: {
+          where: schedule?.semesterId ? { semesterId: schedule.semesterId } : undefined,
+          select: { buildingId: true },
+        },
         user: { select: { firstName: true, lastName: true, isActive: true } },
       },
     }),

@@ -288,10 +288,17 @@ export async function POST(
         },
         include: {
           user: true,
-          // Load rows for the schedule's semester AND the active-semester fallback;
-          // the mapping below prefers the schedule's own semester when present.
+          // Time availability: schedule's semester OR the active-semester fallback.
+          // Weekly time slots are saved against the active semester and carry over
+          // between terms (Section 7 / Bug 3) — the mapping below prefers the
+          // schedule's own rows when present.
           availability: { where: { semesterId: { in: availabilitySemesterIds } } },
-          buildingAvailability: { where: { semesterId: { in: availabilitySemesterIds } } },
+          // Building availability: STRICT to the schedule's own semester — no
+          // cross-semester fallback. Which buildings a faculty may teach in is a
+          // per-term decision, so a 2nd-semester schedule must be built against
+          // 2nd-semester building access and never silently inherit the 1st
+          // semester's rows.
+          buildingAvailability: { where: { semesterId: schedule.semesterId } },
         },
       }),
       db.room.findMany({
@@ -409,8 +416,6 @@ export async function POST(
       // (Section 7 / Bug 3 — see availabilitySemesterIds above).
       const availOwn = f.availability.filter((a: any) => a.semesterId === schedule.semesterId)
       const avail = availOwn.length > 0 ? availOwn : f.availability
-      const bldgOwn = f.buildingAvailability.filter((b: any) => b.semesterId === schedule.semesterId)
-      const bldg = bldgOwn.length > 0 ? bldgOwn : f.buildingAvailability
       return {
         id: f.id,
         name: `${f.user.firstName} ${f.user.lastName}`,
@@ -422,8 +427,11 @@ export async function POST(
           startTime: a.startTime,
           endTime: a.endTime,
         })),
-        // Distinct building IDs this faculty can teach in (same semester fallback).
-        allowedBuildingIds: bldg.map((b: any) => b.buildingId),
+        // Distinct building IDs this faculty may teach in THIS semester. Rows were
+        // filtered to schedule.semesterId at query time — no cross-semester
+        // fallback, so 2nd-semester generation strictly honors 2nd-semester
+        // building access.
+        allowedBuildingIds: f.buildingAvailability.map((b: any) => b.buildingId),
       }
     })
 
