@@ -61,7 +61,10 @@ function formatTime12h(time: string): string {
 
 function formatDateLabel(dateStr?: string): string {
   if (!dateStr) return ""
-  const d = new Date(dateStr + "T00:00:00")
+  // Accept both "2026-01-12" and full ISO strings ("2026-01-12T00:00:00.000Z").
+  const datePart = dateStr.split("T")[0]
+  const d = new Date(datePart + "T00:00:00")
+  if (Number.isNaN(d.getTime())) return ""
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
 }
 
@@ -70,10 +73,10 @@ function renderEventContent(eventInfo: EventContentArg) {
   const isConflict = props.hasConflict
   const setLabel = props.type === "LABORATORY" && props.set ? ` (Set ${props.set})` : ""
   return (
-    <div className={`px-2 py-1.5 overflow-hidden leading-snug h-full flex flex-col justify-center ${isConflict ? "bg-red-600/90" : ""}`}>
+    <div className={`isched-ev px-1.5 py-1 overflow-hidden leading-tight h-full flex flex-col justify-center gap-px ${isConflict ? "bg-red-600/90" : ""}`}>
       <div className="font-bold text-[11px] text-white truncate">{props.subjectCode}{setLabel}</div>
-      <div className="text-[10px] text-white/85 truncate">{props.facultyName}</div>
-      <div className="text-[9px] text-white/70 truncate">{props.roomCode} &middot; {props.sectionName}</div>
+      <div className="isched-ev-sub text-[10px] text-white/90 truncate">{props.facultyName}</div>
+      <div className="isched-ev-sub text-[9px] text-white/75 truncate">{props.roomCode} &middot; {props.sectionName}</div>
     </div>
   )
 }
@@ -141,11 +144,17 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
   // Mon/Tue are never clipped when the semester starts mid-week (e.g. Wed Jun 3).
   const calendarValidStart = useMemo(() => {
     if (!semesterStartDate) return undefined
-    const d = new Date(semesterStartDate + "T00:00:00")
+    const d = new Date(semesterStartDate.split("T")[0] + "T00:00:00")
     const dow = d.getDay() // 0=Sun … 6=Sat
     const daysBack = dow === 0 ? 6 : dow - 1 // shift to Monday
     d.setDate(d.getDate() - daysBack)
-    return d.toISOString().split("T")[0]
+    // Format from LOCAL fields — toISOString() converts to UTC, which in a
+    // timezone ahead of UTC (e.g. UTC+8) rolls the date back a day and made
+    // validRange.start land on Sunday, clipping Monday out of the week view.
+    const y = d.getFullYear()
+    const mo = String(d.getMonth() + 1).padStart(2, "0")
+    const da = String(d.getDate()).padStart(2, "0")
+    return `${y}-${mo}-${da}`
   }, [semesterStartDate])
 
   // Count entries by type for legend
@@ -301,9 +310,9 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
 
           /* ── Event blocks — time-spanning with gold accent ── */
           .isched-calendar-wrap .fc-timegrid-event {
-            border-radius: 6px !important;
+            border-radius: 5px !important;
             border-left-width: 3px !important;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.15), 0 1px 2px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.18);
             transition: box-shadow 0.15s ease, transform 0.15s ease;
             overflow: hidden;
             cursor: pointer;
@@ -316,10 +325,39 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           .isched-calendar-wrap .fc-timegrid-event .fc-event-main {
             padding: 0;
           }
+          /* Drop the 2nd/3rd text lines only when the block is too short for them
+             (≈ a 30-min class) so single-line events stay readable. */
+          .isched-calendar-wrap .fc-timegrid-event.fc-timegrid-event-short .isched-ev-sub {
+            display: none;
+          }
 
           /* ── Overlapping events side-by-side ── */
           .isched-calendar-wrap .fc-timegrid-event-harness {
-            margin-right: 2px;
+            margin-right: 1px;
+          }
+
+          /* ── "+N more" chip (was an unstyled grey bar) ── */
+          .isched-calendar-wrap .fc-timegrid-more-link {
+            background: #1B4332;
+            color: #fff;
+            font-size: 0.65rem;
+            font-weight: 700;
+            line-height: 1;
+            padding: 2px 4px;
+            border-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+          }
+          .isched-calendar-wrap .fc-timegrid-more-link:hover {
+            background: #2D6A4F;
+          }
+          .isched-calendar-wrap .fc-popover {
+            border: 1px solid #1B4332 !important;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+          }
+          .isched-calendar-wrap .fc-popover-header {
+            background: #1B4332;
+            color: #fff;
           }
 
           /* ── Remove outer borders for clean look ── */
@@ -330,14 +368,10 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
             display: none;
           }
 
-          /* ── Mobile: ensure minimum width so calendar is scrollable ── */
+          /* ── Keep day columns wide enough to read; scroll horizontally when
+                the container is narrower than this. ── */
           .isched-calendar-wrap .fc {
-            min-width: 680px;
-          }
-          @media (min-width: 768px) {
-            .isched-calendar-wrap .fc {
-              min-width: auto;
-            }
+            min-width: 1040px;
           }
         `}</style>
         <FullCalendar
@@ -362,11 +396,12 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           weekends={true}
           hiddenDays={[0]}
           slotEventOverlap={false}
-          eventMaxStack={5}
+          eventMaxStack={3}
+          moreLinkText={(n) => `+${n}`}
           nowIndicator={true}
           dayHeaderFormat={{ weekday: "long" }}
-          {...(semesterStartDate ? { initialDate: semesterStartDate } : {})}
-          {...(calendarValidStart && semesterEndDate ? { validRange: { start: calendarValidStart, end: semesterEndDate } } : {})}
+          {...(semesterStartDate ? { initialDate: semesterStartDate.split("T")[0] } : {})}
+          {...(calendarValidStart && semesterEndDate ? { validRange: { start: calendarValidStart, end: semesterEndDate.split("T")[0] } } : {})}
           events={events}
           editable={false}
           selectable={true}
