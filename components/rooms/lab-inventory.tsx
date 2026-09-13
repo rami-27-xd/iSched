@@ -34,6 +34,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useQuery } from '@tanstack/react-query'
+import { PaginationControls, usePagination } from '@/components/shared/pagination'
 
 // ── Specialization metadata ───────────────────────────────────────────────
 
@@ -146,6 +147,8 @@ function LabGroup({
   rooms: any[]
 }) {
   const [expanded, setExpanded] = React.useState(true)
+  // 10 rooms per page within each specialization group.
+  const pager = usePagination(rooms)
   const meta = specialization ? LAB_SPEC_META[specialization] ?? GENERAL_LAB_META : GENERAL_LAB_META
   const Icon = meta.icon
   const activeCount = rooms.filter((r) => r.isActive !== false).length
@@ -182,11 +185,24 @@ function LabGroup({
           {rooms.length === 0 ? (
             <p className="text-sm text-muted-foreground py-2">No rooms in this category.</p>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {rooms.map((room: any) => (
-                <RoomChip key={room.id} room={room} />
-              ))}
-            </div>
+            <>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {pager.pageItems.map((room: any) => (
+                  <RoomChip key={room.id} room={room} />
+                ))}
+              </div>
+              <PaginationControls
+                size="sm"
+                page={pager.page}
+                pageCount={pager.pageCount}
+                onPageChange={pager.setPage}
+                total={pager.total}
+                from={pager.from}
+                to={pager.to}
+                label="rooms"
+                className="mt-2"
+              />
+            </>
           )}
         </CardContent>
       )}

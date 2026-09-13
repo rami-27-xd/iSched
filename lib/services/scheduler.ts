@@ -32,6 +32,13 @@ interface SubjectInput {
   //   []             → subject is not needed for any section in this run; skip silently.
   // Used for GEC subjects whose year/semester placement varies per program.
   allowedSectionIds?: string[] | null
+  // Placeholder assignment (PATHFIT): the subject is always taught by this
+  // faculty in this room — both are shared placeholders (TBA / GYM), so no
+  // faculty-availability, specialization, room-type or double-booking check
+  // applies. Tasks for such subjects are placed FIRST (before every other
+  // task) so they can never be crowded out; only the section's own timetable
+  // and already-locked slots constrain where they land.
+  fixedAssignment?: { facultyId: string; roomId: string } | null
 }
 
 interface FacultyInput {
@@ -136,6 +143,8 @@ interface SchedulingTask {
   section: SectionInput
   // Present only for lab subjects — each lab becomes two independent tasks.
   set?: 'A' | 'B'
+  // True for placeholder-assigned subjects (SubjectInput.fixedAssignment).
+  fixed?: boolean
 }
 
 export interface ScheduleConstraints {
@@ -183,8 +192,13 @@ function shuffleInPlace<T>(arr: T[]): T[] {
   return arr
 }
 const TIMEOUT_CHECK_INTERVAL = 200
+// Clock window used to place placeholder-assigned (fixedAssignment) tasks. The
+// TBA faculty has no availability rows, so the engine needs its own bounds —
+// regular class hours, in 30-minute steps.
+const PRIORITY_WINDOW_START_MIN = 7 * 60   // 07:00
+const PRIORITY_WINDOW_END_MIN   = 18 * 60  // 18:00
 // Beyond this many tasks, backtracking provably cannot finish before the timeout.
-// Keep low so GEC/PATHFIT runs (many sections) always use fast greedy mode.
+// Keep low so GEC runs (many sections) always use fast greedy mode.
 const GREEDY_ONLY_THRESHOLD = 60
 
 // Predefined day-group patterns per total credit hours.
@@ -228,6 +242,11 @@ export class SchedulingEngine {
   private assignments: Assignment[] = []
   private constraints: ScheduleConstraints
   private tasks: SchedulingTask[] = []
+  // Placeholder-assigned tasks (PATHFIT → TBA/GYM). Placed before everything
+  // else in generate(); never go through candidate enumeration or MRV.
+  private priorityTasks: SchedulingTask[] = []
+  private priorityAssignments: Assignment[] = []
+  private priorityUnassigned: UnassignedTask[] = []
   // Subjects that had no matching sections at task-build time — reported as unassigned.
   private noSectionSubjects: UnassignedTask[] = []
 
@@ -274,8 +293,10 @@ export class SchedulingEngine {
     this.roomMap = new Map(rooms.map(r => [r.id, r]))
     this.buildLectureLabPairs()
 
-    this.tasks = this.buildTasks()
-    // For large runs (GEC/PATHFIT across all sections), use a tight per-task limit so
+    const allTasks = this.buildTasks()
+    this.priorityTasks = allTasks.filter(t => t.fixed)
+    this.tasks = allTasks.filter(t => !t.fixed)
+    // For large runs (GEC across all sections), use a tight per-task limit so
     // candidate enumeration is O(tasks × earlyStopLimit) instead of O(tasks × 50K+).
     const candidateLimit = this.tasks.length > GREEDY_ONLY_THRESHOLD
       ? MAX_CANDIDATES_GREEDY
@@ -285,7 +306,20 @@ export class SchedulingEngine {
 
   // Pre-populate slot maps with entries that must be treated as already-occupied.
   // Called after every slot-map clear in generate() so locked slots survive resets.
+  // Priority (placeholder) placements made earlier in this run are re-applied
+  // here too, so a backtracking reset can never displace them.
   private preloadLockedSlots(): void {
+    for (const a of this.priorityAssignments) {
+      const sectionKey = a.set ? `${a.sectionId}|${a.set}` : a.sectionId
+      const sessions = [
+        { day: a.day, start: this.toMinutes(a.startTime), end: this.toMinutes(a.endTime) },
+        ...a.extraSessions.map(s => ({ day: s.day, start: this.toMinutes(s.startTime), end: this.toMinutes(s.endTime) })),
+      ]
+      for (const ses of sessions) {
+        this.addSlots(this.sectionSlots, sectionKey, ses.day, ses.start, ses.end)
+        if (a.set) this.addSlots(this.sectionSlots, a.sectionId, ses.day, ses.start, ses.end)
+      }
+    }
     for (const entry of this.lockedEntries) {
       const startMin = this.toMinutes(entry.startTime)
       const endMin   = this.toMinutes(entry.endTime)
@@ -345,6 +379,7 @@ export class SchedulingEngine {
         })
         continue
       }
+      const fixed = !!subject.fixedAssignment
       for (const section of matchingSections) {
         if (subject.type === 'LABORATORY') {
           // Labs: two independent tasks so Set A and Set B get genuinely different slots.
@@ -356,6 +391,7 @@ export class SchedulingEngine {
               subject,
               section,
               set,
+              fixed,
             })
           }
         } else {
@@ -365,6 +401,7 @@ export class SchedulingEngine {
             sectionId: section.id,
             subject,
             section,
+            fixed,
           })
         }
       }
@@ -373,11 +410,31 @@ export class SchedulingEngine {
   }
 
   async generate(): Promise<GenerationResult> {
+    // ── Priority pass: placeholder-assigned tasks (PATHFIT → TBA / GYM) ──────
+    // Placed before anything else, against a clean board that holds only the
+    // locked entries. Their placements are then treated exactly like locked
+    // entries for the remainder of the run (see preloadLockedSlots).
+    this.assignments = []
+    this.facultySlots.clear()
+    this.roomSlots.clear()
+    this.sectionSlots.clear()
+    this.facultyDailyMinutes.clear()
+    this.facultyWeeklyUnits.clear()
+    this.facultySubjectSections.clear()
+    this.assignedFacultyMap.clear()
+    this.priorityAssignments = []
+    this.priorityUnassigned = []
+    this.preloadLockedSlots()
+    this.placePriorityTasks()
+
     // Subjects with no matching sections are already in noSectionSubjects.
     // If there are also no schedulable tasks, report everything and return early.
     if (this.tasks.length === 0) {
-      if (this.noSectionSubjects.length > 0) {
-        return { assignments: [], unassigned: this.noSectionSubjects }
+      if (this.noSectionSubjects.length > 0 || this.priorityTasks.length > 0) {
+        return {
+          assignments: [...this.priorityAssignments],
+          unassigned: [...this.noSectionSubjects, ...this.priorityUnassigned],
+        }
       }
       throw new SchedulingError(
         'No scheduling tasks to process',
@@ -399,9 +456,11 @@ export class SchedulingEngine {
     }
 
     // Build unassigned list — start with subjects that had no sections at all,
-    // then add tasks whose constraint domain was empty (no valid faculty/room/time).
+    // then priority tasks that found no free slot, then tasks whose constraint
+    // domain was empty (no valid faculty/room/time).
     const unassigned: UnassignedTask[] = [
       ...this.noSectionSubjects,
+      ...this.priorityUnassigned,
       ...emptyDomainTasks.map(t => ({
         subjectId: t.subjectId,
         subjectCode: t.subject.code,
@@ -413,7 +472,7 @@ export class SchedulingEngine {
     ]
 
     if (schedulableTasks.length === 0) {
-      return { assignments: [], unassigned }
+      return { assignments: [...this.priorityAssignments], unassigned }
     }
 
     const orderedTasks = this.applyMRV(schedulableTasks)
@@ -433,14 +492,14 @@ export class SchedulingEngine {
     // the 60 s serverless timeout.
     const deadline = this.startTime + 40_000
 
-    // For large scheduling runs (GEC/PATHFIT across many sections), backtracking
+    // For large scheduling runs (GEC across many sections), backtracking
     // provably cannot finish before the timeout — skip straight to greedy.
     const useBacktracking = schedulableTasks.length <= GREEDY_ONLY_THRESHOLD
 
     if (useBacktracking) {
       const success = this.backtrack(orderedTasks, 0)
       if (success) {
-        return { assignments: [...this.assignments], unassigned }
+        return { assignments: [...this.priorityAssignments, ...this.assignments], unassigned }
       }
       // Backtracking timed out or hit a dead end — reset and fall through to greedy.
       this.assignments = []
@@ -456,7 +515,100 @@ export class SchedulingEngine {
     const { assigned, unassigned: greedyUnassigned } = this.greedyAssign(orderedTasks, deadline)
     unassigned.push(...greedyUnassigned)
 
-    return { assignments: assigned, unassigned }
+    return { assignments: [...this.priorityAssignments, ...assigned], unassigned }
+  }
+
+  /**
+   * Places every placeholder-assigned task (SubjectInput.fixedAssignment —
+   * PATHFIT with the TBA faculty in the GYM). Neither resource is real or
+   * scarce, so the only constraints are the section's own timetable (plus
+   * locked entries such as pre-plotted CIT labs) and the Saturday rule.
+   * Runs before every other task so these classes are never crowded out.
+   */
+  private placePriorityTasks(): void {
+    for (const task of this.priorityTasks) {
+      const { subject, section } = task
+      const fixed = subject.fixedAssignment!
+      // Distributed patterns (MW / TTh …) first, single-block fallback last —
+      // each group shuffled so PATHFIT spreads across the week instead of
+      // piling onto the same day and hour for every section.
+      const allPatterns = this.getPatternsForTask(subject, section)
+      const distributed = shuffleInPlace(allPatterns.filter(p => p.days.length > 1))
+      const single = shuffleInPlace(allPatterns.filter(p => p.days.length === 1))
+      const patterns = [...distributed, ...single]
+
+      let placed: Assignment | null = null
+      outer: for (const { days, minutesEach } of patterns) {
+        const starts: number[] = []
+        for (let t = PRIORITY_WINDOW_START_MIN; t + minutesEach <= PRIORITY_WINDOW_END_MIN; t += 30) starts.push(t)
+        for (const startMin of shuffleInPlace(starts)) {
+          const candidate: Assignment = {
+            subjectId: subject.id,
+            facultyId: fixed.facultyId,
+            roomId: fixed.roomId,
+            sectionId: section.id,
+            day: days[0],
+            startTime: this.fromMinutes(startMin),
+            endTime: this.fromMinutes(startMin + minutesEach),
+            extraSessions: days.slice(1).map(d => ({
+              day: d,
+              startTime: this.fromMinutes(startMin),
+              endTime: this.fromMinutes(startMin + minutesEach),
+            })),
+            ...(task.set !== undefined ? { set: task.set } : {}),
+          }
+          if (this.isSectionFree(candidate)) {
+            placed = candidate
+            break outer
+          }
+        }
+      }
+
+      if (placed) {
+        this.priorityAssignments.push(placed)
+        // Occupy only the section's slots — the placeholder faculty/room are
+        // shared and must never block anything.
+        const sectionKey = placed.set ? `${placed.sectionId}|${placed.set}` : placed.sectionId
+        const sessions = [
+          { day: placed.day, start: this.toMinutes(placed.startTime), end: this.toMinutes(placed.endTime) },
+          ...placed.extraSessions.map(s => ({ day: s.day, start: this.toMinutes(s.startTime), end: this.toMinutes(s.endTime) })),
+        ]
+        for (const ses of sessions) {
+          this.addSlots(this.sectionSlots, sectionKey, ses.day, ses.start, ses.end)
+          if (placed.set) this.addSlots(this.sectionSlots, placed.sectionId, ses.day, ses.start, ses.end)
+        }
+      } else {
+        this.priorityUnassigned.push({
+          subjectId: task.subjectId,
+          subjectCode: subject.code,
+          subjectTitle: subject.title,
+          sectionId: task.sectionId,
+          sectionName: section.name,
+          reason: `No free time for ${section.name} between ${this.fromMinutes(PRIORITY_WINDOW_START_MIN)} and ${this.fromMinutes(PRIORITY_WINDOW_END_MIN)} — the section's week is already full`,
+        })
+      }
+    }
+  }
+
+  // Section-only consistency check used by the priority pass: true when no
+  // session of the candidate overlaps anything already on the section's
+  // timetable (lab sets A/B are independent groups, lectures block both).
+  private isSectionFree(candidate: Assignment): boolean {
+    const sessions = [
+      { day: candidate.day, start: this.toMinutes(candidate.startTime), end: this.toMinutes(candidate.endTime) },
+      ...candidate.extraSessions.map(s => ({ day: s.day, start: this.toMinutes(s.startTime), end: this.toMinutes(s.endTime) })),
+    ]
+    for (const ses of sessions) {
+      if (candidate.set) {
+        if (this.hasSlotConflict(this.sectionSlots, `${candidate.sectionId}|${candidate.set}`, ses.day, ses.start, ses.end)) return false
+        if (this.hasSlotConflict(this.sectionSlots, candidate.sectionId, ses.day, ses.start, ses.end)) return false
+      } else {
+        if (this.hasSlotConflict(this.sectionSlots, candidate.sectionId, ses.day, ses.start, ses.end)) return false
+        if (this.hasSlotConflict(this.sectionSlots, `${candidate.sectionId}|A`, ses.day, ses.start, ses.end)) return false
+        if (this.hasSlotConflict(this.sectionSlots, `${candidate.sectionId}|B`, ses.day, ses.start, ses.end)) return false
+      }
+    }
+    return true
   }
 
   private greedyAssign(tasks: SchedulingTask[], deadline?: number): { assigned: Assignment[], unassigned: UnassignedTask[] } {

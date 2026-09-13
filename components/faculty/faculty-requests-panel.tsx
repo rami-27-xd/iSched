@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Check, Inbox, Loader2, Send, X } from "lucide-react"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
 
 interface FacultyRequestRow {
   id: string
@@ -115,6 +116,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
   const pending = requests.filter((r) => r.status === "PENDING")
   const settled = requests.filter((r) => r.status !== "PENDING")
   const visible = showSettled ? requests : pending
+  const pager = usePagination(visible)
 
   // A Program Chair always keeps the panel — it holds the button that raises a
   // request. A Dept Chair with no requests at all has nothing to act on, so the
@@ -163,7 +165,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
             {settled.length > 0 ? "No pending requests." : "No requests yet."}
           </p>
         ) : (
-          visible.map((r) => (
+          pager.pageItems.map((r) => (
             <div key={r.id} className="rounded-md border p-3 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium">
@@ -204,6 +206,16 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
             </div>
           ))
         )}
+        <PaginationControls
+          size="sm"
+          page={pager.page}
+          pageCount={pager.pageCount}
+          onPageChange={pager.setPage}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          label="requests"
+        />
       </CardContent>
 
       {/* Program Chair: raise a request */}

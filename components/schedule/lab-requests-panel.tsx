@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { FlaskConical, Loader2, Send, Check, X, ChevronDown, ChevronUp } from "lucide-react"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { toast } from "sonner"
 
 interface LabRequest {
@@ -142,6 +143,7 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
   const pending = requests.filter((r) => r.status === "PENDING")
   const settled = requests.filter((r) => r.status !== "PENDING")
   const visible = showSettled ? requests : pending
+  const pager = usePagination(visible)
   const isCollapsed = collapsed || (pending.length === 0 && !showSettled && !collapsedTouched)
 
   // Hide entirely only when this role has nothing at all to show. A Dept Chair keeps
@@ -204,7 +206,7 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
             {settled.length > 0 ? "No pending requests." : "No requests yet."}
           </p>
         ) : (
-          visible.map((r) => (
+          pager.pageItems.map((r) => (
             <div key={r.id} className="rounded-md border p-3 text-xs">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="font-medium">
@@ -239,6 +241,16 @@ export function LabRequestsPanel({ scheduleId, isSuperAdmin }: { scheduleId: str
             </div>
           ))
         )}
+        <PaginationControls
+          size="sm"
+          page={pager.page}
+          pageCount={pager.pageCount}
+          onPageChange={pager.setPage}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          label="requests"
+        />
       </CardContent>
       )}
 

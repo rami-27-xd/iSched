@@ -4,6 +4,8 @@
 import { db } from "@/lib/db"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 import { specializationsCoverSubject } from "@/lib/specialization-match"
+import { isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
+import { describeRequiredRoomTypes, roomTypeAllowedForSubject } from "@/lib/room-type-rules"
 
 interface EntryData {
   subjectId: string
@@ -204,17 +206,17 @@ export async function validateEntry(
   const allEntries = [...sameScheduleEntries, ...crossScheduleEntries]
   const existingEntries = sameScheduleEntries
 
-  // "TBA" (To Be Announced) sentinel — the placeholder a chair picks to
-  // manually resolve an Unassigned Queue item when no real faculty/room is
-  // available yet. It's a real Faculty/Room row (seeded once, prisma/seed-tba.ts),
-  // identified by these fixed values, so it exists in every normal dropdown —
-  // but it must be EXEMPT from the checks that exist to protect a real,
-  // scarce resource (specialization, availability, capacity, double-booking):
-  // none of those mean anything for a placeholder. Structural checks that
-  // don't depend on it being a real resource (section overlap, Saturday
-  // restriction, semester/year alignment) still apply as normal.
-  const isTbaFaculty = faculty?.employeeId === "TBA"
-  const isTbaRoom = roomAccess?.code === "TBA"
+  // Placeholder resources (see lib/sentinels.ts) — the "TBA" faculty/room a
+  // chair picks to manually resolve an Unassigned Queue item, and the shared
+  // "GYM" every PATHFIT class is held in. They are real Faculty/Room rows so
+  // they exist in every normal dropdown — but they must be EXEMPT from the
+  // checks that exist to protect a real, scarce resource (specialization,
+  // availability, capacity, double-booking, room type): none of those mean
+  // anything for a placeholder. Structural checks that don't depend on it
+  // being a real resource (section overlap, Saturday restriction,
+  // semester/year alignment) still apply as normal.
+  const isTbaFaculty = isTbaFacultyEmployeeId(faculty?.employeeId)
+  const isTbaRoom = isPlaceholderRoomCode(roomAccess?.code)
 
   // 0. Inactive faculty check — either Faculty.isActive or User.isActive must be true
   if (faculty && (faculty.isActive === false || faculty.user?.isActive === false)) {
@@ -264,12 +266,14 @@ export async function validateEntry(
     }
   }
 
-  // 0e. Room type — a subject that declares requiredRoomType may only use rooms
-  // of one of those types.
-  if (subject?.requiredRoomType?.length && roomAccess && !isTbaRoom) {
-    if (!subject.requiredRoomType.includes(roomAccess.type as any)) {
-      const need = subject.requiredRoomType.map((t: string) => t.replace(/_/g, " ")).join(", ")
-      return `Room type mismatch: "${subject.code}" requires ${need}, but ${roomAccess.code} is a ${String(roomAccess.type).replace(/_/g, " ")}.`
+  // 0e. Room type — the subject's explicit requiredRoomType, or the type-based
+  // default from lib/room-type-rules.ts (laboratory subjects need a lab room,
+  // computer-based labs a Computer Laboratory, lectures a lecture room). Same
+  // rule the engine applies, so a chair cannot hand-place what generation
+  // would refuse.
+  if (subject && roomAccess && !isTbaRoom) {
+    if (!roomTypeAllowedForSubject(roomAccess.type, subject)) {
+      return `Room type mismatch: "${subject.code}" must be held in a ${describeRequiredRoomTypes(subject)}, but ${roomAccess.code} is a ${String(roomAccess.type).replace(/_/g, " ").toLowerCase()}.`
     }
   }
 

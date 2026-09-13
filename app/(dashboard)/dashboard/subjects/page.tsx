@@ -22,6 +22,8 @@ import { toast } from "sonner"
 import { useColleges, useCreateSubject, useUpdateSubject, useDeleteSubject, useCreateSection, useUpdateSection, useDeleteSection } from "@/hooks/use-data"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { RoleGuard } from "@/components/shared/role-guard"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
+import { describeRequiredRoomTypes } from "@/lib/room-type-rules"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 
 const TYPE_COLORS: Record<string, string> = {
@@ -29,7 +31,10 @@ const TYPE_COLORS: Record<string, string> = {
   LABORATORY: "bg-purple-100 text-purple-800",
 }
 
-const INITIAL_SUBJECT = { code: "", title: "", units: "3", type: "", departmentId: "", yearLevelId: "", semester: "FIRST", year: "1" }
+// roomType "" = automatic (labs → lab rooms, computer-based labs → Computer
+// Laboratory, lectures → lecture rooms — see lib/room-type-rules.ts); any other
+// value pins the subject to that one room type.
+const INITIAL_SUBJECT = { code: "", title: "", units: "3", type: "", departmentId: "", yearLevelId: "", semester: "FIRST", year: "1", roomType: "" }
 const INITIAL_SECTION = { name: "", yearLevelId: "", capacity: "40" }
 
 function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester }: {
@@ -38,6 +43,8 @@ function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester
   subjects: any[]; onEdit: (s: any) => void; onDelete: (s: any) => void;
   displayYear?: number; displaySemester?: string;
 }) {
+  // 10 rows per page — a year level can carry a dozen or more subjects.
+  const pager = usePagination(subjects)
   if (subjects.length === 0) return null
   const yearLabel = (yr: number) => `${yr}${yr === 1 ? "st" : yr === 2 ? "nd" : yr === 3 ? "rd" : "th"}`
   const semLabel = (sem: string) => sem === "FIRST" ? "1st" : sem === "SECOND" ? "2nd" : "—"
@@ -54,7 +61,7 @@ function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester
           </tr>
         </thead>
         <tbody>
-          {subjects.map((s: any) => (
+          {pager.pageItems.map((s: any) => (
             <tr key={s.id} className="border-t hover:bg-muted/20">
               <td className="px-3 py-1.5 font-mono text-xs font-medium">
                 {s.code}
@@ -83,6 +90,17 @@ function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester
           ))}
         </tbody>
       </table>
+      <PaginationControls
+        size="sm"
+        page={pager.page}
+        pageCount={pager.pageCount}
+        onPageChange={pager.setPage}
+        total={pager.total}
+        from={pager.from}
+        to={pager.to}
+        label="subjects"
+        className="border-t bg-muted/30 px-3 py-1.5"
+      />
     </div>
   )
 }
@@ -187,6 +205,7 @@ export default function CoursesPage() {
       yearLevelId: s.yearLevelId ?? "",
       semester: s.semester ?? "FIRST",
       year: String(s.year ?? 1),
+      roomType: s.requiredRoomType?.[0] ?? "",
     })
     setSubjectOpen(true)
   }
@@ -260,12 +279,15 @@ export default function CoursesPage() {
           yearLevelId: resolvedYearLevelId || null,
           semester: subjectForm.semester,
           year: subjectForm.year,
+          requiredRoomType: subjectForm.roomType ? [subjectForm.roomType] : [],
         })
       } else {
+        const { roomType, ...rest } = subjectForm
         const payload = {
-          ...subjectForm,
+          ...rest,
           hoursPerWeek: subjectForm.units,
           yearLevelId: resolvedYearLevelId || null,
+          requiredRoomType: roomType ? [roomType] : [],
         }
         await createSubject.mutateAsync(payload)
         if (subjectForm.semester && subjectForm.semester !== semesterFilter) {
@@ -650,6 +672,27 @@ export default function CoursesPage() {
                   <SelectItem value="LABORATORY">Laboratory</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Room needed</Label>
+              <Select
+                value={subjectForm.roomType || "AUTO"}
+                onValueChange={(v) => setSubjectForm(f => ({ ...f, roomType: !v || v === "AUTO" ? "" : v }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AUTO">Automatic (by subject type)</SelectItem>
+                  <SelectItem value="LECTURE_ROOM">Lecture Room</SelectItem>
+                  <SelectItem value="LABORATORY">Laboratory</SelectItem>
+                  <SelectItem value="COMPUTER_LAB">Computer Laboratory</SelectItem>
+                  <SelectItem value="LECTURE_LAB">Lecture + Lab Room</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {subjectForm.roomType
+                  ? "Scheduling will only use rooms of this type for this subject."
+                  : `Automatic: ${describeRequiredRoomTypes({ code: subjectForm.code, title: subjectForm.title, type: subjectForm.type || "LECTURE", requiredRoomType: [] })}.`}
+              </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">

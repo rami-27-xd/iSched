@@ -19,6 +19,7 @@ import { useCollege } from "@/lib/college-context"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { PageHeader } from "@/components/shared/page-header"
 import { CollegeFilter } from "@/components/layout/college-filter"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -672,6 +673,18 @@ export default function AvailabilityPage() {
     }
   }
 
+  // Search by name or department, then 10 cards per page.
+  const filteredFaculty = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim()
+    if (!q) return faculty as any[]
+    return (faculty as any[]).filter((f) => {
+      const name = `${f.user?.firstName ?? ""} ${f.user?.lastName ?? ""}`.toLowerCase()
+      const dept = (f.department?.name ?? "").toLowerCase()
+      return name.includes(q) || dept.includes(q)
+    })
+  }, [faculty, searchQuery])
+  const facultyPager = usePagination(filteredFaculty)
+
   // ── Deactivate handler ──
   // Confirmation runs through an in-app dialog (deactivateTarget) rather than
   // the browser's native confirm(), which renders as a raw "localhost:3000
@@ -784,37 +797,40 @@ export default function AvailabilityPage() {
         </div>
       )}
 
-      {/* Faculty cards */}
-      {activeSemesterId && !isLoading && faculty.length > 0 && (() => {
-        const q = searchQuery.toLowerCase().trim()
-        const filtered = q
-          ? (faculty as any[]).filter((f) => {
-              const name = `${f.user?.firstName ?? ""} ${f.user?.lastName ?? ""}`.toLowerCase()
-              const dept = (f.department?.name ?? "").toLowerCase()
-              return name.includes(q) || dept.includes(q)
-            })
-          : (faculty as any[])
-        return filtered.length === 0 ? (
+      {/* Faculty cards — 10 per page */}
+      {activeSemesterId && !isLoading && faculty.length > 0 && (
+        filteredFaculty.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
             No faculty found matching &ldquo;{searchQuery}&rdquo;
           </div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
-            {filtered.map((f) => (
-              <FacultyCard
-                key={f.id}
-                faculty={f}
-                availabilityMap={availabilityMap}
-                allAvailability={allAvailability}
-                onSave={handleSave}
-                isSaving={saveMutation.isPending}
-                onEdit={openEdit}
-                onDeactivate={setDeactivateTarget}
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2">
+              {facultyPager.pageItems.map((f) => (
+                <FacultyCard
+                  key={f.id}
+                  faculty={f}
+                  availabilityMap={availabilityMap}
+                  allAvailability={allAvailability}
+                  onSave={handleSave}
+                  isSaving={saveMutation.isPending}
+                  onEdit={openEdit}
+                  onDeactivate={setDeactivateTarget}
+                />
+              ))}
+            </div>
+            <PaginationControls
+              page={facultyPager.page}
+              pageCount={facultyPager.pageCount}
+              onPageChange={facultyPager.setPage}
+              total={facultyPager.total}
+              from={facultyPager.from}
+              to={facultyPager.to}
+              label="faculty"
+            />
+          </>
         )
-      })()}
+      )}
 
       {/* ── Add Faculty Dialog ─────────────────────────────────────────── */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>

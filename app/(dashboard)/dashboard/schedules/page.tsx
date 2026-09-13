@@ -89,6 +89,9 @@ import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 // Same matcher the server validates with, so the picker never offers a faculty
 // member that saving would then reject. See lib/specialization-match.ts.
 import { facultyMatchesSubject } from "@/lib/specialization-match"
+import { GYM_ROOM_CODE, PATHFIT_FACULTY_LABEL, isPathfitCode, isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
+import { roomTypeAllowedForSubject } from "@/lib/room-type-rules"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { WorkflowActions } from "@/components/schedule/workflow-actions"
 
 import { LabRequestsPanel } from "@/components/schedule/lab-requests-panel"
@@ -589,15 +592,33 @@ export default function SchedulesPage() {
     )
   }
 
-  // The "TBA" placeholder room (code "TBA") is always a valid pick — it's how
-  // a chair manually resolves an Unassigned Queue item when no real room is
-  // available yet — but a subject-type filter below would otherwise exclude it
-  // whenever its own room type doesn't happen to match. Always keep it in a
-  // filtered room list, appended from the unfiltered pool if the filter dropped it.
+  // The placeholder rooms ("TBA" — manual resolution of an Unassigned Queue
+  // item; "GYM" — where PATHFIT is held) are always valid picks, but the
+  // subject-type filter below would otherwise exclude them whenever their own
+  // room type doesn't happen to match. Always keep them in a filtered room
+  // list, appended from the unfiltered pool if the filter dropped them.
   function ensureTbaRoom(filtered: any[], pool: any[]): any[] {
-    if (filtered.some((r: any) => r.code === "TBA")) return filtered
-    const tba = pool.find((r: any) => r.code === "TBA")
-    return tba ? [...filtered, tba] : filtered
+    const missing = pool.filter(
+      (r: any) => isPlaceholderRoomCode(r.code) && !filtered.some((f: any) => f.id === r.id)
+    )
+    return missing.length > 0 ? [...filtered, ...missing] : filtered
+  }
+
+  // Rooms a subject may use — the same rule the engine and the server
+  // validator apply (lib/room-type-rules.ts): explicit Subject.requiredRoomType,
+  // else labs → lab rooms (computer-based labs → Computer Laboratory only),
+  // lectures → lecture rooms. Kept strict (no "fall back to every room") so the
+  // picker never offers a room the save would then reject.
+  function roomsForSubject(pool: any[], subject: any): any[] {
+    if (!subject) return ensureTbaRoom(pool, pool)
+    if (isPathfitCode(subject.code)) {
+      // PATHFIT is held in the GYM; keep the lecture rooms available as a fallback.
+      const gym = pool.filter((r: any) => r.code === GYM_ROOM_CODE)
+      const rest = pool.filter((r: any) => r.code !== GYM_ROOM_CODE && roomTypeAllowedForSubject(r.type, subject))
+      return ensureTbaRoom([...gym, ...rest], pool)
+    }
+    const matching = pool.filter((r: any) => !isPlaceholderRoomCode(r.code) && roomTypeAllowedForSubject(r.type, subject))
+    return ensureTbaRoom(matching, pool)
   }
 
   // Filter rooms by subject type AND department-building restriction.
@@ -609,16 +630,7 @@ export default function SchedulesPage() {
       pool = pool.filter((r: any) => roomOpenToSection(r, selectedSectionForEntry))
     }
     if (!entryForm.subjectId || !selectedSubjectForEntry) return pool
-    const subjectType = selectedSubjectForEntry.type
-    if (subjectType === 'LABORATORY') {
-      const labs = pool.filter((r: any) => r.type === 'LABORATORY' || r.type === 'COMPUTER_LAB' || r.type === 'LECTURE_LAB')
-      return ensureTbaRoom(labs.length > 0 ? labs : pool, pool)
-    }
-    if (subjectType === 'LECTURE') {
-      const lectureRooms = pool.filter((r: any) => r.type === 'LECTURE_ROOM')
-      return ensureTbaRoom(lectureRooms.length > 0 ? lectureRooms : pool, pool)
-    }
-    return ensureTbaRoom(pool, pool)
+    return roomsForSubject(pool, selectedSubjectForEntry)
   }, [departmentRooms, entryForm.subjectId, entryForm.sectionId, selectedSubjectForEntry, selectedSectionForEntry])
 
   // Issue 9: Filter time options based on faculty availability for selected day
@@ -925,25 +937,8 @@ export default function SchedulesPage() {
       pool = pool.filter((r: any) => roomOpenToSection(r, editSelectedSection))
     }
     if (!editEntryForm.subjectId || !editSelectedSubject) return pool
-    // Prefer explicit requiredRoomType list set on the subject
-    const requiredTypes: string[] = editSelectedSubject.requiredRoomType ?? []
-    if (requiredTypes.length > 0) {
-      const filtered = pool.filter((r: any) => requiredTypes.includes(r.type))
-      return ensureTbaRoom(filtered.length > 0 ? filtered : pool, pool)
-    }
-    // Fall back: lab subjects can use any lab-category room
-    const subjectType = editSelectedSubject.type
-    if (subjectType === 'LABORATORY') {
-      const labs = pool.filter((r: any) =>
-        r.type === 'LABORATORY' || r.type === 'COMPUTER_LAB' || r.type === 'LECTURE_LAB'
-      )
-      return ensureTbaRoom(labs.length > 0 ? labs : pool, pool)
-    }
-    if (subjectType === 'LECTURE') {
-      const lectureRooms = pool.filter((r: any) => r.type === 'LECTURE_ROOM')
-      return ensureTbaRoom(lectureRooms.length > 0 ? lectureRooms : pool, pool)
-    }
-    return ensureTbaRoom(pool, pool)
+    // Same room-type rule as Add Entry (lib/room-type-rules.ts).
+    return roomsForSubject(pool, editSelectedSubject)
   }, [departmentRooms, editEntryForm.subjectId, editEntryForm.sectionId, editSelectedSubject, editSelectedSection])
 
   // The entry's own room must stay in the list even if the filters above would drop
@@ -1040,6 +1035,7 @@ export default function SchedulesPage() {
   // Entry filters (shared across list + calendar views)
   const [calFilterFaculty, setCalFilterFaculty] = useState("")
   const [calFilterSection, setCalFilterSection] = useState("")
+  const [calFilterBuilding, setCalFilterBuilding] = useState("")
   const [calFilterRoom, setCalFilterRoom] = useState("")
   const [entrySearch, setEntrySearch] = useState("")
   const [deleteEntryId, setDeleteEntryId] = useState<string | null>(null)
@@ -1101,6 +1097,8 @@ export default function SchedulesPage() {
     if (!deptFilter) return base
     return base.filter((s: any) => s.department?.id === deptFilter)
   }, [tab, activeSchedules, archivedSchedules, deptFilter, semFilter, isAdmin, adminDeptId])
+  // Schedule list — 10 cards per page.
+  const schedulesPager = usePagination(schedules)
 
   const entries: any[] = selectedSchedule?.entries ?? []
 
@@ -1286,6 +1284,7 @@ export default function SchedulesPage() {
     let result = entries
     if (calFilterFaculty) result = result.filter((e: any) => (e.facultyId === calFilterFaculty || e.faculty?.id === calFilterFaculty))
     if (calFilterSection) result = result.filter((e: any) => (e.sectionId === calFilterSection || e.section?.id === calFilterSection))
+    if (calFilterBuilding) result = result.filter((e: any) => e.room?.building?.id === calFilterBuilding)
     if (calFilterRoom) result = result.filter((e: any) => (e.roomId === calFilterRoom || e.room?.id === calFilterRoom))
     if (entrySearch.trim()) {
       const q = entrySearch.toLowerCase().trim()
@@ -1299,7 +1298,7 @@ export default function SchedulesPage() {
       })
     }
     return result
-  }, [entries, calFilterFaculty, calFilterSection, calFilterRoom, entrySearch])
+  }, [entries, calFilterFaculty, calFilterSection, calFilterBuilding, calFilterRoom, entrySearch])
 
   // Unresolved ConflictLog rows for the selected schedule — drives the Calendar's
   // hasConflict highlighting and the Conflicts banner (all types, including
@@ -1323,7 +1322,8 @@ export default function SchedulesPage() {
     id: e.id,
     subjectCode: e.subject?.code ?? "",
     subjectTitle: e.subject?.title ?? "",
-    facultyName: e.faculty?.user ? `${e.faculty.user.firstName} ${e.faculty.user.lastName}` : "",
+    // Free-text override first ("TBA" on PATHFIT rows), then the linked record.
+    facultyName: e.facultyName || (e.faculty?.user ? `${e.faculty.user.firstName} ${e.faculty.user.lastName}` : ""),
     roomCode: e.room?.code ?? "",
     sectionName: e.section?.name ?? "",
     day: e.day,
@@ -1369,18 +1369,23 @@ export default function SchedulesPage() {
     )
   }, [groupedFilteredEntries])
 
-  // tableEntries bucketed under the day they fall on, in week order — the Table
-  // view renders one full-width day banner per bucket instead of a Day column,
-  // so a printed-timetable read doesn't repeat "Monday" on every row.
+  // One pager shared by the List and Table views — both show the same
+  // week-ordered rows, 10 per page, grouped by day within the page. Switching
+  // between the two tabs keeps the current page.
+  const entriesPager = usePagination(tableEntries)
+
+  // The current page's rows bucketed under the day they fall on, in week order —
+  // the Table view renders one full-width day banner per bucket instead of a Day
+  // column, so a printed-timetable read doesn't repeat "Monday" on every row.
   const tableEntriesByDay = useMemo(() => {
     const buckets = new Map<string, any[]>()
-    for (const e of tableEntries) {
+    for (const e of entriesPager.pageItems) {
       const day = e.__groupSize > 1 ? e.__groupDayLabel : e.day
       if (!buckets.has(day)) buckets.set(day, [])
       buckets.get(day)!.push(e)
     }
     return [...buckets.entries()]
-  }, [tableEntries])
+  }, [entriesPager.pageItems])
 
   // Unique faculty/sections/rooms in current schedule for filter dropdowns
   const entryFacultyOptions = useMemo(() => {
@@ -1401,14 +1406,50 @@ export default function SchedulesPage() {
     return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [entries])
 
+  // Building → Room filter pair. Neither has an "All" option: the Building
+  // list defaults to the first building that has entries, and the Room list
+  // (rooms of that building only) defaults to its first room, so the views
+  // always show one specific room's timetable.
+  const entryBuildingOptions = useMemo(() => {
+    const map = new Map<string, string>()
+    entries.forEach((e: any) => {
+      const b = e.room?.building
+      if (b?.id) map.set(b.id, b.name ?? b.code ?? "")
+    })
+    return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [entries])
+
   const entryRoomOptions = useMemo(() => {
     const map = new Map<string, string>()
     entries.forEach((e: any) => {
+      if (calFilterBuilding && e.room?.building?.id !== calFilterBuilding) return
       const rid = e.roomId ?? e.room?.id
       if (rid && e.room?.code) map.set(rid, e.room.code)
     })
     return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
-  }, [entries])
+  }, [entries, calFilterBuilding])
+
+  // Keep both selections valid as the schedule / entry set changes — fall back
+  // to the first option whenever the current pick is no longer available.
+  useEffect(() => {
+    if (entryBuildingOptions.length === 0) {
+      if (calFilterBuilding) setCalFilterBuilding("")
+      return
+    }
+    if (!entryBuildingOptions.some((b) => b.id === calFilterBuilding)) {
+      setCalFilterBuilding(entryBuildingOptions[0].id)
+    }
+  }, [entryBuildingOptions, calFilterBuilding])
+
+  useEffect(() => {
+    if (entryRoomOptions.length === 0) {
+      if (calFilterRoom) setCalFilterRoom("")
+      return
+    }
+    if (!entryRoomOptions.some((r) => r.id === calFilterRoom)) {
+      setCalFilterRoom(entryRoomOptions[0].id)
+    }
+  }, [entryRoomOptions, calFilterRoom])
 
   async function handleCreate() {
     // Item 7 — report EVERY blank field at once and mark them, rather than a
@@ -1467,17 +1508,20 @@ export default function SchedulesPage() {
       // only laboratory subjects were scheduled — the rest of this program's
       // major load waits until GEC exists in this schedule.
       const stagePrefix = genResult?.citLabsOnlyStage
-        ? "GEC hasn't been generated yet, so only laboratory subjects were scheduled (pre-plot stage). "
+        ? "General education subjects aren't in yet, so only laboratory subjects were placed. "
+        : ""
+      const pathfitNote = genResult?.pathfitPlaced > 0
+        ? ` ${genResult.pathfitPlaced} PATHFIT classes placed in the GYM (faculty TBA).`
         : ""
       if (genResult?.unassignedCount > 0) {
         toast.warning(
-          stagePrefix + `${genResult.entriesGenerated} entries scheduled. ${genResult.unassignedCount} subject(s) could not be assigned — see the Unassigned Queue below.`,
+          stagePrefix + `${genResult.entriesGenerated} entries placed.${pathfitNote} ${genResult.unassignedCount} could not be placed — see Unassigned below.`,
           { duration: 8000 }
         )
       } else if (stagePrefix) {
-        toast.warning(stagePrefix + `${genResult?.entriesGenerated ?? 0} lab entries scheduled.`, { duration: 8000 })
+        toast.warning(stagePrefix + `${genResult?.entriesGenerated ?? 0} lab entries placed.`, { duration: 8000 })
       } else {
-        toast.success(`Schedule generated: ${genResult?.entriesGenerated ?? "all"} entries assigned`)
+        toast.success(`Done — ${genResult?.entriesGenerated ?? "all"} entries placed.${pathfitNote}`)
       }
     } catch (err: any) {
       const details: string[] = err.details ?? []
@@ -1555,8 +1599,8 @@ export default function SchedulesPage() {
       // is available yet. None of the checks below protect a real, scarce
       // resource for it, so it's exempt from all of them (mirrors the same
       // exemptions in lib/services/entry-validation.ts).
-      const isTbaFaculty = selectedFacultyForEntry?.employeeId === "TBA"
-      const isTbaRoom = (departmentRooms as any[]).find((r: any) => r.id === roomId)?.code === "TBA"
+      const isTbaFaculty = isTbaFacultyEmployeeId(selectedFacultyForEntry?.employeeId)
+      const isTbaRoom = isPlaceholderRoomCode((departmentRooms as any[]).find((r: any) => r.id === roomId)?.code)
 
       // Specialization check — faculty must be qualified for the subject
       if (!isTbaFaculty && selectedFacultyForEntry && selectedSubjectForEntry) {
@@ -1804,8 +1848,8 @@ export default function SchedulesPage() {
     const otherEntries = entries.filter((e: any) => e.id !== editEntryId && e.day === day)
     // "TBA" placeholder — exempt from the checks that exist to protect a real,
     // scarce resource (mirrors entry-validation.ts and Add Entry's handleAddEntry).
-    const isTbaFacultyEdit = selectedFacForEdit?.employeeId === "TBA"
-    const isTbaRoomEdit = (departmentRooms as any[]).find((r: any) => r.id === roomId)?.code === "TBA"
+    const isTbaFacultyEdit = isTbaFacultyEmployeeId(selectedFacForEdit?.employeeId)
+    const isTbaRoomEdit = isPlaceholderRoomCode((departmentRooms as any[]).find((r: any) => r.id === roomId)?.code)
 
     // Faculty conflict
     const fc = !isTbaFacultyEdit && otherEntries.find((e: any) => (e.facultyId === facultyId || e.faculty?.id === facultyId) && overlap(startTime, endTime, e.startTime, e.endTime))
@@ -2014,8 +2058,7 @@ export default function SchedulesPage() {
             {selectedScheduleId && canGenerate && (
               <Button variant="outline" size="sm" onClick={() => setGenerateOpen(true)} className="bg-[#1B4332] text-white hover:bg-[#2D6A4F]">
                 <Cpu className="mr-2 h-4 w-4" />
-                <span className="hidden sm:inline">Generate Schedule</span>
-                <span className="sm:hidden">Generate</span>
+                <span>Generate</span>
               </Button>
             )}
             {selectedScheduleId && canPublish && (
@@ -2273,7 +2316,7 @@ export default function SchedulesPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {schedules.map((s: any) => (
+              {schedulesPager.pageItems.map((s: any) => (
                 <button
                   key={s.id}
                   onClick={() => setSelectedScheduleId(s.id)}
@@ -2313,6 +2356,15 @@ export default function SchedulesPage() {
                   </p>
                 </button>
               ))}
+              <PaginationControls
+                size="sm"
+                page={schedulesPager.page}
+                pageCount={schedulesPager.pageCount}
+                onPageChange={schedulesPager.setPage}
+                total={schedulesPager.total}
+                from={schedulesPager.from}
+                to={schedulesPager.to}
+              />
             </div>
           )}
         </div>
@@ -2526,19 +2578,31 @@ export default function SchedulesPage() {
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
+                    {/* Building → Room: always a specific pick (no "All"), so
+                        the timetable shows one room at a time. */}
+                    <select
+                      value={calFilterBuilding}
+                      onChange={(e) => setCalFilterBuilding(e.target.value)}
+                      title="Building"
+                      className="h-8 rounded-lg border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      {entryBuildingOptions.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
                     <select
                       value={calFilterRoom}
                       onChange={(e) => setCalFilterRoom(e.target.value)}
+                      title="Room"
                       className="h-8 rounded-lg border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                     >
-                      <option value="">All Rooms</option>
                       {entryRoomOptions.map((r) => (
                         <option key={r.id} value={r.id}>{r.name}</option>
                       ))}
                     </select>
-                    {(calFilterFaculty || calFilterSection || calFilterRoom || entrySearch) && (
+                    {(calFilterFaculty || calFilterSection || entrySearch) && (
                       <button
-                        onClick={() => { setCalFilterFaculty(""); setCalFilterSection(""); setCalFilterRoom(""); setEntrySearch("") }}
+                        onClick={() => { setCalFilterFaculty(""); setCalFilterSection(""); setEntrySearch("") }}
                         className="text-xs text-red-600 hover:text-red-700 underline"
                       >
                         Clear
@@ -2553,7 +2617,7 @@ export default function SchedulesPage() {
                 <TabsContent value="list" className="mt-4 space-y-3">
                   {entries.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                      No entries yet. Use &ldquo;Add Entry&rdquo; to manually add entries, or &ldquo;Generate Schedule&rdquo; to auto-assign subjects based on faculty availability and constraints.
+                      No entries yet. Use &ldquo;Add Entry&rdquo; to add classes by hand, or &ldquo;Generate&rdquo; to build the timetable automatically.
                     </div>
                   ) : filteredEntries.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
@@ -2562,10 +2626,11 @@ export default function SchedulesPage() {
                   ) : (
                     <div className="space-y-4">
                       {/* Group entries by Day → Time for a clean stacked layout.
-                          Uses groupedFilteredEntries so a multi-day (MWF/TTh) pattern
-                          renders once — under its earliest day — instead of once per session. */}
+                          Uses the current page of week-ordered rows (10 per page),
+                          already collapsed so a multi-day (MWF/TTh) pattern renders
+                          once — under its earliest day — instead of once per session. */}
                       {DAYS.map((day) => {
-                        const dayEntries = groupedFilteredEntries
+                        const dayEntries = entriesPager.pageItems
                           .filter((e: any) => e.day === day)
                           .sort((a: any, b: any) => a.startTime.localeCompare(b.startTime))
                         if (dayEntries.length === 0) return null
@@ -2666,6 +2731,15 @@ export default function SchedulesPage() {
                           </Card>
                         )
                       })}
+                      <PaginationControls
+                        page={entriesPager.page}
+                        pageCount={entriesPager.pageCount}
+                        onPageChange={entriesPager.setPage}
+                        total={entriesPager.total}
+                        from={entriesPager.from}
+                        to={entriesPager.to}
+                        label="classes"
+                      />
                     </div>
                   )}
                 </TabsContent>
@@ -2677,7 +2751,7 @@ export default function SchedulesPage() {
                       then start time so a whole week is comparable at a glance. */}
                   {entries.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                      No entries yet. Use &ldquo;Add Entry&rdquo; to add one manually, or &ldquo;Generate Schedule&rdquo; to auto-assign.
+                      No entries yet. Use &ldquo;Add Entry&rdquo; to add a class by hand, or &ldquo;Generate&rdquo; to build the timetable automatically.
                     </div>
                   ) : filteredEntries.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
@@ -2764,6 +2838,16 @@ export default function SchedulesPage() {
                           </tbody>
                         ))}
                       </table>
+                      <PaginationControls
+                        page={entriesPager.page}
+                        pageCount={entriesPager.pageCount}
+                        onPageChange={entriesPager.setPage}
+                        total={entriesPager.total}
+                        from={entriesPager.from}
+                        to={entriesPager.to}
+                        label="classes"
+                        className="border-t border-border bg-muted/30 px-3 py-2"
+                      />
                     </div>
                   )}
                 </TabsContent>
@@ -3032,7 +3116,25 @@ export default function SchedulesPage() {
                 <Label>Subject</Label>
                 <select
                   value={entryForm.subjectId}
-                  onChange={(e) => { setEntryForm((f) => ({ ...f, subjectId: e.target.value, set: "" })); setSplitLabSets(false); setEntryMissing((m) => m.filter((x) => x !== "subject")) }}
+                  onChange={(e) => {
+                    const subjectId = e.target.value
+                    const picked = (subjects as any[]).find((s: any) => s.id === subjectId)
+                    // PATHFIT defaults: venue = GYM, faculty = TBA (same as auto-generation).
+                    const pathfitDefaults = picked && isPathfitCode(picked.code)
+                      ? (() => {
+                          const gym = (departmentRooms as any[]).find((r: any) => r.code === GYM_ROOM_CODE)
+                          const tba = (facultyList as any[]).find((f: any) => isTbaFacultyEmployeeId(f.employeeId))
+                          return {
+                            ...(gym ? { roomId: gym.id } : {}),
+                            ...(tba ? { facultyId: tba.id, facultyName: PATHFIT_FACULTY_LABEL } : {}),
+                          }
+                        })()
+                      : {}
+                    setEntryForm((f) => ({ ...f, subjectId, set: "", ...pathfitDefaults }))
+                    if ("facultyId" in pathfitDefaults) setFacultySearch("")
+                    setSplitLabSets(false)
+                    setEntryMissing((m) => m.filter((x) => x !== "subject"))
+                  }}
                   className={`w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(entryMissing, "subject")}`}
                 >
                   <option value="">{subjectPoolLoading ? "Loading subjects…" : "Select subject"}</option>
@@ -3741,9 +3843,9 @@ export default function SchedulesPage() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground leading-relaxed">{conflictMessage}</p>
-            <p className="text-sm font-medium">Override this constraint and save anyway?</p>
+            <p className="text-sm font-medium">Save anyway?</p>
             <p className="text-xs text-muted-foreground">
-              The conflict will be flagged in the conflict report. You can resolve it by adjusting
+              The conflict will be listed under Conflicts so you can fix it later by adjusting
               the affected entries.
             </p>
           </div>
@@ -3760,7 +3862,7 @@ export default function SchedulesPage() {
               disabled={updateEntry.isPending}
             >
               {updateEntry.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Override &amp; Save
+              Save Anyway
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3774,16 +3876,15 @@ export default function SchedulesPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <p className="text-sm text-muted-foreground">
-              Run the constraint-based backtracking algorithm to automatically generate an optimized schedule.
-              This considers faculty availability, specializations, room assignments, and section requirements.
+              Automatically builds the timetable from your faculty availability, subject data, and rooms.
             </p>
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
                 <p className="text-xs text-amber-800">
                   {isSuperAdmin
-                    ? "This generates GEC/minor subjects assigned to your department (e.g. SS, LLH, or MNS). NSTP and PATHFIT are excluded from auto-generation. Existing entries for this schedule will be cleared first."
-                    : "This generates your program's major subjects. Make sure faculty availability and subject data are up to date. Submit after generation for Department Chair review."}
+                    ? "Places PATHFIT first (in the GYM, faculty TBA), then the general education subjects under your area. NSTP is added by hand. Existing entries for these subjects will be replaced."
+                    : "Places your program's major subjects. Check that faculty availability and subject data are up to date, then submit the schedule for the Department Chair's review."}
                 </p>
               </div>
             </div>
@@ -3841,9 +3942,9 @@ export default function SchedulesPage() {
             </Button>
             <Button onClick={handleGenerate} disabled={generateSchedule.isPending} className="bg-[#1B4332] hover:bg-[#2D6A4F]">
               {generateSchedule.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Running Algorithm…</>
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Generating…</>
               ) : (
-                <><Cpu className="mr-2 h-4 w-4" />Run Backtracking Algorithm</>
+                <><Cpu className="mr-2 h-4 w-4" />Generate</>
               )}
             </Button>
           </DialogFooter>
@@ -3866,11 +3967,10 @@ export default function SchedulesPage() {
               <Cpu className="absolute inset-0 m-auto h-4 w-4 text-[#1B4332]" />
             </div>
             <div className="space-y-1">
-              <p className="font-semibold">Generating schedule…</p>
+              <p className="font-semibold">Generating…</p>
               <p className="text-sm text-muted-foreground">
-                Running the backtracking algorithm across subjects, faculty availability
-                and room constraints. This can take up to a minute — please don&apos;t
-                close this tab.
+                Building the timetable from your subjects, faculty availability and rooms.
+                This can take up to a minute — please keep this tab open.
               </p>
             </div>
           </div>
@@ -3883,11 +3983,11 @@ export default function SchedulesPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {publishValidation.loading ? (
-                <><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />Validating Schedule...</>
+                <><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />Checking…</>
               ) : publishValidation.errors.length === 0 ? (
-                <><CheckCircle2 className="h-5 w-5 text-green-600" />Schedule Validation Passed</>
+                <><CheckCircle2 className="h-5 w-5 text-green-600" />Ready to Publish</>
               ) : (
-                <><AlertTriangle className="h-5 w-5 text-red-600" />Validation Issues Found</>
+                <><AlertTriangle className="h-5 w-5 text-red-600" />Issues Found</>
               )}
             </DialogTitle>
           </DialogHeader>
@@ -3895,7 +3995,7 @@ export default function SchedulesPage() {
           {publishValidation.loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-sm text-muted-foreground">Running constraint checks on {entries.length} entries...</span>
+              <span className="ml-2 text-sm text-muted-foreground">Checking {entries.length} entries for conflicts…</span>
             </div>
           ) : (
             <div className="space-y-4 py-2 max-h-[60vh] overflow-y-auto">
@@ -3957,7 +4057,7 @@ export default function SchedulesPage() {
                   <div className="flex items-start gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-green-800">All constraint checks passed!</p>
+                      <p className="text-sm font-medium text-green-800">No conflicts found.</p>
                       <p className="text-xs text-green-700 mt-0.5">
                         No faculty overlaps, room conflicts, section conflicts, or load violations detected.
                         The schedule is ready to be published.
@@ -3980,7 +4080,7 @@ export default function SchedulesPage() {
                 className="bg-[#1B4332] hover:bg-[#2D6A4F]"
               >
                 {publishSchedule.isPending ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Publishing...</>
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Publishing…</>
                 ) : (
                   <><Globe className="mr-2 h-4 w-4" />Confirm & Publish</>
                 )}

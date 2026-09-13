@@ -8,6 +8,9 @@ import { apiResponse, apiError } from "@/lib/api-helpers"
 import { createNotification } from "@/lib/notifications"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { detectCrossScheduleConflicts, type CrossScheduleEntry } from "@/lib/services/cross-schedule-conflicts"
+import { ensurePathfitSentinels } from "@/lib/services/sentinels"
+import { PLACEHOLDER_ROOM_CODES, PATHFIT_FACULTY_LABEL, isPathfitCode } from "@/lib/sentinels"
+import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
 
 // Allow up to 60 seconds for schedule generation
 export const maxDuration = 60
@@ -145,7 +148,10 @@ export async function POST(
       ? (schedule.departmentId ?? deptId)
       : deptId
 
-    // Prefixes excluded from all auto-generation (NSTP/PATHFIT are manually scheduled)
+    // Prefixes kept out of the regular (faculty + room constrained) pipeline.
+    // NSTP is manually scheduled. PATHFIT IS auto-generated, but through the
+    // dedicated priority pass below (TBA faculty in the GYM) — never through the
+    // normal candidate search, which would demand a real faculty and room.
     const EXCLUDED_AUTO = ["NSTP", "NST", "PATHFIT", "PATHFit"]
     const notAutoExcluded = { AND: EXCLUDED_AUTO.map(p => ({ code: { not: { startsWith: p } } })) }
 
@@ -310,6 +316,10 @@ export async function POST(
         // matching program's sections only.
         where: {
           isActive: true,
+          // Placeholder rooms (TBA, GYM) are not real single-occupancy rooms —
+          // they must never be handed to regular subjects by the engine. GYM is
+          // assigned to PATHFIT directly by the priority pass below.
+          code: { notIn: [...PLACEHOLDER_ROOM_CODES] },
           ...(roomScopeDeptId ? {
             AND: [
               {
@@ -394,20 +404,47 @@ export async function POST(
       return allowed
     }
 
+    // ── PATHFIT (Dept Chair runs only) ──────────────────────────────────────
+    // PATHFIT is scheduled FIRST, for every section in this run's scope, with
+    // the faculty defaulted to "TBA" and the venue fixed to the GYM. Both are
+    // shared placeholders, so PATHFIT never competes for real faculty or rooms —
+    // the engine's priority pass only has to find a free hour on each section's
+    // own timetable. Program Chair runs stay majors-only, as before.
+    let pathfitSubjects: any[] = []
+    let pathfitSentinels: { tbaFacultyId: string; gymRoomId: string } | null = null
+    if (isSuperAdmin) {
+      pathfitSubjects = await db.subject.findMany({
+        where: { code: { startsWith: "PATHFIT", mode: "insensitive" } },
+        include: { department: true },
+      })
+      if (pathfitSubjects.length > 0) {
+        pathfitSentinels = await ensurePathfitSentinels()
+      }
+    }
+    // Everything this run writes/deletes — regular subjects plus PATHFIT.
+    const allSubjects: any[] = [...subjects, ...pathfitSubjects]
+
     // Transform data for the scheduling engine
-    const subjectInputs = subjects.map((s: any) => ({
+    const subjectInputs = allSubjects.map((s: any) => ({
       id: s.id,
       code: s.code,
       title: s.title,
       hoursPerWeek: s.hoursPerWeek,
       type: s.type as "LECTURE" | "LABORATORY",
-      requiredRoomType: s.requiredRoomType.map(String),
+      // Explicit Subject.requiredRoomType, or the type-based default (labs need
+      // lab rooms; computer-based labs need a COMPUTER_LAB; lectures need
+      // lecture rooms) — see lib/room-type-rules.ts. Hard constraint in the engine.
+      requiredRoomType: resolveRequiredRoomTypes(s) as string[],
       units: s.units,
       departmentCode: s.department?.abbreviation,
       year: s.year ?? 1,
       programId: s.programId ?? null,
       requiredLabSpecialization: s.requiredLabSpecialization ?? null,
       allowedSectionIds: gecAllowedSectionIds(s),
+      fixedAssignment:
+        isPathfitCode(s.code) && pathfitSentinels
+          ? { facultyId: pathfitSentinels.tbaFacultyId, roomId: pathfitSentinels.gymRoomId }
+          : null,
     }))
 
     const facultyInputs = faculty.map((f: any) => {
@@ -556,7 +593,7 @@ export async function POST(
 
     console.log(
       `[generate] role:${dbUser.role} dept:${deptId?.slice(-6) ?? "all"} program:${programId?.slice(-6) ?? "all"} | ` +
-      `${subjectInputs.length} subjects (${isAdmin ? "major only, GEC/PATHFIT excluded" : "all incl. GEC/PATHFIT"}), ` +
+      `${subjectInputs.length} subjects (${isAdmin ? "major only, GEC/PATHFIT excluded" : `GEC + ${pathfitSubjects.length} PATHFIT (priority, TBA/GYM)`}), ` +
       `${facultyInputs.length} faculty (${facultyWithAvailability.length} with avail), ` +
       `${roomInputs.length} rooms, ${sectionInputs.length} sections`
     )
@@ -577,20 +614,24 @@ export async function POST(
     )
 
     // Build a lookup so we can check subject type when persisting
-    const subjectTypeMap = new Map(subjects.map((s: any) => [s.id, s.type as string]))
+    const subjectTypeMap = new Map(allSubjects.map((s: any) => [s.id, s.type as string]))
+    const pathfitSubjectIds = new Set(pathfitSubjects.map((s: any) => s.id))
 
     // Expand assignments into ScheduleEntry rows:
     //   Labs    → one entry (single continuous session), duplicated as Set A and Set B
     //   Lectures → one entry per session (primary + extraSessions from the day-group pattern)
     type EntryRow = {
-      scheduleId: string; subjectId: string; facultyId: string; roomId: string
-      sectionId: string; day: string; startTime: string; endTime: string
+      scheduleId: string; subjectId: string; facultyId: string; facultyName: string | null
+      roomId: string; sectionId: string; day: string; startTime: string; endTime: string
       createdBy: string; set: string | null; groupId: string | null
     }
     const entryRows: EntryRow[] = (result.assignments as any[]).flatMap((a): EntryRow[] => {
       const isLab = subjectTypeMap.get(a.subjectId) === "LABORATORY"
       const base = {
         scheduleId: id, subjectId: a.subjectId, facultyId: a.facultyId,
+        // PATHFIT rows carry the literal "TBA" label so every list, calendar and
+        // export shows the faculty as TBA (the linked row is the TBA placeholder).
+        facultyName: pathfitSubjectIds.has(a.subjectId) ? PATHFIT_FACULTY_LABEL : null,
         roomId: a.roomId, sectionId: a.sectionId, createdBy: dbUser.id,
       }
       if (isLab) {
@@ -641,7 +682,7 @@ export async function POST(
     //   Solution: scope the delete to THIS chair's sections when they have a cluster.
     //
     //   Unassigned queue — full delete: always represents the LATEST run.
-    const subjectIds = subjects.map((s: any) => s.id)
+    const subjectIds = allSubjects.map((s: any) => s.id)
     const sectionIds = sections.map((s: any) => s.id)
 
     const entryDeleteWhere = isCasAdmin && casClusterProgramIds
@@ -690,10 +731,22 @@ export async function POST(
 
         // Hydrate schedule A's side from the arrays already fetched for the
         // engine (subjects/faculty/rooms/sections) — no extra join query needed.
-        const subjectCodeMap = new Map(subjects.map((s: any) => [s.id, s.code]))
+        const subjectCodeMap = new Map(allSubjects.map((s: any) => [s.id, s.code]))
         const facultyNameMap = new Map(faculty.map((f: any) => [f.id, `${f.user.firstName} ${f.user.lastName}`]))
         const roomCodeMap = new Map(rooms.map((r: any) => [r.id, r.code]))
         const sectionNameMap = new Map(sections.map((s: any) => [s.id, s.name]))
+
+        // The TBA faculty and the placeholder rooms (TBA, GYM) are shared by
+        // many entries at once by design. Give each such entry a synthetic
+        // resource id so they never register as double-bookings against each
+        // other (same trick as lib/services/term-conflicts.ts).
+        const tbaFacultyId = pathfitSentinels?.tbaFacultyId ?? null
+        const placeholderRoomIds = new Set<string>()
+        if (pathfitSentinels) placeholderRoomIds.add(pathfitSentinels.gymRoomId)
+        const neutralize = (e: any, facultyIsTba: boolean, roomIsPlaceholder: boolean) => ({
+          facultyId: facultyIsTba ? `tba-faculty::${e.id}` : e.facultyId,
+          roomId: roomIsPlaceholder ? `placeholder-room::${e.id}` : e.roomId,
+        })
 
         const entriesA: CrossScheduleEntry[] = createdEntries.map((e: any) => ({
           id: e.id,
@@ -701,9 +754,8 @@ export async function POST(
           day: e.day,
           startTime: e.startTime,
           endTime: e.endTime,
-          roomId: e.roomId,
+          ...neutralize(e, e.facultyId === tbaFacultyId, placeholderRoomIds.has(e.roomId)),
           roomCode: roomCodeMap.get(e.roomId) ?? "Unknown Room",
-          facultyId: e.facultyId,
           facultyName: facultyNameMap.get(e.facultyId) ?? "Unknown Faculty",
           sectionId: e.sectionId,
           sectionName: sectionNameMap.get(e.sectionId) ?? "Unknown Section",
@@ -737,9 +789,8 @@ export async function POST(
           day: e.day,
           startTime: e.startTime,
           endTime: e.endTime,
-          roomId: e.roomId,
+          ...neutralize(e, e.faculty?.employeeId === "TBA", PLACEHOLDER_ROOM_CODES.includes(e.room?.code)),
           roomCode: e.room?.code ?? "Unknown Room",
-          facultyId: e.facultyId,
           facultyName: e.faculty?.user ? `${e.faculty.user.firstName} ${e.faculty.user.lastName}` : "Unknown Faculty",
           sectionId: e.sectionId,
           sectionName: e.section?.name ?? "Unknown Section",
@@ -834,13 +885,15 @@ export async function POST(
     })
 
     const labCount = entryRows.filter(r => r.set !== null).length
+    const pathfitCount = (result.assignments as any[]).filter((a) => pathfitSubjectIds.has(a.subjectId)).length
     const assignedCount = result.assignments.length
     const stagePrefix = citLabsOnlyStage
-      ? "Labs-only pre-plot stage (GEC not yet generated): only laboratory subjects were scheduled. "
+      ? "Lab pre-plot stage (GEC not yet added): only laboratory subjects were scheduled. "
       : ""
+    const pathfitNote = pathfitCount > 0 ? ` ${pathfitCount} PATHFIT classes placed in the GYM (faculty: TBA).` : ""
     const notifMessage = stagePrefix + (result.unassigned.length > 0
-      ? `${assignedCount} subject-sections scheduled (${entryRows.length} total entries, ${labCount} labs). ${result.unassigned.length} subject(s) could not be assigned and appear in the Unassigned Queue.`
-      : `Backtracking algorithm completed. ${assignedCount} subject-sections scheduled (${entryRows.length} total entries, ${labCount} labs).`)
+      ? `${assignedCount} classes scheduled (${entryRows.length} entries, ${labCount} labs).${pathfitNote} ${result.unassigned.length} could not be placed — see the Unassigned list.`
+      : `Done. ${assignedCount} classes scheduled (${entryRows.length} entries, ${labCount} labs).${pathfitNote}`)
 
     await createNotification({
       userId: dbUser.id,
@@ -851,13 +904,16 @@ export async function POST(
     })
 
     // Back-fill specializations for every faculty that received assignments
+    // (the TBA placeholder is skipped — its load is meaningless).
     const assignedFacultyIds = [...new Set(entryRows.map((e: any) => e.facultyId).filter(Boolean))]
+      .filter((fid) => fid !== pathfitSentinels?.tbaFacultyId)
     await Promise.all(assignedFacultyIds.map((fid: string) => syncFacultySpecializations(fid).catch(() => {})))
 
     return NextResponse.json(
       apiResponse({
         entriesGenerated: entryRows.length,
         unassignedCount: result.unassigned.length,
+        pathfitPlaced: pathfitCount,
         generatedAt: new Date().toISOString(),
         conflictsDetected,
         citLabsOnlyStage,

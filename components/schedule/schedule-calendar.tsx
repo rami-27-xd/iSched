@@ -40,17 +40,36 @@ const DAY_MAP: Record<string, number> = {
   SATURDAY: 6,
 }
 
-const TYPE_COLORS = {
-  LECTURE: { bg: "#1B4332", border: "#D4AF37" },
-  LABORATORY: { bg: "#2D6A4F", border: "#D4AF37" },
-}
-
 const TYPE_LABELS = {
   LECTURE: "Lecture",
   LABORATORY: "Laboratory",
 }
 
 const CONFLICT_COLOR = { bg: "#DC2626", border: "#FCA5A5" }
+
+/**
+ * One distinct colour per subject. Hues walk the colour wheel by the golden
+ * angle (137.5°), so any number of subjects stay as far apart as possible; the
+ * saturation/lightness alternate across cycles so the 2nd and 3rd trips around
+ * the wheel still read as different from the first. Backgrounds stay dark
+ * enough for white text; the border is a lighter tint of the same hue.
+ */
+function subjectColor(index: number): { bg: string; border: string } {
+  const hue = Math.round((index * 137.508) % 360)
+  const cycle = Math.floor(index / 24) % 3
+  const sat = [58, 46, 70][cycle]
+  const light = [34, 42, 28][cycle]
+  return {
+    bg: `hsl(${hue} ${sat}% ${light}%)`,
+    border: `hsl(${hue} ${sat + 10}% ${light + 30}%)`,
+  }
+}
+
+/** subjectCode → colour, assigned in alphabetical order so it is stable for a schedule. */
+function buildSubjectColorMap(entries: ScheduleEntry[]): Map<string, { bg: string; border: string }> {
+  const codes = [...new Set(entries.map((e) => e.subjectCode || "—"))].sort((a, b) => a.localeCompare(b))
+  return new Map(codes.map((code, i) => [code, subjectColor(i)]))
+}
 
 function formatTime12h(time: string): string {
   const [h, m] = time.split(":").map(Number)
@@ -74,7 +93,10 @@ function renderEventContent(eventInfo: EventContentArg) {
   const setLabel = props.type === "LABORATORY" && props.set ? ` (Set ${props.set})` : ""
   return (
     <div className={`isched-ev px-1.5 py-1 overflow-hidden leading-tight h-full flex flex-col justify-center gap-px ${isConflict ? "bg-red-600/90" : ""}`}>
-      <div className="font-bold text-[11px] text-white truncate">{props.subjectCode}{setLabel}</div>
+      <div className="flex items-center gap-1 font-bold text-[11px] text-white truncate">
+        {props.type === "LABORATORY" && <FlaskConical className="h-3 w-3 shrink-0 text-white/85" aria-label="Laboratory" />}
+        <span className="truncate">{props.subjectCode}{setLabel}</span>
+      </div>
       <div className="isched-ev-sub text-[10px] text-white/90 truncate">{props.facultyName}</div>
       <div className="isched-ev-sub text-[9px] text-white/75 truncate">{props.roomCode} &middot; {props.sectionName}</div>
     </div>
@@ -85,11 +107,19 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
   const calendarRef = useRef<FullCalendar>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [tooltip, setTooltip] = useState<{ entry: ScheduleEntry; x: number; y: number } | null>(null)
+  const [legendOpen, setLegendOpen] = useState(true)
+
+  // Distinct background + border per subject (see subjectColor).
+  const subjectColors = useMemo(() => buildSubjectColorMap(entries), [entries])
+  const colorFor = useCallback(
+    (entry: ScheduleEntry) => subjectColors.get(entry.subjectCode || "—") ?? subjectColor(0),
+    [subjectColors]
+  )
 
   const events: EventInput[] = useMemo(
     () =>
       entries.map((entry) => {
-        const colors = entry.hasConflict ? CONFLICT_COLOR : TYPE_COLORS[entry.type]
+        const colors = entry.hasConflict ? CONFLICT_COLOR : colorFor(entry)
         return {
           id: entry.id,
           title: entry.subjectCode,
@@ -102,7 +132,7 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           extendedProps: entry,
         }
       }),
-    [entries]
+    [entries, colorFor]
   )
 
   const handlePrev = () => calendarRef.current?.getApi().prev()
@@ -162,10 +192,15 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
   const labCount = entries.filter(e => e.type === "LABORATORY").length
   const conflictCount = entries.filter(e => e.hasConflict).length
 
-  const typeBadgeColor = (type: string) => {
-    if (type === "LECTURE") return "bg-[#1B4332]"
-    return "bg-[#2D6A4F]"
-  }
+  // Subject legend rows: code + title (from the first entry carrying that code).
+  const legendSubjects = useMemo(() => {
+    const titles = new Map<string, string>()
+    for (const e of entries) {
+      const code = e.subjectCode || "—"
+      if (!titles.has(code)) titles.set(code, e.subjectTitle)
+    }
+    return [...subjectColors.entries()].map(([code, color]) => ({ code, title: titles.get(code) ?? "", color }))
+  }, [entries, subjectColors])
 
   return (
     <div className="rounded-2xl border border-border bg-card shadow-md overflow-visible relative">
@@ -206,31 +241,55 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           </button>
         </div>
         <div className="flex items-center gap-3">
-          {/* Legend */}
+          {/* Legend — colours are per subject (see the strip below); the header
+              keeps the type/conflict key. */}
           <div className="hidden sm:flex items-center gap-3 text-[10px] text-white/80">
             {lectureCount > 0 && (
               <span className="flex items-center gap-1">
                 <BookOpen className="h-3 w-3 text-white/70" />
-                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#1B4332] border border-white/30" />
                 Lecture
               </span>
             )}
             {labCount > 0 && (
               <span className="flex items-center gap-1">
                 <FlaskConical className="h-3 w-3 text-white/70" />
-                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#2D6A4F] border border-white/30" />
                 Lab
               </span>
             )}
-{conflictCount > 0 && (
+            {conflictCount > 0 && (
               <span className="flex items-center gap-1">
                 <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-500 border border-white/30" />
                 Conflict
               </span>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setLegendOpen((v) => !v)}
+            className="rounded-lg bg-white/10 px-2.5 py-1 text-[10px] font-medium text-white transition-colors hover:bg-white/20"
+            aria-expanded={legendOpen}
+          >
+            {legendOpen ? "Hide" : "Show"} subject colours
+          </button>
         </div>
       </div>
+
+      {/* Subject colour key — one swatch per subject in this view */}
+      {legendOpen && legendSubjects.length > 0 && (
+        <div className="max-h-28 overflow-y-auto border-b border-border bg-muted/30 px-4 py-2">
+          <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+            {legendSubjects.map((s) => (
+              <span key={s.code} className="flex items-center gap-1.5 text-[10px] text-muted-foreground" title={s.title}>
+                <span
+                  className="inline-block h-3 w-3 shrink-0 rounded-sm"
+                  style={{ backgroundColor: s.color.bg, border: `2px solid ${s.color.border}` }}
+                />
+                <span className="font-semibold text-foreground">{s.code}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Calendar body — horizontally scrollable on mobile */}
       <div className="isched-calendar-wrap overflow-x-auto">
@@ -426,17 +485,12 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
             <span className="ml-2 text-red-600 font-medium">&middot; {conflictCount} conflict{conflictCount > 1 ? "s" : ""}</span>
           )}
         </p>
-        {/* Mobile legend */}
+        {/* Mobile key */}
         <div className="flex sm:hidden items-center gap-2 text-[9px] text-muted-foreground">
           <span className="flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-sm bg-[#1B4332]" /> Lec
+            <FlaskConical className="h-2.5 w-2.5" /> Lab
           </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-sm bg-[#2D6A4F]" /> Lab
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-sm bg-[#40916C]" /> Hyb
-          </span>
+          <span>one colour per subject</span>
         </div>
       </div>
 
@@ -453,7 +507,10 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
         >
           <div className="w-72 rounded-xl border border-border bg-card shadow-xl overflow-hidden">
             {/* Tooltip header */}
-            <div className={`px-4 py-3 ${tooltip.entry.hasConflict ? "bg-red-600" : typeBadgeColor(tooltip.entry.type)} text-white`}>
+            <div
+              className="px-4 py-3 text-white"
+              style={{ backgroundColor: tooltip.entry.hasConflict ? CONFLICT_COLOR.bg : colorFor(tooltip.entry).bg }}
+            >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="font-bold text-sm truncate">

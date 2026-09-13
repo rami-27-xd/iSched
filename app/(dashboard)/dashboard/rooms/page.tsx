@@ -24,6 +24,8 @@ import { useRoomList, useCreateRoom, useUpdateRoom, useBuildings, useCreateBuild
 import { RoleGuard } from "@/components/shared/role-guard"
 import { LabInventory } from "@/components/rooms/lab-inventory"
 import { useCollege } from "@/lib/college-context"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
 
 const ROOM_TYPE_LABELS: Record<string, string> = {
   LECTURE_ROOM: "Lecture Room",
@@ -40,6 +42,81 @@ const ROOM_TYPE_COLORS: Record<string, string> = {
 
 const INITIAL_ROOM_FORM = { name: "", code: "", buildingId: "", type: "" }
 
+// Rooms of one expanded building, 10 per page. A component (not inline JSX)
+// so each building card owns its own page state.
+function BuildingRooms({
+  rooms,
+  deptLabel,
+  programLabel,
+  onEdit,
+}: {
+  rooms: any[]
+  deptLabel: (depts: any[]) => string
+  programLabel: (programs: any[]) => string
+  onEdit: (room: any) => void
+}) {
+  const pager = usePagination(rooms)
+  return (
+    <div className="grid gap-2">
+      {pager.pageItems.map((room: any) => (
+        <div
+          key={room.id}
+          className="flex flex-col gap-2 rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <DoorOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium break-words">{room.name}</p>
+              <p className="text-xs text-muted-foreground font-mono">{room.code}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end">
+            <Badge variant="secondary" className={ROOM_TYPE_COLORS[room.type] ?? ""}>
+              {ROOM_TYPE_LABELS[room.type] ?? room.type}
+            </Badge>
+            {room.departments?.length > 0 && (
+              <Badge variant="outline" className="gap-1 text-xs border-amber-400 text-amber-700 bg-amber-50">
+                <Lock className="h-3 w-3" />
+                {deptLabel(room.departments)}
+              </Badge>
+            )}
+            {room.programs?.length > 0 && (
+              <Badge variant="outline" className="gap-1 text-xs border-blue-400 text-blue-700 bg-blue-50">
+                <Lock className="h-3 w-3" />
+                {programLabel(room.programs)}
+              </Badge>
+            )}
+            <Badge variant={room.isActive ? "default" : "secondary"}>
+              {room.isActive ? "Active" : "Inactive"}
+            </Badge>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
+                <MoreHorizontal className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onEdit(room)}>
+                  <Monitor className="mr-2 h-4 w-4" />Edit
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      ))}
+      <PaginationControls
+        size="sm"
+        page={pager.page}
+        pageCount={pager.pageCount}
+        onPageChange={pager.setPage}
+        total={pager.total}
+        from={pager.from}
+        to={pager.to}
+        label="rooms"
+        className="pt-1"
+      />
+    </div>
+  )
+}
+
 export default function RoomsPage() {
   const { selectedCollegeId } = useCollege()
   const [search, setSearch] = useState("")
@@ -54,6 +131,9 @@ export default function RoomsPage() {
   const [roomForm, setRoomForm] = useState(INITIAL_ROOM_FORM)
   const [expandedBuildings, setExpandedBuildings] = useState<Set<string>>(new Set())
   const [newBuildingCollegeIds, setNewBuildingCollegeIds] = useState<string[]>([])
+
+  // Building pending "Set Inactive" — confirmed through a dialog first.
+  const [deactivateBuilding, setDeactivateBuilding] = useState<any>(null)
 
   // Edit Building state
   const [editBuildingOpen, setEditBuildingOpen] = useState(false)
@@ -185,6 +265,8 @@ export default function RoomsPage() {
       })
       .filter((b: any) => !search || b.filteredRooms.length > 0 || b.name.toLowerCase().includes(search.toLowerCase()))
   }, [buildings, rooms, search, buildingStatusFilter])
+  // 10 buildings per page.
+  const buildingsPager = usePagination(buildingsWithRooms)
 
   function toggleBuilding(id: string) {
     setExpandedBuildings((prev) => {
@@ -353,7 +435,7 @@ export default function RoomsPage() {
         <EmptyState icon={Building2} title="No buildings found" description={search ? "No buildings or rooms match your search." : "No buildings have been added yet."} />
       ) : (
         <div className="space-y-3">
-          {buildingsWithRooms.map((building: any) => {
+          {buildingsPager.pageItems.map((building: any) => {
             const isExpanded = expandedBuildings.has(building.id)
             return (
               <Card key={building.id}>
@@ -396,7 +478,11 @@ export default function RoomsPage() {
                         className={`h-7 px-2 text-xs ${building.isActive === false ? "text-muted-foreground" : "text-[#1B4332]"}`}
                         onClick={(e) => {
                           e.stopPropagation()
-                          updateBuilding.mutate({ id: building.id, isActive: building.isActive === false })
+                          if (building.isActive === false) {
+                            updateBuilding.mutate({ id: building.id, isActive: true })
+                          } else {
+                            setDeactivateBuilding(building)
+                          }
                         }}
                         title={building.isActive === false ? "Mark as Active" : "Mark as Inactive"}
                       >
@@ -436,63 +522,56 @@ export default function RoomsPage() {
                         No rooms in this building yet.
                       </div>
                     ) : (
-                      <div className="grid gap-2">
-                        {building.filteredRooms.map((room: any) => (
-                          <div
-                            key={room.id}
-                            className="flex flex-col gap-2 rounded-lg border px-4 py-3 hover:bg-muted/30 transition-colors sm:flex-row sm:items-center sm:justify-between"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <DoorOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-                              <div className="min-w-0">
-                                <p className="text-sm font-medium break-words">{room.name}</p>
-                                <p className="text-xs text-muted-foreground font-mono">{room.code}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end">
-                              <Badge variant="secondary" className={ROOM_TYPE_COLORS[room.type] ?? ""}>
-                                {ROOM_TYPE_LABELS[room.type] ?? room.type}
-                              </Badge>
-                              {room.departments?.length > 0 && (
-                                <Badge variant="outline" className="gap-1 text-xs border-amber-400 text-amber-700 bg-amber-50">
-                                  <Lock className="h-3 w-3" />
-                                  {deptIdsToCollegeAbbrs(room.departments)}
-                                </Badge>
-                              )}
-                              {room.programs?.length > 0 && (
-                                <Badge variant="outline" className="gap-1 text-xs border-blue-400 text-blue-700 bg-blue-50">
-                                  <Lock className="h-3 w-3" />
-                                  {programAbbrs(room.programs)}
-                                </Badge>
-                              )}
-                              <Badge variant={room.isActive ? "default" : "secondary"}>
-                                {room.isActive ? "Active" : "Inactive"}
-                              </Badge>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => openEdit(room)}>
-                                    <Monitor className="mr-2 h-4 w-4" />Edit
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <BuildingRooms
+                        rooms={building.filteredRooms}
+                        deptLabel={deptIdsToCollegeAbbrs}
+                        programLabel={programAbbrs}
+                        onEdit={openEdit}
+                      />
                     )}
                   </CardContent>
                 )}
               </Card>
             )
           })}
+          <PaginationControls
+            page={buildingsPager.page}
+            pageCount={buildingsPager.pageCount}
+            onPageChange={buildingsPager.setPage}
+            total={buildingsPager.total}
+            from={buildingsPager.from}
+            to={buildingsPager.to}
+            label="buildings"
+          />
         </div>
       )}
           </div>{/* end space-y-4 */}
         </TabsContent>
       </Tabs>
+
+      {/* Set Inactive confirmation */}
+      <ConfirmDialog
+        open={!!deactivateBuilding}
+        onOpenChange={(o) => !o && setDeactivateBuilding(null)}
+        title="Set building inactive?"
+        description={
+          <>
+            <strong className="text-foreground">{deactivateBuilding?.name ?? "This building"}</strong> and
+            its rooms will no longer be offered when scheduling. Existing entries are kept, and you can set it
+            active again later.
+          </>
+        }
+        confirmLabel="Set Inactive"
+        destructive
+        pending={updateBuilding.isPending}
+        onConfirm={() => {
+          if (!deactivateBuilding) return
+          updateBuilding.mutate(
+            { id: deactivateBuilding.id, isActive: false },
+            { onSuccess: () => setDeactivateBuilding(null) }
+          )
+        }}
+      />
 
       {/* Add Building Dialog */}
       <Dialog open={addBuildingOpen} onOpenChange={setAddBuildingOpen}>

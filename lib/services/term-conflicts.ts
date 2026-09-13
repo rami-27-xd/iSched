@@ -18,10 +18,7 @@
 // about what counts as a conflict again.
 import { db } from "@/lib/db"
 import { detectConflicts, type Conflict, type ScheduleEntry } from "./conflicts"
-
-/** Placeholder sentinels — same identifiers entry-validation.ts uses. */
-const TBA_EMPLOYEE_ID = "TBA"
-const TBA_ROOM_CODE = "TBA"
+import { isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
 
 export interface TermConflict extends Conflict {
   /** True when the conflict involves an entry owned by a DIFFERENT schedule. */
@@ -102,15 +99,15 @@ const entrySelect = {
 /**
  * Maps a DB entry into the shape detectConflicts() expects.
  *
- * TBA faculty and the TBA room are placeholders, not real resources — many entries
- * legitimately share them. Giving each such entry its own synthetic id keeps them
+ * The TBA faculty and the placeholder rooms (TBA, GYM) are not real resources —
+ * many entries legitimately share them. Giving each such entry its own synthetic id keeps them
  * from colliding with each other while leaving every real booking intact. Without
  * this, widening the check to the whole term would turn every pair of TBA entries
  * into a blocking conflict.
  */
 function toConflictEntry(e: any): ScheduleEntry {
-  const isTbaFaculty = e.faculty?.employeeId === TBA_EMPLOYEE_ID
-  const isTbaRoom = e.room?.code === TBA_ROOM_CODE
+  const isTbaFaculty = isTbaFacultyEmployeeId(e.faculty?.employeeId)
+  const isTbaRoom = isPlaceholderRoomCode(e.room?.code)
   return {
     id: e.id,
     day: e.day,

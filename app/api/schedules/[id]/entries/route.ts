@@ -3,6 +3,7 @@ import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { validateEntry, validateEntryCapacity, stripConflictMarker } from "@/lib/services/entry-validation"
+import { isPlaceholderRoomCode } from "@/lib/sentinels"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 
@@ -94,12 +95,12 @@ export async function POST(
         where: { id: body.roomId },
         select: { buildingId: true, name: true, code: true },
       })
-      // "TBA" (code "TBA") is the manual-resolution placeholder — it lives in
-      // its own dedicated building, mapped to no department, so it would fail
-      // this check for every department. Exempt it explicitly rather than
-      // mapping the TBA building to every department (which would need
-      // updating again each time a new department is added).
-      if (room && room.code !== "TBA") {
+      // Placeholder rooms — "TBA" (manual resolution) and "GYM" (PATHFIT) —
+      // live in their own dedicated buildings, mapped to no department, so they
+      // would fail this check for every department. Exempt them explicitly
+      // rather than mapping those buildings to every department (which would
+      // need updating again each time a new department is added).
+      if (room && !isPlaceholderRoomCode(room.code)) {
         const mapping = await db.departmentBuilding.findFirst({
           where: {
             departmentId: schedule.departmentId,

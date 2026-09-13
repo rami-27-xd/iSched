@@ -11,7 +11,8 @@ export const CLUSTER_GEC_CODES: Record<string, string[]> = {
   "Mathematics and Natural Sciences":        ["GEC05", "GEC08", "GEL01"],
 }
 
-// NSTP/PATHFit are manually scheduled — any Department Chairperson may place them.
+// NSTP is manually scheduled; PATHFit is auto-placed (GYM / TBA) by every Dept
+// Chair generation run. Either way, any Department Chairperson may edit them.
 const MANUAL_PREFIXES = ["NSTP", "NST", "PATHFIT"]
 
 /**

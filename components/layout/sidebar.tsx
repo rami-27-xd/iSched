@@ -23,6 +23,7 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
+import { LinkPendingSpinner } from '@/components/shared/link-pending'
 
 type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'FACULTY'
 
@@ -142,14 +143,18 @@ export function Sidebar({ userRole, userName, userEmail, collapsed = false, onTo
                 title={collapsed ? item.title : undefined}
                 className={cn(
                   'flex items-center rounded-lg text-sm font-medium transition-colors',
-                  collapsed ? 'justify-center h-10 w-10 mx-auto' : 'gap-3 px-3 py-2',
+                  collapsed ? 'relative justify-center h-10 w-10 mx-auto' : 'gap-3 px-3 py-2',
                   isActive
                     ? 'text-sidebar-accent-foreground font-semibold'
                     : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'
                 )}
               >
                 <Icon className="size-4 shrink-0" />
-                {!collapsed && <span>{item.title}</span>}
+                {!collapsed && <span className="flex-1">{item.title}</span>}
+                {/* Spinner while the destination page is still loading — the
+                    schedules page is heavy enough that a click otherwise feels
+                    ignored for a moment. */}
+                <LinkPendingSpinner className={collapsed ? 'absolute -bottom-0.5 -right-0.5 size-3' : ''} />
               </Link>
             )
           })}

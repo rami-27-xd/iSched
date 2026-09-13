@@ -16,8 +16,8 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import {
-  Search, Shield, MoreHorizontal, CheckCircle2, XCircle,
-  UserCog, UserX, Loader2, ShieldCheck, ShieldAlert, Building2, Pencil,
+  Search, Shield, MoreHorizontal, CheckCircle2,
+  UserCog, UserX, Loader2, ShieldCheck, ShieldAlert, Building2, Pencil, Trash2,
 } from "lucide-react"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -28,6 +28,8 @@ import { safeFetch } from "@/lib/api-client"
 import { useDepartments } from "@/hooks/use-data"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
 
 const ROLE_COLORS: Record<string, string> = {
   SUPER_ADMIN: "bg-amber-100 text-amber-800 border-amber-200",
@@ -84,6 +86,10 @@ export default function UsersPage() {
   const [deptId, setDeptId] = useState("")
   const [programId, setProgramId] = useState("")
   const [clusterId, setClusterId] = useState("")
+
+  // Destructive actions confirm first — the row pending Delete / Deactivate.
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
+  const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null)
 
   // Edit Faculty dialog (name/email of a faculty-linked user)
   const [editFacultyUser, setEditFacultyUser] = useState<User | null>(null)
@@ -181,9 +187,24 @@ export default function UsersPage() {
         body: JSON.stringify({ isApproved }),
       })
     },
-    onSuccess: (_, vars) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] })
-      toast.success(vars.isApproved ? "User approved" : "User approval revoked")
+      toast.success("User approved")
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  // Delete user mutation — replaces "Revoke Approval": the account is removed
+  // outright (DB rows + Supabase Auth) instead of being left in a revoked state.
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return safeFetch(`/api/users/${id}`, { method: "DELETE" })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] })
+      queryClient.invalidateQueries({ queryKey: ["faculty"] })
+      toast.success("User deleted")
+      setDeleteTarget(null)
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -240,6 +261,7 @@ export default function UsersPage() {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ["users"] })
       toast.success(vars.isActive ? "User activated" : "User deactivated")
+      setDeactivateTarget(null)
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -277,6 +299,8 @@ export default function UsersPage() {
 
   // Count pending approvals (chairs only — faculty are not listed here).
   const pendingCount = users.filter((u) => !u.isApproved).length
+  // 10 users per page (both the table and the mobile card list).
+  const pager = usePagination(users)
 
   return (
     <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
@@ -361,7 +385,7 @@ export default function UsersPage() {
           ) : isMobile ? (
             /* ── Mobile: card list ── */
             <div className="divide-y divide-border">
-              {users.map((u) => (
+              {pager.pageItems.map((u) => (
                 <div key={u.id} className={`p-4 ${!u.isApproved ? "bg-amber-50/50" : ""}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -421,13 +445,9 @@ export default function UsersPage() {
                               <Pencil className="mr-2 h-4 w-4" />Edit Faculty
                             </DropdownMenuItem>
                           )}
-                          {!u.isApproved ? (
+                          {!u.isApproved && (
                             <DropdownMenuItem onClick={() => approveMutation.mutate({ id: u.id, isApproved: true })}>
                               <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" />Approve User
-                            </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem onClick={() => approveMutation.mutate({ id: u.id, isApproved: false })}>
-                              <XCircle className="mr-2 h-4 w-4 text-amber-600" />Revoke Approval
                             </DropdownMenuItem>
                           )}
                           {isSuperAdmin && (
@@ -442,12 +462,17 @@ export default function UsersPage() {
                           )}
                           <DropdownMenuSeparator />
                           {u.isActive ? (
-                            <DropdownMenuItem className="text-destructive" onClick={() => activeMutation.mutate({ id: u.id, isActive: false })}>
+                            <DropdownMenuItem className="text-destructive" onClick={() => setDeactivateTarget(u)}>
                               <UserX className="mr-2 h-4 w-4" />Deactivate
                             </DropdownMenuItem>
                           ) : (
                             <DropdownMenuItem onClick={() => activeMutation.mutate({ id: u.id, isActive: true })}>
                               <ShieldCheck className="mr-2 h-4 w-4 text-green-600" />Reactivate
+                            </DropdownMenuItem>
+                          )}
+                          {u.id !== currentUser?.id && (
+                            <DropdownMenuItem className="text-destructive" onClick={() => setDeleteTarget(u)}>
+                              <Trash2 className="mr-2 h-4 w-4" />Delete
                             </DropdownMenuItem>
                           )}
                         </DropdownMenuContent>
@@ -472,7 +497,7 @@ export default function UsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {users.map((u) => (
+                {pager.pageItems.map((u) => (
                   <TableRow key={u.id} className={!u.isApproved ? "bg-amber-50/50" : ""}>
                     <TableCell>
                       <div>
@@ -567,20 +592,13 @@ export default function UsersPage() {
                             </DropdownMenuItem>
                           )}
 
-                          {/* Approve / Revoke */}
-                          {!u.isApproved ? (
+                          {/* Approve (pending accounts only) */}
+                          {!u.isApproved && (
                             <DropdownMenuItem
                               onClick={() => approveMutation.mutate({ id: u.id, isApproved: true })}
                             >
                               <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" />
                               Approve User
-                            </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem
-                              onClick={() => approveMutation.mutate({ id: u.id, isApproved: false })}
-                            >
-                              <XCircle className="mr-2 h-4 w-4 text-amber-600" />
-                              Revoke Approval
                             </DropdownMenuItem>
                           )}
 
@@ -613,11 +631,11 @@ export default function UsersPage() {
 
                           <DropdownMenuSeparator />
 
-                          {/* Activate/Deactivate */}
+                          {/* Activate/Deactivate — deactivation confirms first */}
                           {u.isActive ? (
                             <DropdownMenuItem
                               className="text-destructive"
-                              onClick={() => activeMutation.mutate({ id: u.id, isActive: false })}
+                              onClick={() => setDeactivateTarget(u)}
                             >
                               <UserX className="mr-2 h-4 w-4" />
                               Deactivate
@@ -628,6 +646,17 @@ export default function UsersPage() {
                             >
                               <ShieldCheck className="mr-2 h-4 w-4 text-green-600" />
                               Reactivate
+                            </DropdownMenuItem>
+                          )}
+
+                          {/* Delete — permanent; replaces the old "Revoke Approval" */}
+                          {u.id !== currentUser?.id && (
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onClick={() => setDeleteTarget(u)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
                             </DropdownMenuItem>
                           )}
                         </DropdownMenuContent>
@@ -641,8 +670,56 @@ export default function UsersPage() {
               </TableBody>
             </Table>
           )}
+          <PaginationControls
+            page={pager.page}
+            pageCount={pager.pageCount}
+            onPageChange={pager.setPage}
+            total={pager.total}
+            from={pager.from}
+            to={pager.to}
+            label="users"
+            className="border-t border-border px-4 py-3"
+          />
         </CardContent>
       </Card>
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        title="Delete this user?"
+        description={
+          <>
+            <strong className="text-foreground">
+              {deleteTarget ? `${deleteTarget.firstName} ${deleteTarget.lastName}` : "This user"}
+            </strong>{" "}
+            will be removed permanently and will no longer be able to sign in. This cannot be undone.
+          </>
+        }
+        confirmLabel="Delete"
+        destructive
+        pending={deleteMutation.isPending}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+      />
+
+      {/* Deactivate confirmation */}
+      <ConfirmDialog
+        open={!!deactivateTarget}
+        onOpenChange={(o) => !o && setDeactivateTarget(null)}
+        title="Deactivate this user?"
+        description={
+          <>
+            <strong className="text-foreground">
+              {deactivateTarget ? `${deactivateTarget.firstName} ${deactivateTarget.lastName}` : "This user"}
+            </strong>{" "}
+            will lose access until reactivated. Their records are kept.
+          </>
+        }
+        confirmLabel="Deactivate"
+        destructive
+        pending={activeMutation.isPending}
+        onConfirm={() => deactivateTarget && activeMutation.mutate({ id: deactivateTarget.id, isActive: false })}
+      />
 
       {/* Edit Faculty Dialog — name/email for faculty-linked users */}
       <Dialog open={!!editFacultyUser} onOpenChange={(open) => !open && setEditFacultyUser(null)}>

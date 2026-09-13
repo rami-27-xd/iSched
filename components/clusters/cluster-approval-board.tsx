@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { PaginationControls, usePagination } from '@/components/shared/pagination'
 
 // ── API helpers ────────────────────────────────────────────────────────────
 
@@ -151,6 +152,8 @@ export function ClusterApprovalBoard({
     staleTime: 15_000,
     refetchInterval: 30_000, // poll every 30s for new submissions
   })
+  // 10 pending schedules per page.
+  const pager = usePagination(schedules as any[])
 
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ['pending-schedules'] })
@@ -228,7 +231,7 @@ export function ClusterApprovalBoard({
         </div>
       ) : (
         <div className="space-y-3">
-          {schedules.map((s: any) => (
+          {pager.pageItems.map((s: any) => (
             <ScheduleCard
               key={s.id}
               schedule={s}
@@ -237,6 +240,16 @@ export function ClusterApprovalBoard({
               onReject={() => setRejectTarget(s.id)}
             />
           ))}
+          <PaginationControls
+            size="sm"
+            page={pager.page}
+            pageCount={pager.pageCount}
+            onPageChange={pager.setPage}
+            total={pager.total}
+            from={pager.from}
+            to={pager.to}
+            label="schedules"
+          />
         </div>
       )}
 

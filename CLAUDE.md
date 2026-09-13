@@ -41,7 +41,13 @@ The panelist required a strict workflow hierarchy. The role names in the DB do *
 - CAS programs (BAComm, BAHist, BSBio, BSMath, BAPsych) also live in the `CAS` department.
 - Multiple SUPER_ADMIN users can share the same `CAS` departmentId — they all manage the same pool.
 
-**NSTP and PATHFit are NOT auto-generated** by any dept chair — manually scheduled only.
+**NSTP is NOT auto-generated** — manually scheduled only. **PATHFit IS auto-generated** on every Dept Chair
+(SUPER_ADMIN) run: placed FIRST (before GEC) for every section in the run's scope, faculty defaulted to the
+`TBA` placeholder (`Faculty.employeeId = "TBA"`, entry `facultyName = "TBA"`) and room fixed to the `GYM`
+placeholder (`Room.code = "GYM"`, building `GYM`). GYM/TBA are shared placeholders — exempt from room/faculty
+double-booking checks everywhere (engine, `entry-validation.ts`, `term-conflicts.ts`, cross-schedule checks).
+Placeholder helpers: `lib/sentinels.ts` (client-safe constants) and `lib/services/sentinels.ts` (upserts;
+also `prisma/seed-sentinels.ts`). Program Chair runs never touch PATHFit.
 
 Each CAS Department Head's `User.departmentId` must point to the `CAS` parent department. Use `getUserDepartmentId()` from `lib/auth.ts` to read it (checks `User.departmentId` first).
 
@@ -72,10 +78,16 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
 - Non-SUPER_ADMIN users (Program Chairs, Faculty) are **locked to their own college** automatically
 - SUPER_ADMIN (CAS Dept Heads) can switch colleges via the topbar filter; `null` = "All Colleges"
 
-### 2. Lab Specialization
+### 2. Lab Specialization & Room Type
 - `LabSpecialization` enum on `Room.labSpecialization` and `Subject.requiredLabSpecialization`
 - Scheduling engine checks this as a **hard constraint** in `initializeCandidates()` before backtracking
 - UI: LabInventory component (`components/rooms/lab-inventory.tsx`) with `LAB_SPEC_META`
+- **Room type is always enforced** (`lib/room-type-rules.ts` — single source for the engine via the generate
+  route, `entry-validation.ts`, and the Add/Edit Entry room pickers): explicit `Subject.requiredRoomType`
+  wins (Subject form "Room needed"); otherwise LABORATORY subjects need `LABORATORY`/`LECTURE_LAB`, computer-based
+  labs (ITE/COM/IIT codes, or titles with programming/database/web/networking/CAD/… keywords) need `COMPUTER_LAB`
+  only, and LECTURE subjects need `LECTURE_ROOM`/`LECTURE_LAB`. Placeholder rooms (TBA/GYM) are exempt and are
+  excluded from the engine's room pool.
 
 ### 3. Schedule Workflow State Machine
 ```
@@ -108,7 +120,23 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 - Manual entries: blocked in `entry-validation.ts`; NOT force-overridable (entries PATCH route)
 - UI: Add/Edit Entry day dropdowns hide Saturday for non-CAM/non-NSTP sections
 
-### 6. Personal teaching schedule (chairs only)
+### 6. UI conventions
+- **Lists are paginated at 10 rows** (`components/shared/pagination.tsx` — `usePagination` + `PaginationControls`,
+  `PAGE_SIZE = 10`): users, faculty, availability cards, subject tables, buildings + rooms, lab inventory,
+  schedule list, schedule entries (List/Table views), request panels, approval board.
+- **Every Delete / Deactivate / Set Inactive confirms first** via `components/shared/confirm-dialog.tsx`.
+- User Management has **Delete** (permanent; `DELETE /api/users/[id]`, also removes the Supabase Auth user) instead
+  of "Revoke Approval".
+- Schedule entries filter bar: **Building → Room** dropdowns have no "All" option (default = first building / its
+  first room); Faculty/Section keep "All".
+- Calendar view colours events **per subject** (`subjectColor()` in `schedule-calendar.tsx`, golden-angle hues) with
+  a subject colour key; conflicts stay red.
+- `/dashboard/schedules` has a route `loading.tsx` skeleton, and sidebar / dashboard links show a pending spinner
+  (`components/shared/link-pending.tsx`, `useLinkStatus`).
+- Copy: plain verbs ("Generate", "Generating…", "Save Anyway", "Ready to Publish") — avoid algorithm/constraint jargon
+  in user-facing text.
+
+### 7. Personal teaching schedule (chairs only)
 - The `/dashboard/my-schedule` page and faculty login were **removed** — faculty are not app users.
 - `/api/faculty/my-schedule` still exists as the data source for the signed-in **chair's own**
   teaching-schedule widget on the dashboard (a DC/PC can also hold teaching assignments).
@@ -124,7 +152,8 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 | `/api/faculty` | POST | Creates faculty; email optional (stub vs. real auth user) |
 | `/api/faculty/availability` | GET/POST | Faculty time availability (requires active `semesterId`) |
 | `/api/schedules/[id]/workflow` | POST | State transitions (submit / approve / reject) |
-| `/api/schedules/[id]/generate` | POST | Runs backtracking scheduler. DC generates GEC first (no PC-submission gate); CIT labs are locked slots |
+| `/api/schedules/[id]/generate` | POST | Runs backtracking scheduler. DC generates PATHFit (priority, GYM/TBA) then GEC (no PC-submission gate); CIT labs are locked slots |
+| `/api/users/[id]` | DELETE | SUPER_ADMIN: permanently deletes a chair account (DB rows + Supabase Auth); 409 if their faculty record still has entries |
 | `/api/schedules/[id]/export-data` | GET | Enriched flat entries + header for the ISO / Teaching-Load exports (Section 6) |
 | `/api/schedules/[id]/lab-requests` \| `/[reqId]` | GET/POST/PATCH | DC→CIT-PC lab-change requests (Section 2), on `ScheduleSwapRequest` (`kind:"LAB_CHANGE"`) |
 | `/api/buildings` | GET/POST/PATCH | Includes `departments` relation; accepts `restrictedDepartmentIds` |

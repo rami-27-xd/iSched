@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react"
 import { RoleGuard } from "@/components/shared/role-guard"
+import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { PageHeader } from "@/components/shared/page-header"
 import { FacultyRequestsPanel } from "@/components/faculty/faculty-requests-panel"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -482,15 +483,27 @@ export default function FacultyPage() {
 
   // Name only. Email is no longer surfaced anywhere in this page, and matching on a
   // hidden field returned rows with no visible reason for being there.
-  const filtered = faculty.filter((f: any) => {
-    const name = `${f.user?.firstName ?? ""} ${f.user?.lastName ?? ""}`.toLowerCase()
-    return name.includes(search.toLowerCase())
-  })
+  // Search, then order by department → name so the 10-per-page slice below
+  // keeps each department's members together instead of interleaving them.
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return (faculty as any[])
+      .filter((f: any) => {
+        const name = `${f.user?.firstName ?? ""} ${f.user?.lastName ?? ""}`.toLowerCase()
+        return name.includes(q)
+      })
+      .sort((a: any, b: any) =>
+        (a.department?.name ?? "Unassigned").localeCompare(b.department?.name ?? "Unassigned") ||
+        `${a.user?.lastName ?? ""} ${a.user?.firstName ?? ""}`.localeCompare(`${b.user?.lastName ?? ""} ${b.user?.firstName ?? ""}`)
+      )
+  }, [faculty, search])
+  // 10 faculty per page; the page's rows are then grouped by department below.
+  const pager = usePagination(filtered)
 
-  // Group filtered faculty by department for the desktop table
+  // Group this page's faculty by department for the desktop table / mobile list
   const grouped = useMemo(() => {
     const map = new Map<string, { label: string; abbr: string; members: any[] }>()
-    for (const f of filtered) {
+    for (const f of pager.pageItems) {
       const key = f.department?.id ?? "__none__"
       const label = f.department?.name ?? "Unassigned"
       const abbr = f.department?.abbreviation ?? "—"
@@ -498,7 +511,7 @@ export default function FacultyPage() {
       map.get(key)!.members.push(f)
     }
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
-  }, [filtered])
+  }, [pager.pageItems])
 
   function buildSectionCounts(f: any): SectionCountMap {
     const saved = f.sectionCounts as SectionCountMap | null
@@ -882,6 +895,17 @@ export default function FacultyPage() {
           ))}
         </div>
         )
+      )}
+      {!isLoading && filtered.length > 0 && (
+        <PaginationControls
+          page={pager.page}
+          pageCount={pager.pageCount}
+          onPageChange={pager.setPage}
+          total={pager.total}
+          from={pager.from}
+          to={pager.to}
+          label="faculty"
+        />
       )}
 
       {/* Edit Faculty Dialog */}

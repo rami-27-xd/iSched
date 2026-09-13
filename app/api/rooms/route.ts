@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, canManageBuilding } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
 
 export async function GET(req: Request) {
   try {
@@ -40,11 +41,10 @@ export async function GET(req: Request) {
         : (type as any)
       : undefined
 
-    // The "TBA" sentinel (code "TBA") is included regardless of the type/
-    // building/department filters above — it's the placeholder a chair picks
-    // in Add/Edit Entry to resolve an Unassigned Queue item when no real room
-    // is available, so it must be selectable no matter what room type or
-    // department is being filtered for.
+    // The placeholder rooms — "TBA" (manual resolution of an Unassigned Queue
+    // item when no real room is available) and "GYM" (where every PATHFIT class
+    // is held) — are included regardless of the type/building/department
+    // filters above, so they are always selectable in Add/Edit Entry.
     const rooms = await db.room.findMany({
       where: {
         OR: [
@@ -54,7 +54,7 @@ export async function GET(req: Request) {
             ...(buildingId ? { buildingId } : {}),
             ...(allowedBuildingIds ? { buildingId: { in: allowedBuildingIds } } : {}),
           },
-          { code: "TBA" },
+          { code: { in: [...PLACEHOLDER_ROOM_CODES] } },
         ],
       },
       select: {

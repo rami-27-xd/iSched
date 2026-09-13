@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requireRole, getUserDepartmentId } from '@/lib/auth'
 import { apiResponse, apiError, handleApiError } from '@/lib/api-helpers'
 import { createNotification } from '@/lib/notifications'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 // PATCH /api/users/[id] — Update user (approve, change role, deactivate)
 // SUPER_ADMIN: full access. ADMIN (Program Chair): may only approve/revoke and
@@ -215,6 +216,90 @@ export async function PATCH(
 
     return NextResponse.json(apiResponse(user))
   } catch (error) {
+    const err = handleApiError(error)
+    const status = err.error === 'Unauthorized' ? 403 : 500
+    return NextResponse.json(err, { status })
+  }
+}
+
+// DELETE /api/users/[id] — Permanently remove a login account (Department Chair /
+// Program Chair). SUPER_ADMIN only. Replaces the old "Revoke Approval" action:
+// an account that should not have access is deleted outright rather than left
+// around in a revoked state.
+//
+// Removes, in order: the chair/head/faculty rows hanging off the user, the
+// user's notifications, the User row, and finally the Supabase Auth account so
+// the person can no longer sign in. Faculty records that still hold schedule
+// entries block the delete (restrict FK) — reported as an actionable 409.
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const currentUser = await requireRole('SUPER_ADMIN')
+    const { id } = await params
+
+    if (id === currentUser.id) {
+      return NextResponse.json(apiError('You cannot delete your own account'), { status: 400 })
+    }
+
+    const target = await db.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        supabaseId: true,
+        firstName: true,
+        lastName: true,
+        faculty: { select: { id: true, _count: { select: { scheduleEntries: true, teachingLoads: true } } } },
+      },
+    })
+    if (!target) {
+      return NextResponse.json(apiError('User not found'), { status: 404 })
+    }
+
+    const entryCount = target.faculty?._count.scheduleEntries ?? 0
+    if (entryCount > 0) {
+      return NextResponse.json(
+        apiError(
+          `Cannot delete — ${target.firstName} ${target.lastName} still has ${entryCount} schedule ${entryCount === 1 ? 'entry' : 'entries'} assigned. Reassign or remove those entries first, or deactivate the account instead.`
+        ),
+        { status: 409 }
+      )
+    }
+
+    await db.$transaction(async (tx) => {
+      await tx.departmentChair.deleteMany({ where: { userId: id } })
+      await tx.programHead.deleteMany({ where: { userId: id } })
+      if (target.faculty) {
+        await tx.teachingLoad.deleteMany({ where: { facultyId: target.faculty.id } })
+        // availability + buildingAvailability cascade from Faculty
+        await tx.faculty.delete({ where: { id: target.faculty.id } })
+      }
+      await tx.notification.deleteMany({ where: { userId: id } })
+      await tx.user.delete({ where: { id } })
+    })
+
+    // Real login accounts have a Supabase Auth user; stub records ("manual-…")
+    // never did. Auth deletion is best-effort — the DB row is already gone, so a
+    // failure here must not roll the request back into a confusing half-state.
+    if (target.supabaseId && !target.supabaseId.startsWith('manual-')) {
+      try {
+        const admin = createAdminClient()
+        const { error } = await admin.auth.admin.deleteUser(target.supabaseId)
+        if (error) console.error('DELETE /api/users/[id] auth deletion failed:', error.message)
+      } catch (authError) {
+        console.error('DELETE /api/users/[id] auth deletion failed:', authError)
+      }
+    }
+
+    return NextResponse.json(apiResponse({ deleted: true }))
+  } catch (error: any) {
+    if (error?.code === 'P2003') {
+      return NextResponse.json(
+        apiError('Cannot delete — this account is still referenced by existing records. Deactivate it instead.'),
+        { status: 409 }
+      )
+    }
     const err = handleApiError(error)
     const status = err.error === 'Unauthorized' ? 403 : 500
     return NextResponse.json(err, { status })
