@@ -59,8 +59,7 @@ export async function GET(
             // an entry the API would reject anyway.
             subject: { select: { id: true, code: true, title: true, type: true, programId: true, program: { select: { clusterId: true } } } },
             faculty: { select: { id: true, user: { select: { firstName: true, lastName: true } } } },
-            // building: drives the Building → Room filter pair on the schedule page
-            room: { select: { id: true, code: true, building: { select: { id: true, code: true, name: true } } } },
+            room: { select: { id: true, code: true } },
             section: { select: { id: true, name: true } },
           },
         },

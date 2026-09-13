@@ -120,6 +120,28 @@ export async function POST(req: Request) {
     const access = await checkFacultyWriteAccess(facultyId)
     if (access.error) return access.error
 
+    // ── Max-hours cap ──────────────────────────────────────────────────────
+    // The hours a chair marks as available are the hours this faculty may be
+    // scheduled for, so they may not exceed Faculty.maxHoursPerWeek. The
+    // timeline blocks this client-side; this is the authoritative check.
+    const target = await db.faculty.findUnique({
+      where: { id: facultyId },
+      select: { maxHoursPerWeek: true, user: { select: { firstName: true, lastName: true } } },
+    })
+    const toMin = (t: string) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m }
+    const totalMinutes = slots.reduce(
+      (sum: number, s: any) => sum + Math.max(0, toMin(s.endTime) - toMin(s.startTime)),
+      0
+    )
+    const maxHours = target?.maxHoursPerWeek ?? 30
+    if (totalMinutes > maxHours * 60) {
+      const name = target?.user ? `${target.user.firstName} ${target.user.lastName}`.trim() : "This faculty member"
+      return NextResponse.json(
+        apiError(`${name}'s availability would be ${(totalMinutes / 60).toFixed(1)} hours, over their ${maxHours}-hour weekly limit. Raise the limit or mark fewer hours.`),
+        { status: 400 }
+      )
+    }
+
     // Delete existing availability for this faculty+semester
     await db.facultyAvailability.deleteMany({
       where: { facultyId, semesterId },

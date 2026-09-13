@@ -459,6 +459,7 @@ export async function POST(
         specializations: f.specializations,
         sectionCounts: (f.sectionCounts as Record<string, number>) ?? {},
         maxUnitsPerWeek: f.maxUnitsPerWeek,
+        maxHoursPerWeek: f.maxHoursPerWeek ?? null,
         availability: avail.map((a: any) => ({
           day: a.day as any,
           startTime: a.startTime,

@@ -103,7 +103,11 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { userId, firstName, lastName, email, employeeId: providedEmployeeId, departmentId, specializations, sectionCounts, maxUnitsPerWeek, hoursPerWeek } = body
+    const { userId, firstName, lastName, email, employeeId: providedEmployeeId, departmentId, specializations, sectionCounts, maxUnitsPerWeek, maxHoursPerWeek, hoursPerWeek } = body
+
+    if (maxHoursPerWeek !== undefined && !(Number(maxHoursPerWeek) >= 1 && Number(maxHoursPerWeek) <= 60)) {
+      return NextResponse.json(apiError("Max hours per week must be between 1 and 60"), { status: 400 })
+    }
 
     if (!departmentId) {
       return NextResponse.json(apiError("Department is required"), { status: 400 })
@@ -211,6 +215,7 @@ export async function POST(req: Request) {
         specializations: specializations ?? [],
         sectionCounts: sectionCounts ?? {},
         maxUnitsPerWeek: maxUnitsPerWeek ?? 21,
+        ...(maxHoursPerWeek !== undefined ? { maxHoursPerWeek: Number(maxHoursPerWeek) } : {}),
         hoursPerWeek: hoursPerWeek ?? 0,
       },
       include: { user: true, department: true },

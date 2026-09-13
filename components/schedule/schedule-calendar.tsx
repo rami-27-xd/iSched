@@ -29,6 +29,9 @@ interface ScheduleCalendarProps {
   onDeleteEntry?: (entryId: string) => void
   semesterStartDate?: string
   semesterEndDate?: string
+  // When set (e.g. "MONDAY"), only that weekday column is shown — the page's
+  // per-day tabs drive this so every view shows one day at a time.
+  visibleDay?: string
 }
 
 const DAY_MAP: Record<string, number> = {
@@ -103,11 +106,18 @@ function renderEventContent(eventInfo: EventContentArg) {
   )
 }
 
-export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteEntry, semesterStartDate, semesterEndDate }: ScheduleCalendarProps) {
+export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteEntry, semesterStartDate, semesterEndDate, visibleDay }: ScheduleCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [tooltip, setTooltip] = useState<{ entry: ScheduleEntry; x: number; y: number } | null>(null)
   const [legendOpen, setLegendOpen] = useState(true)
+
+  // Day columns to hide: Sunday always; with a visibleDay, every other weekday too.
+  const hiddenDays = useMemo(() => {
+    if (!visibleDay || DAY_MAP[visibleDay] === undefined) return [0]
+    const keep = DAY_MAP[visibleDay]
+    return [0, 1, 2, 3, 4, 5, 6].filter((d) => d !== keep)
+  }, [visibleDay])
 
   // Distinct background + border per subject (see subjectColor).
   const subjectColors = useMemo(() => buildSubjectColorMap(entries), [entries])
@@ -428,9 +438,10 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           }
 
           /* ── Keep day columns wide enough to read; scroll horizontally when
-                the container is narrower than this. ── */
+                the container is narrower than this. A single-day view needs far
+                less room. ── */
           .isched-calendar-wrap .fc {
-            min-width: 1040px;
+            min-width: ${visibleDay ? "420px" : "1040px"};
           }
         `}</style>
         <FullCalendar
@@ -453,7 +464,7 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           }}
           allDaySlot={false}
           weekends={true}
-          hiddenDays={[0]}
+          hiddenDays={hiddenDays}
           slotEventOverlap={false}
           eventMaxStack={3}
           moreLinkText={(n) => `+${n}`}

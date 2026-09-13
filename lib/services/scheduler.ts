@@ -47,6 +47,10 @@ interface FacultyInput {
   specializations: string[]
   sectionCounts?: Record<string, number>
   maxUnitsPerWeek: number
+  // Maximum weekly workload in contact hours (Faculty.maxHoursPerWeek). Hard
+  // constraint: total scheduled minutes across the week — including locked
+  // entries from other schedules in the same semester — may not exceed it.
+  maxHoursPerWeek?: number
   availability: {
     day: DayOfWeek
     startTime: string
@@ -263,6 +267,8 @@ export class SchedulingEngine {
   private sectionSlots: Map<string, boolean> = new Map()
 
   private facultyDailyMinutes: Map<string, number> = new Map()
+  // facultyId → scheduled minutes this week (all sessions), for maxHoursPerWeek.
+  private facultyWeeklyMinutes: Map<string, number> = new Map()
   private facultyWeeklyUnits: Map<string, number> = new Map()
   private facultySubjectSections: Map<string, number> = new Map()
 
@@ -336,6 +342,10 @@ export class SchedulingEngine {
       this.facultyDailyMinutes.set(
         dailyKey,
         (this.facultyDailyMinutes.get(dailyKey) ?? 0) + (endMin - startMin)
+      )
+      this.facultyWeeklyMinutes.set(
+        entry.facultyId,
+        (this.facultyWeeklyMinutes.get(entry.facultyId) ?? 0) + (endMin - startMin)
       )
     }
   }
@@ -419,6 +429,7 @@ export class SchedulingEngine {
     this.roomSlots.clear()
     this.sectionSlots.clear()
     this.facultyDailyMinutes.clear()
+    this.facultyWeeklyMinutes.clear()
     this.facultyWeeklyUnits.clear()
     this.facultySubjectSections.clear()
     this.assignedFacultyMap.clear()
@@ -482,6 +493,7 @@ export class SchedulingEngine {
     this.roomSlots.clear()
     this.sectionSlots.clear()
     this.facultyDailyMinutes.clear()
+    this.facultyWeeklyMinutes.clear()
     this.facultyWeeklyUnits.clear()
     this.facultySubjectSections.clear()
     this.assignedFacultyMap.clear()
@@ -507,6 +519,7 @@ export class SchedulingEngine {
       this.roomSlots.clear()
       this.sectionSlots.clear()
       this.facultyDailyMinutes.clear()
+      this.facultyWeeklyMinutes.clear()
       this.facultyWeeklyUnits.clear()
       this.facultySubjectSections.clear()
       this.preloadLockedSlots()
@@ -1265,6 +1278,15 @@ export class SchedulingEngine {
       if ((currentDailyMin + (session.end - session.start)) / 60 > this.constraints.maxDailyLoad) return false
     }
 
+    // Weekly hours cap (Faculty.maxHoursPerWeek) — every session of this
+    // candidate counts, on top of what is already scheduled or locked.
+    const maxHours = this.facultyMap.get(candidate.facultyId)?.maxHoursPerWeek
+    if (maxHours && maxHours > 0) {
+      const candidateMinutes = allSessions.reduce((sum, s) => sum + (s.end - s.start), 0)
+      const currentWeekly = this.facultyWeeklyMinutes.get(candidate.facultyId) ?? 0
+      if (currentWeekly + candidateMinutes > maxHours * 60) return false
+    }
+
     // Weekly units and section limits are per-assignment (checked once, not per session)
     const subject = this.subjectMap.get(candidate.subjectId)
     if (subject) {
@@ -1336,6 +1358,7 @@ export class SchedulingEngine {
       this.addSlots(this.sectionSlots, sectionKey, session.day, session.start, session.end)
       const dailyKey = `${a.facultyId}|${session.day}`
       this.facultyDailyMinutes.set(dailyKey, (this.facultyDailyMinutes.get(dailyKey) ?? 0) + (session.end - session.start))
+      this.facultyWeeklyMinutes.set(a.facultyId, (this.facultyWeeklyMinutes.get(a.facultyId) ?? 0) + (session.end - session.start))
     }
     // Units and section counts are per-assignment, not per-session
     const subject = this.subjectMap.get(a.subjectId)
@@ -1366,6 +1389,9 @@ export class SchedulingEngine {
       const newDaily = (this.facultyDailyMinutes.get(dailyKey) ?? 0) - (session.end - session.start)
       if (newDaily <= 0) this.facultyDailyMinutes.delete(dailyKey)
       else this.facultyDailyMinutes.set(dailyKey, newDaily)
+      const newWeekly = (this.facultyWeeklyMinutes.get(a.facultyId) ?? 0) - (session.end - session.start)
+      if (newWeekly <= 0) this.facultyWeeklyMinutes.delete(a.facultyId)
+      else this.facultyWeeklyMinutes.set(a.facultyId, newWeekly)
     }
     const subject = this.subjectMap.get(a.subjectId)
     if (subject) {

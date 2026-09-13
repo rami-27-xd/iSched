@@ -100,7 +100,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (access.error) return access.error
 
     const body = await req.json()
-    const { employeeId, departmentId, clusterId, specializations, sectionCounts, maxUnitsPerWeek, hoursPerWeek, isActive, firstName, lastName, email } = body
+    const { employeeId, departmentId, clusterId, specializations, sectionCounts, maxUnitsPerWeek, maxHoursPerWeek, hoursPerWeek, isActive, firstName, lastName, email } = body
+
+    if (maxHoursPerWeek !== undefined && !(Number(maxHoursPerWeek) >= 1 && Number(maxHoursPerWeek) <= 60)) {
+      return NextResponse.json(apiError("Max hours per week must be between 1 and 60"), { status: 400 })
+    }
 
     // ADMIN cannot move faculty into another department
     if (access.dbUser.role === "ADMIN" && departmentId !== undefined) {
@@ -131,6 +135,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ...(specializations !== undefined ? { specializations } : {}),
         ...(sectionCounts !== undefined ? { sectionCounts } : {}),
         ...(maxUnitsPerWeek !== undefined ? { maxUnitsPerWeek: Number(maxUnitsPerWeek) } : {}),
+        ...(maxHoursPerWeek !== undefined ? { maxHoursPerWeek: Number(maxHoursPerWeek) } : {}),
         ...(hoursPerWeek !== undefined ? { hoursPerWeek: Number(hoursPerWeek) } : {}),
         ...(isActive !== undefined ? { isActive } : {}),
       },

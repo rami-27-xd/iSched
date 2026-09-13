@@ -34,6 +34,7 @@ export const CreateFacultySchema = z.object({
   employeeId: z.string().min(1, 'Employee ID is required'),
   specializations: z.array(z.string()).default([]),
   maxUnitsPerWeek: z.number().min(1).max(30).default(21),
+  maxHoursPerWeek: z.number().min(1).max(60).default(30),
 })
 
 export const CreateRoomSchema = z.object({

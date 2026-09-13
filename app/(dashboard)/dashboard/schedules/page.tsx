@@ -121,6 +121,11 @@ import { useCollege } from "@/lib/college-context"
 import { DAY_LABELS } from "@/lib/constants"
 
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
+// Full day names for the day tabs / banners (DAY_LABELS from lib/constants is the short "Mon" form).
+const DAY_FULL: Record<string, string> = {
+  MONDAY: "Monday", TUESDAY: "Tuesday", WEDNESDAY: "Wednesday",
+  THURSDAY: "Thursday", FRIDAY: "Friday", SATURDAY: "Saturday",
+}
 
 // Saturday classes are reserved for CAM (College of Allied Medicine) sections
 // and NSTP subjects — mirrors the engine/API hard constraint.
@@ -1035,8 +1040,9 @@ export default function SchedulesPage() {
   // Entry filters (shared across list + calendar views)
   const [calFilterFaculty, setCalFilterFaculty] = useState("")
   const [calFilterSection, setCalFilterSection] = useState("")
-  const [calFilterBuilding, setCalFilterBuilding] = useState("")
   const [calFilterRoom, setCalFilterRoom] = useState("")
+  // Per-day navigation (Mon–Sat) — every view shows ONE day at a time.
+  const [selectedDay, setSelectedDay] = useState<string>("MONDAY")
   const [entrySearch, setEntrySearch] = useState("")
   const [deleteEntryId, setDeleteEntryId] = useState<string | null>(null)
 
@@ -1284,7 +1290,6 @@ export default function SchedulesPage() {
     let result = entries
     if (calFilterFaculty) result = result.filter((e: any) => (e.facultyId === calFilterFaculty || e.faculty?.id === calFilterFaculty))
     if (calFilterSection) result = result.filter((e: any) => (e.sectionId === calFilterSection || e.section?.id === calFilterSection))
-    if (calFilterBuilding) result = result.filter((e: any) => e.room?.building?.id === calFilterBuilding)
     if (calFilterRoom) result = result.filter((e: any) => (e.roomId === calFilterRoom || e.room?.id === calFilterRoom))
     if (entrySearch.trim()) {
       const q = entrySearch.toLowerCase().trim()
@@ -1298,7 +1303,7 @@ export default function SchedulesPage() {
       })
     }
     return result
-  }, [entries, calFilterFaculty, calFilterSection, calFilterBuilding, calFilterRoom, entrySearch])
+  }, [entries, calFilterFaculty, calFilterSection, calFilterRoom, entrySearch])
 
   // Unresolved ConflictLog rows for the selected schedule — drives the Calendar's
   // hasConflict highlighting and the Conflicts banner (all types, including
@@ -1334,58 +1339,52 @@ export default function SchedulesPage() {
     hasConflict: unresolvedConflicts.some((c: any) => c.entityIds?.includes(e.id)),
   })), [filteredEntries, unresolvedConflicts])
 
-  // Multi-day (MWF/TTh) auto-generated entries share a groupId — collapse each
-  // group down to one representative row (earliest day in the pattern) so the
-  // List view shows one class per pattern instead of one row per session day.
-  // Manually-added / single-session entries have groupId: null and fall back to
-  // their own id, i.e. a no-op group of size 1.
-  const groupedFilteredEntries = useMemo(() => {
+  // Multi-day (MWF/TTh) auto-generated entries share a groupId. Each session
+  // row is annotated with its pattern (size + "Mon/Wed/Fri" label) so the
+  // per-day views can show one row per day while still flagging that the
+  // class meets on other days too and that edits/deletes move the whole set.
+  // Manually-added / single-session entries have groupId: null → group of 1.
+  const groupInfo = useMemo(() => {
     const byKey = new Map<string, any[]>()
     for (const e of filteredEntries) {
       const key = e.groupId ?? e.id
       if (!byKey.has(key)) byKey.set(key, [])
       byKey.get(key)!.push(e)
     }
-    return Array.from(byKey.values()).map((members) => {
+    const info = new Map<string, { size: number; label: string }>()
+    for (const [key, members] of byKey) {
       const sorted = [...members].sort((a, b) => DAYS.indexOf(a.day) - DAYS.indexOf(b.day))
-      const representative = sorted[0]
-      return {
-        ...representative,
-        __groupSize: sorted.length,
-        __groupDayLabel: sorted.map((m) => DAY_LABELS[m.day] ?? m.day).join("/"),
-      }
-    })
+      info.set(key, { size: sorted.length, label: sorted.map((m) => DAY_LABELS[m.day] ?? m.day).join("/") })
+    }
+    return info
   }, [filteredEntries])
 
-  // Flat, week-ordered rows for the Table view. Uses the same collapsed grouping as
-  // the List so an MWF class is one row, not three, then sorts by day-of-week and
-  // start time — the order someone reads a printed timetable in.
-  const tableEntries = useMemo(() => {
-    const dayIndex = (d: string) => { const i = DAYS.indexOf(d as any); return i === -1 ? 99 : i }
-    return [...groupedFilteredEntries].sort((a: any, b: any) =>
-      dayIndex(a.day) - dayIndex(b.day) ||
-      a.startTime.localeCompare(b.startTime) ||
-      (a.subject?.code ?? "").localeCompare(b.subject?.code ?? "")
-    )
-  }, [groupedFilteredEntries])
+  // Entries per day for the day-tab counters (after the search/faculty/section/
+  // room filters, before the day itself).
+  const entriesPerDay = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const e of filteredEntries) counts[e.day] = (counts[e.day] ?? 0) + 1
+    return counts
+  }, [filteredEntries])
 
-  // One pager shared by the List and Table views — both show the same
-  // week-ordered rows, 10 per page, grouped by day within the page. Switching
-  // between the two tabs keeps the current page.
-  const entriesPager = usePagination(tableEntries)
+  // Rows for the selected day, sorted by start time — the input to the List and
+  // Table views and the pager below.
+  const dayEntries = useMemo(() => {
+    return filteredEntries
+      .filter((e: any) => e.day === selectedDay)
+      .map((e: any) => {
+        const g = groupInfo.get(e.groupId ?? e.id)
+        return { ...e, __groupSize: g?.size ?? 1, __groupDayLabel: g?.label ?? (DAY_LABELS[e.day] ?? e.day) }
+      })
+      .sort((a: any, b: any) =>
+        a.startTime.localeCompare(b.startTime) ||
+        (a.subject?.code ?? "").localeCompare(b.subject?.code ?? "")
+      )
+  }, [filteredEntries, selectedDay, groupInfo])
 
-  // The current page's rows bucketed under the day they fall on, in week order —
-  // the Table view renders one full-width day banner per bucket instead of a Day
-  // column, so a printed-timetable read doesn't repeat "Monday" on every row.
-  const tableEntriesByDay = useMemo(() => {
-    const buckets = new Map<string, any[]>()
-    for (const e of entriesPager.pageItems) {
-      const day = e.__groupSize > 1 ? e.__groupDayLabel : e.day
-      if (!buckets.has(day)) buckets.set(day, [])
-      buckets.get(day)!.push(e)
-    }
-    return [...buckets.entries()]
-  }, [entriesPager.pageItems])
+  // One pager shared by the List and Table views — both show the selected
+  // day's rows, 10 per page. Switching between the two tabs keeps the page.
+  const entriesPager = usePagination(dayEntries)
 
   // Unique faculty/sections/rooms in current schedule for filter dropdowns
   const entryFacultyOptions = useMemo(() => {
@@ -1406,50 +1405,14 @@ export default function SchedulesPage() {
     return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [entries])
 
-  // Building → Room filter pair. Neither has an "All" option: the Building
-  // list defaults to the first building that has entries, and the Room list
-  // (rooms of that building only) defaults to its first room, so the views
-  // always show one specific room's timetable.
-  const entryBuildingOptions = useMemo(() => {
-    const map = new Map<string, string>()
-    entries.forEach((e: any) => {
-      const b = e.room?.building
-      if (b?.id) map.set(b.id, b.name ?? b.code ?? "")
-    })
-    return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
-  }, [entries])
-
   const entryRoomOptions = useMemo(() => {
     const map = new Map<string, string>()
     entries.forEach((e: any) => {
-      if (calFilterBuilding && e.room?.building?.id !== calFilterBuilding) return
       const rid = e.roomId ?? e.room?.id
       if (rid && e.room?.code) map.set(rid, e.room.code)
     })
     return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
-  }, [entries, calFilterBuilding])
-
-  // Keep both selections valid as the schedule / entry set changes — fall back
-  // to the first option whenever the current pick is no longer available.
-  useEffect(() => {
-    if (entryBuildingOptions.length === 0) {
-      if (calFilterBuilding) setCalFilterBuilding("")
-      return
-    }
-    if (!entryBuildingOptions.some((b) => b.id === calFilterBuilding)) {
-      setCalFilterBuilding(entryBuildingOptions[0].id)
-    }
-  }, [entryBuildingOptions, calFilterBuilding])
-
-  useEffect(() => {
-    if (entryRoomOptions.length === 0) {
-      if (calFilterRoom) setCalFilterRoom("")
-      return
-    }
-    if (!entryRoomOptions.some((r) => r.id === calFilterRoom)) {
-      setCalFilterRoom(entryRoomOptions[0].id)
-    }
-  }, [entryRoomOptions, calFilterRoom])
+  }, [entries])
 
   async function handleCreate() {
     // Item 7 — report EVERY blank field at once and mark them, rather than a
@@ -2578,39 +2541,65 @@ export default function SchedulesPage() {
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
-                    {/* Building → Room: always a specific pick (no "All"), so
-                        the timetable shows one room at a time. */}
-                    <select
-                      value={calFilterBuilding}
-                      onChange={(e) => setCalFilterBuilding(e.target.value)}
-                      title="Building"
-                      className="h-8 rounded-lg border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                    >
-                      {entryBuildingOptions.map((b) => (
-                        <option key={b.id} value={b.id}>{b.name}</option>
-                      ))}
-                    </select>
                     <select
                       value={calFilterRoom}
                       onChange={(e) => setCalFilterRoom(e.target.value)}
-                      title="Room"
                       className="h-8 rounded-lg border border-input bg-background px-2.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                     >
+                      <option value="">All Rooms</option>
                       {entryRoomOptions.map((r) => (
                         <option key={r.id} value={r.id}>{r.name}</option>
                       ))}
                     </select>
-                    {(calFilterFaculty || calFilterSection || entrySearch) && (
+                    {(calFilterFaculty || calFilterSection || calFilterRoom || entrySearch) && (
                       <button
-                        onClick={() => { setCalFilterFaculty(""); setCalFilterSection(""); setEntrySearch("") }}
+                        onClick={() => { setCalFilterFaculty(""); setCalFilterSection(""); setCalFilterRoom(""); setEntrySearch("") }}
                         className="text-xs text-red-600 hover:text-red-700 underline"
                       >
                         Clear
                       </button>
                     )}
                     <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                      {filteredEntries.length} of {entries.length} entries
+                      {dayEntries.length} on {DAY_FULL[selectedDay] ?? selectedDay} · {filteredEntries.length} of {entries.length} this week
                     </span>
+                  </div>
+                )}
+
+                {/* ── Per-day navigation ─────────────────────────────────────
+                    One day at a time, in every view. Each tab carries the number
+                    of classes on that day (after the filters above). */}
+                {entries.length > 0 && (
+                  <div className="mt-3 flex gap-1 overflow-x-auto pb-1" role="tablist" aria-label="Day of week">
+                    {DAYS.map((day) => {
+                      const isActive = selectedDay === day
+                      const count = entriesPerDay[day] ?? 0
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          onClick={() => setSelectedDay(day)}
+                          className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                            isActive
+                              ? "border-[#1B4332] bg-[#1B4332] text-white"
+                              : count > 0
+                                ? "border-border bg-background text-foreground hover:bg-muted"
+                                : "border-border bg-background text-muted-foreground hover:bg-muted"
+                          }`}
+                        >
+                          <span className="sm:hidden">{DAY_LABELS[day] ?? day.slice(0, 3)}</span>
+                          <span className="hidden sm:inline">{DAY_FULL[day] ?? day}</span>
+                          <span
+                            className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none ${
+                              isActive ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            {count}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -2619,25 +2608,24 @@ export default function SchedulesPage() {
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
                       No entries yet. Use &ldquo;Add Entry&rdquo; to add classes by hand, or &ldquo;Generate&rdquo; to build the timetable automatically.
                     </div>
-                  ) : filteredEntries.length === 0 ? (
+                  ) : dayEntries.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                      No entries match your search/filter criteria.
+                      {filteredEntries.length === 0
+                        ? "No entries match your search/filter criteria."
+                        : `No classes on ${DAY_FULL[selectedDay] ?? selectedDay}. Pick another day above.`}
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {/* Group entries by Day → Time for a clean stacked layout.
-                          Uses the current page of week-ordered rows (10 per page),
-                          already collapsed so a multi-day (MWF/TTh) pattern renders
-                          once — under its earliest day — instead of once per session. */}
-                      {DAYS.map((day) => {
-                        const dayEntries = entriesPager.pageItems
-                          .filter((e: any) => e.day === day)
-                          .sort((a: any, b: any) => a.startTime.localeCompare(b.startTime))
-                        if (dayEntries.length === 0) return null
+                      {/* The selected day's rows (10 per page), grouped by time
+                          slot. A multi-day (MWF/TTh) class shows on each of its
+                          days with a pattern badge. */}
+                      {[selectedDay].map((day) => {
+                        const rows = entriesPager.pageItems
+                        if (rows.length === 0) return null
 
                         // Group by time slot
                         const timeGroups: Record<string, any[]> = {}
-                        for (const entry of dayEntries) {
+                        for (const entry of rows) {
                           const key = `${entry.startTime}–${entry.endTime}`
                           if (!timeGroups[key]) timeGroups[key] = []
                           timeGroups[key].push(entry)
@@ -2753,9 +2741,11 @@ export default function SchedulesPage() {
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
                       No entries yet. Use &ldquo;Add Entry&rdquo; to add a class by hand, or &ldquo;Generate&rdquo; to build the timetable automatically.
                     </div>
-                  ) : filteredEntries.length === 0 ? (
+                  ) : dayEntries.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                      No entries match your search/filter criteria.
+                      {filteredEntries.length === 0
+                        ? "No entries match your search/filter criteria."
+                        : `No classes on ${DAY_FULL[selectedDay] ?? selectedDay}. Pick another day above.`}
                     </div>
                   ) : (
                     <div className="overflow-x-auto rounded-lg border border-border">
@@ -2770,18 +2760,15 @@ export default function SchedulesPage() {
                             <th className="w-16 px-3 py-2"></th>
                           </tr>
                         </thead>
-                        {/* One <tbody> per day so the day banner's colSpan can't drift
-                            out of sync with the column count above. */}
-                        {tableEntriesByDay.map(([dayLabel, dayEntries]) => (
+                        {/* Single day (from the day tabs) — one banner, then this page's rows. */}
+                        {[[selectedDay, entriesPager.pageItems] as [string, any[]]].map(([dayLabel, rows]) => (
                           <tbody key={dayLabel}>
                             <tr>
                               <td colSpan={6} className="bg-[#1B4332] px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white">
-                                {dayLabel.includes("/")
-                                  ? dayLabel
-                                  : dayLabel.charAt(0) + dayLabel.slice(1).toLowerCase()}
+                                {DAY_FULL[dayLabel] ?? dayLabel}
                               </td>
                             </tr>
-                            {dayEntries.map((entry: any) => (
+                            {rows.map((entry: any) => (
                               <tr
                                 key={entry.id}
                                 className={`border-t border-border transition-colors hover:bg-muted/40 ${canEditEntry(entry) ? "cursor-pointer" : ""}`}
@@ -2855,6 +2842,7 @@ export default function SchedulesPage() {
                 <TabsContent value="calendar" className="mt-4 space-y-3">
                   <ScheduleCalendar
                     entries={calendarEntries}
+                    visibleDay={selectedDay}
                     semesterStartDate={selectedSchedule?.semester?.startDate?.slice(0, 10)}
                     semesterEndDate={selectedSchedule?.semester?.endDate?.slice(0, 10)}
                     onEditEntry={isSuperAdmin || (isAdmin && isDraft) ? (entryId: string) => {

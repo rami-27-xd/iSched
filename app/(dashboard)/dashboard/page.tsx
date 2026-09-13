@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { LinkPendingSpinner } from "@/components/shared/link-pending"
+import { LinkPendingIcon } from "@/components/shared/link-pending"
 import { useUserRole } from "@/components/layout/dashboard-shell"
 import { KPICard } from "@/components/shared/kpi-card"
 import {
@@ -426,14 +426,13 @@ function QuickActionButton({
       className="group flex items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-secondary"
     >
       <div className="p-2 text-primary transition-colors group-hover:text-primary/70">
-        <Icon className="h-4 w-4" />
+        {/* Icon becomes a spinner while the destination page loads */}
+        <LinkPendingIcon icon={Icon} className="h-4 w-4" />
       </div>
       <div className="flex-1">
         <p className="text-sm font-medium">{label}</p>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
-      {/* Immediate feedback while the destination page loads */}
-      <LinkPendingSpinner className="mt-1 text-primary" />
     </Link>
   )
 }

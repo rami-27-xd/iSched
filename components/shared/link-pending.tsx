@@ -1,5 +1,6 @@
 "use client"
 
+import type { ComponentType } from "react"
 import { useLinkStatus } from "next/link"
 import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -20,4 +21,24 @@ export function LinkPendingSpinner({ className }: { className?: string }) {
       className={cn("size-3.5 shrink-0 animate-spin", className)}
     />
   )
+}
+
+/**
+ * The link's own icon, swapped for a spinner while the navigation is pending.
+ * Used where there is no room beside the icon (the collapsed sidebar rail):
+ * replacing the icon in place keeps the 40×40 box exactly as it is instead of
+ * overlaying a badge that clips against the rail edge.
+ */
+export function LinkPendingIcon({
+  icon: Icon,
+  className,
+}: {
+  icon: ComponentType<{ className?: string }>
+  className?: string
+}) {
+  const { pending } = useLinkStatus()
+  if (pending) {
+    return <Loader2 aria-label="Loading" className={cn("animate-spin", className)} />
+  }
+  return <Icon className={className} />
 }

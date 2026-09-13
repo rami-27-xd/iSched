@@ -219,6 +219,11 @@ model Faculty {
   specializations String[]
   sectionCounts   Json?                        @default("{}") // { "Subject Title": numberOfSections }
   maxUnitsPerWeek Int                          @default(21)
+  // Maximum weekly workload in contact HOURS (units above are credit units).
+  // Caps both the availability a chair may mark for this faculty and the hours
+  // the scheduler / manual entry may assign. Editable on the Faculty
+  // Availability page ("Max hours" field).
+  maxHoursPerWeek Int                          @default(30)
   hoursPerWeek    Int                          @default(0)
   isActive        Boolean                      @default(true)
   createdAt       DateTime                     @default(now())

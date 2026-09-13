@@ -127,14 +127,24 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 - **Every Delete / Deactivate / Set Inactive confirms first** via `components/shared/confirm-dialog.tsx`.
 - User Management has **Delete** (permanent; `DELETE /api/users/[id]`, also removes the Supabase Auth user) instead
   of "Revoke Approval".
-- Schedule entries filter bar: **Building → Room** dropdowns have no "All" option (default = first building / its
-  first room); Faculty/Section keep "All".
+- Manage Schedules shows **one day at a time**: Mon–Sat day tabs (with per-day counts) under the entry filter bar
+  drive the List, Table and Calendar views (Calendar hides the other weekday columns via `visibleDay`). Multi-day
+  (MWF/TTh) classes appear on each of their days with a pattern badge. Faculty/Section/Room filters keep "All".
 - Calendar view colours events **per subject** (`subjectColor()` in `schedule-calendar.tsx`, golden-angle hues) with
   a subject colour key; conflicts stay red.
 - `/dashboard/schedules` has a route `loading.tsx` skeleton, and sidebar / dashboard links show a pending spinner
   (`components/shared/link-pending.tsx`, `useLinkStatus`).
 - Copy: plain verbs ("Generate", "Generating…", "Save Anyway", "Ready to Publish") — avoid algorithm/constraint jargon
   in user-facing text.
+- **Faculty max hours (`Faculty.maxHoursPerWeek`, default 30)**: edited inline in each Faculty Availability card's
+  workload panel (also on the Add/Edit dialogs). It caps (a) the availability a chair may mark — the timeline shows
+  hatched "over max hours" cells on hover/drag past the cap, presets/resizes are clamped, and
+  `POST /api/faculty/availability` rejects totals over the cap — and (b) scheduled load: a hard constraint in the
+  engine (`facultyWeeklyMinutes`, locked entries included) and an override-able warning in `validateEntryCapacity`.
+  `GET /api/faculty/workload?semesterId=` returns live scheduled minutes per faculty for the "Scheduled (classes)" bar.
+- Availability timeline: green runs render as blocks with drag-to-resize end handles; hovering a block expands it
+  (range + duration label); the "Schedule" summary card expands to a per-day breakdown.
+- Nav links swap their icon for a spinner while a navigation is pending (`LinkPendingIcon`).
 
 ### 7. Personal teaching schedule (chairs only)
 - The `/dashboard/my-schedule` page and faculty login were **removed** — faculty are not app users.
@@ -150,7 +160,8 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 |---|---|---|
 | `/api/faculty` | GET | Accepts `departmentId` or `collegeId` filter |
 | `/api/faculty` | POST | Creates faculty; email optional (stub vs. real auth user) |
-| `/api/faculty/availability` | GET/POST | Faculty time availability (requires active `semesterId`) |
+| `/api/faculty/availability` | GET/POST | Faculty time availability (requires active `semesterId`); POST rejects totals over `maxHoursPerWeek` |
+| `/api/faculty/workload` | GET | `?semesterId=` → per-faculty scheduled minutes/classes across non-archived schedules (live workload bar) |
 | `/api/schedules/[id]/workflow` | POST | State transitions (submit / approve / reject) |
 | `/api/schedules/[id]/generate` | POST | Runs backtracking scheduler. DC generates PATHFit (priority, GYM/TBA) then GEC (no PC-submission gate); CIT labs are locked slots |
 | `/api/users/[id]` | DELETE | SUPER_ADMIN: permanently deletes a chair account (DB rows + Supabase Auth); 409 if their faculty record still has entries |

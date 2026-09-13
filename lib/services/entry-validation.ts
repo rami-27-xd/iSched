@@ -487,7 +487,7 @@ export async function validateEntryCapacity(
   const [faculty, subject, facultyEntries] = await Promise.all([
     db.faculty.findUnique({
       where: { id: entry.facultyId },
-      select: { employeeId: true, maxUnitsPerWeek: true, user: { select: { firstName: true, lastName: true } } },
+      select: { employeeId: true, maxUnitsPerWeek: true, maxHoursPerWeek: true, user: { select: { firstName: true, lastName: true } } },
     }),
     db.subject.findUnique({
       where: { id: entry.subjectId },
@@ -540,9 +540,20 @@ export async function validateEntryCapacity(
     return `${fname} would be at ${currentUnits + addedUnits} units this week, over their ${effectiveMax}-unit limit.`
   }
 
-  // ── Daily load ──────────────────────────────────────────────────────────
+  // ── Weekly hours (Faculty.maxHoursPerWeek) ──────────────────────────────
+  // Every session counts — an MWF class is three sessions of contact hours.
   const entryStart = toMinutes(entry.startTime)
   const entryEnd = toMinutes(entry.endTime)
+  const maxHours = faculty?.maxHoursPerWeek ?? 0
+  if (maxHours > 0) {
+    const weeklyMinutes = facultyEntries.reduce((sum, e) => sum + (toMinutes(e.endTime) - toMinutes(e.startTime)), 0)
+    const projected = weeklyMinutes + (entryEnd - entryStart)
+    if (projected > maxHours * 60) {
+      return `${fname} would be at ${(projected / 60).toFixed(1)} hours this week, over their ${maxHours}-hour limit.`
+    }
+  }
+
+  // ── Daily load ──────────────────────────────────────────────────────────
   const sameDayMinutes = facultyEntries
     .filter((e) => e.day === entry.day)
     .reduce((sum, e) => sum + (toMinutes(e.endTime) - toMinutes(e.startTime)), 0)

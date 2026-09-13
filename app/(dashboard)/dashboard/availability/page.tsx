@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useCallback, useRef } from "react"
+import { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -12,7 +12,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search } from "lucide-react"
+import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search, ChevronDown, ChevronUp } from "lucide-react"
 import { toast } from "sonner"
 import { useFacultyList, useCreateFaculty, useUpdateFaculty, useSemesters } from "@/hooks/use-data"
 import { useCollege } from "@/lib/college-context"
@@ -92,58 +92,148 @@ function minsToTimeStr(mins: number): string {
 const BRAND_GREEN = "#1B4332"
 const BRAND_GOLD = "#D4AF37"
 
+// ─── Workload helpers ─────────────────────────────────────────────────────────
+
+/** "4", "4.5" — hours from minutes, no trailing ".0". */
+function fmtHours(mins: number): string {
+  const h = mins / 60
+  return Number.isInteger(h) ? `${h}` : h.toFixed(1)
+}
+
+/** Slot index → contiguous [start, end] (inclusive) blocks. */
+function toBlocks(indices: number[]): [number, number][] {
+  const sorted = [...indices].sort((a, b) => a - b)
+  const blocks: [number, number][] = []
+  for (const i of sorted) {
+    const last = blocks[blocks.length - 1]
+    if (last && i === last[1] + 1) last[1] = i
+    else blocks.push([i, i])
+  }
+  return blocks
+}
+
+// Hatched red fill for "would exceed max hours" cells.
+const BLOCKED_BG = "repeating-linear-gradient(45deg, rgba(239,68,68,0.45) 0 4px, rgba(239,68,68,0.12) 4px 8px)"
+
+function WorkloadBar({
+  label,
+  minutes,
+  maxMinutes,
+  color,
+}: {
+  label: string
+  minutes: number
+  maxMinutes: number
+  color: string
+}) {
+  const pct = maxMinutes > 0 ? Math.min(100, (minutes / maxMinutes) * 100) : 0
+  const over = maxMinutes > 0 && minutes > maxMinutes
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 text-[11px]">
+        <span className="text-muted-foreground">{label}</span>
+        <span className={`font-semibold tabular-nums ${over ? "text-red-600" : "text-foreground"}`}>
+          {fmtHours(minutes)} / {fmtHours(maxMinutes)} h
+        </span>
+      </div>
+      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+        <div
+          className="h-full rounded-full transition-[width] duration-300"
+          style={{ width: `${pct}%`, backgroundColor: over ? "#DC2626" : color }}
+        />
+      </div>
+    </div>
+  )
+}
+
 // ─── Faculty Card Component ───────────────────────────────────────────────────
 
 function FacultyCard({
   faculty,
   availabilityMap,
   allAvailability,
+  scheduledMinutes,
   onSave,
   isSaving,
+  onSaveMaxHours,
+  isSavingMaxHours,
   onEdit,
   onDeactivate,
 }: {
   faculty: any
   availabilityMap: Map<string, Set<string>>
   allAvailability: any[]
+  /** Minutes of classes already scheduled for this faculty this semester (live). */
+  scheduledMinutes: number
   onSave: (facultyId: string, newSlots: { day: string; startTime: string; endTime: string }[]) => void
   isSaving: boolean
+  onSaveMaxHours: (facultyId: string, hours: number) => void
+  isSavingMaxHours: boolean
   onEdit?: (faculty: any) => void
   onDeactivate?: (faculty: any) => void
 }) {
   const [activeDay, setActiveDay] = useState<string>("MONDAY")
   const dragRef = useRef<{ dragging: boolean; startIdx: number; endIdx: number; mode: "add" | "remove" } | null>(null)
   const [dragPreview, setDragPreview] = useState<{ startIdx: number; endIdx: number; mode: "add" | "remove" } | null>(null)
+  // Cell under the pointer (not dragging) — drives the cap-aware hover state
+  // and the "expanded" look of the availability block it belongs to.
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  // Resize-by-dragging a block's end handle.
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const resizeRef = useRef<{ start: number; end: number; side: "start" | "end"; cur: number } | null>(null)
+  const [resizePreview, setResizePreview] = useState<{ start: number; end: number; side: "start" | "end"; cur: number } | null>(null)
+  const [summaryOpen, setSummaryOpen] = useState(false)
 
-  const facultySlots = availabilityMap.get(faculty.id) ?? new Set<string>()
+  const facultySlots = useMemo(
+    () => availabilityMap.get(faculty.id) ?? new Set<string>(),
+    [availabilityMap, faculty.id],
+  )
 
   const firstName = faculty.user?.firstName ?? ""
   const lastName = faculty.user?.lastName ?? ""
   const department = faculty.department?.name ?? ""
   const fullName = `${lastName}${firstName ? `, ${firstName}` : ""}`
 
-  // ─── Build summary across all days ────────────────────────────────────
-  const summary = useMemo(() => {
-    const parts: string[] = []
-    for (const day of DAYS) {
-      const daySlots = SLOTS.filter((s) => facultySlots.has(`${day}-${s}`))
-      if (daySlots.length === 0) continue
-      const ranges: string[] = []
-      let rangeStart = daySlots[0]
-      let prevIdx = SLOTS.indexOf(daySlots[0])
-      for (let i = 1; i < daySlots.length; i++) {
-        const curIdx = SLOTS.indexOf(daySlots[i])
-        if (curIdx !== prevIdx + 1) {
-          ranges.push(`${formatTime12(rangeStart)}-${formatTime12(getEndTime(SLOTS[prevIdx]))}`)
-          rangeStart = daySlots[i]
-        }
-        prevIdx = curIdx
-      }
-      ranges.push(`${formatTime12(rangeStart)}-${formatTime12(getEndTime(SLOTS[prevIdx]))}`)
-      parts.push(`${DAY_SHORT[day]}: ${ranges.join(", ")}`)
+  // ─── Workload vs. the max-hours cap ───────────────────────────────────
+  // Every marked 30-min slot across the whole week counts toward the cap.
+  const maxHours = Number(faculty.maxHoursPerWeek ?? 30) || 30
+  const capMinutes = maxHours * 60
+  const markedMinutes = facultySlots.size * 30
+  const remainingSlots = Math.max(0, Math.floor((capMinutes - markedMinutes) / 30))
+  const atCap = remainingSlots === 0
+
+  const [maxHoursDraft, setMaxHoursDraft] = useState<string>(String(maxHours))
+  useEffect(() => { setMaxHoursDraft(String(maxHours)) }, [maxHours])
+  const commitMaxHours = useCallback(() => {
+    const n = Number(maxHoursDraft)
+    if (!Number.isFinite(n) || n < 1 || n > 60) {
+      toast.error("Max hours must be between 1 and 60")
+      setMaxHoursDraft(String(maxHours))
+      return
     }
-    return parts.length > 0 ? parts.join(" | ") : "No availability set"
+    if (n !== maxHours) onSaveMaxHours(faculty.id, n)
+  }, [maxHoursDraft, maxHours, onSaveMaxHours, faculty.id])
+
+  // ─── Per-day breakdown (summary card) ─────────────────────────────────
+  const dayBreakdown = useMemo(() => {
+    return DAYS.map((day) => {
+      const idxs = SLOTS.map((s, i) => (facultySlots.has(`${day}-${s}`) ? i : -1)).filter((i) => i >= 0)
+      const ranges = toBlocks(idxs).map(([a, b]) => `${formatTime12(SLOTS[a])}–${formatTime12(getEndTime(SLOTS[b]))}`)
+      return { day, ranges, minutes: idxs.length * 30 }
+    })
   }, [facultySlots])
+  const summary = useMemo(() => {
+    const parts = dayBreakdown.filter((d) => d.ranges.length > 0).map((d) => `${DAY_SHORT[d.day]}: ${d.ranges.join(", ")}`)
+    return parts.length > 0 ? parts.join(" | ") : "No availability set"
+  }, [dayBreakdown])
+
+  // Selected slot indices + merged blocks for the active day.
+  const daySelected = useMemo(() => {
+    const set = new Set<number>()
+    for (let i = 0; i < SLOTS.length; i++) if (facultySlots.has(`${activeDay}-${SLOTS[i]}`)) set.add(i)
+    return set
+  }, [facultySlots, activeDay])
+  const dayBlocks = useMemo(() => toBlocks([...daySelected]), [daySelected])
 
   // ─── Compute new slots after a bulk change for one day ────────────────
   const buildNewSlots = useCallback(
@@ -173,7 +263,6 @@ function FacultyCard({
     [allAvailability, faculty.id],
   )
 
-  // ─── Commit a drag or quick-button change ─────────────────────────────
   const commitDaySlots = useCallback(
     (day: string, newSelectedIndices: Set<number>) => {
       const newSlots = buildNewSlots(day, newSelectedIndices)
@@ -182,19 +271,45 @@ function FacultyCard({
     [buildNewSlots, faculty.id, onSave],
   )
 
-  // ─── Drag handlers ────────────────────────────────────────────────────
+  /**
+   * Adds `candidates` (in the given order) to `selected` until the max-hours
+   * cap is reached. Returns how many were left out so the caller can say so.
+   */
+  const addWithinCap = useCallback(
+    (selected: Set<number>, candidates: number[]): number => {
+      let room = remainingSlots
+      let blocked = 0
+      for (const i of candidates) {
+        if (selected.has(i)) continue
+        if (room > 0) { selected.add(i); room-- }
+        else blocked++
+      }
+      return blocked
+    },
+    [remainingSlots],
+  )
+
+  const warnCap = useCallback((blocked: number) => {
+    if (blocked > 0) {
+      toast.warning(`Max hours reached (${maxHours} h/week) — ${fmtHours(blocked * 30)} h could not be added. Raise the limit in the workload panel to mark more.`)
+    }
+  }, [maxHours])
+
+  // ─── Drag (paint) handlers ────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (idx: number) => {
-      const key = `${activeDay}-${SLOTS[idx]}`
-      const isCurrentlyOn = facultySlots.has(key)
+      const isCurrentlyOn = daySelected.has(idx)
       const mode = isCurrentlyOn ? "remove" : "add"
+      // Nothing can be added once the cap is reached — refuse to start an add-drag.
+      if (mode === "add" && atCap) { warnCap(1); return }
       dragRef.current = { dragging: true, startIdx: idx, endIdx: idx, mode }
       setDragPreview({ startIdx: idx, endIdx: idx, mode })
     },
-    [activeDay, facultySlots],
+    [daySelected, atCap, warnCap],
   )
 
   const handleMouseEnter = useCallback((idx: number) => {
+    setHoverIdx(idx)
     if (!dragRef.current?.dragging) return
     dragRef.current.endIdx = idx
     setDragPreview({
@@ -210,69 +325,140 @@ function FacultyCard({
     dragRef.current = null
     setDragPreview(null)
 
-    const lo = Math.min(startIdx, endIdx)
-    const hi = Math.max(startIdx, endIdx)
+    const currentSelected = new Set(daySelected)
+    // Walk from where the drag started toward where it ended, so when the cap
+    // cuts the range short it is the far end that gets dropped — matching the
+    // hatched preview the user saw while dragging.
+    const step = endIdx >= startIdx ? 1 : -1
+    const ordered: number[] = []
+    for (let i = startIdx; step > 0 ? i <= endIdx : i >= endIdx; i += step) ordered.push(i)
 
-    const currentSelected = new Set<number>()
-    for (let i = 0; i < SLOTS.length; i++) {
-      if (facultySlots.has(`${activeDay}-${SLOTS[i]}`)) {
-        currentSelected.add(i)
-      }
+    if (mode === "add") {
+      warnCap(addWithinCap(currentSelected, ordered))
+    } else {
+      for (const i of ordered) currentSelected.delete(i)
     }
-
-    for (let i = lo; i <= hi; i++) {
-      if (mode === "add") {
-        currentSelected.add(i)
-      } else {
-        currentSelected.delete(i)
-      }
-    }
-
     commitDaySlots(activeDay, currentSelected)
-  }, [activeDay, facultySlots, commitDaySlots])
+  }, [activeDay, daySelected, commitDaySlots, addWithinCap, warnCap])
+
+  // ─── Resize handles ───────────────────────────────────────────────────
+  const idxFromClientX = useCallback((clientX: number): number => {
+    const el = timelineRef.current
+    if (!el) return 0
+    const rect = el.getBoundingClientRect()
+    const ratio = (clientX - rect.left) / Math.max(1, rect.width)
+    return Math.min(SLOTS.length - 1, Math.max(0, Math.floor(ratio * SLOTS.length)))
+  }, [])
+
+  const startResize = useCallback((block: [number, number], side: "start" | "end", e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const st = { start: block[0], end: block[1], side, cur: side === "start" ? block[0] : block[1] }
+    resizeRef.current = st
+    setResizePreview(st)
+  }, [])
+
+  useEffect(() => {
+    if (!resizePreview) return
+    function onMove(e: MouseEvent) {
+      const r = resizeRef.current
+      if (!r) return
+      const idx = idxFromClientX(e.clientX)
+      // A handle can't cross the block's other edge.
+      const cur = r.side === "end" ? Math.max(r.start, idx) : Math.min(r.end, idx)
+      if (cur !== r.cur) {
+        r.cur = cur
+        setResizePreview({ ...r })
+      }
+    }
+    function onUp() {
+      const r = resizeRef.current
+      resizeRef.current = null
+      setResizePreview(null)
+      if (!r) return
+      const newStart = r.side === "start" ? r.cur : r.start
+      const newEnd = r.side === "end" ? r.cur : r.end
+      const next = new Set(daySelected)
+      // Cells the block no longer covers are removed…
+      for (let i = r.start; i <= r.end; i++) if (i < newStart || i > newEnd) next.delete(i)
+      // …cells it grew into are added, nearest-to-the-old-edge first, within the cap.
+      const grown: number[] = []
+      if (r.side === "end") for (let i = r.end + 1; i <= newEnd; i++) grown.push(i)
+      else for (let i = r.start - 1; i >= newStart; i--) grown.push(i)
+      warnCap(addWithinCap(next, grown))
+      commitDaySlots(activeDay, next)
+    }
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+    return () => {
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+  }, [resizePreview, idxFromClientX, daySelected, activeDay, addWithinCap, warnCap, commitDaySlots])
 
   // ─── Quick buttons ────────────────────────────────────────────────────
   const applyPreset = useCallback(
     (startTime: string, endTime: string) => {
-      const currentSelected = new Set<number>()
-      for (let i = 0; i < SLOTS.length; i++) {
-        if (facultySlots.has(`${activeDay}-${SLOTS[i]}`)) {
-          currentSelected.add(i)
-        }
-      }
-
+      const currentSelected = new Set(daySelected)
       const [sH, sM] = startTime.split(":").map(Number)
       const [eH, eM] = endTime.split(":").map(Number)
       const startMins = sH * 60 + sM
       const endMins = eH * 60 + eM
-
+      const candidates: number[] = []
       for (let i = 0; i < SLOTS.length; i++) {
         const [h, m] = SLOTS[i].split(":").map(Number)
         const slotMins = h * 60 + m
-        if (slotMins >= startMins && slotMins + 30 <= endMins) {
-          currentSelected.add(i)
-        }
+        if (slotMins >= startMins && slotMins + 30 <= endMins) candidates.push(i)
       }
-
+      warnCap(addWithinCap(currentSelected, candidates))
       commitDaySlots(activeDay, currentSelected)
     },
-    [activeDay, facultySlots, commitDaySlots],
+    [activeDay, daySelected, commitDaySlots, addWithinCap, warnCap],
   )
 
   const clearDay = useCallback(() => {
     commitDaySlots(activeDay, new Set())
   }, [activeDay, commitDaySlots])
 
-  const getDragRange = (): Set<number> => {
-    if (!dragPreview) return new Set()
-    const lo = Math.min(dragPreview.startIdx, dragPreview.endIdx)
-    const hi = Math.max(dragPreview.startIdx, dragPreview.endIdx)
-    const set = new Set<number>()
-    for (let i = lo; i <= hi; i++) set.add(i)
-    return set
-  }
+  // ─── Preview sets for rendering ───────────────────────────────────────
+  // Drag-add: the first `remainingSlots` NEW cells (from the drag origin
+  // outward) will be added; the rest are shown hatched as "would exceed".
+  const { dragAllowed, dragBlocked, dragRemove } = useMemo(() => {
+    const allowed = new Set<number>(), blocked = new Set<number>(), remove = new Set<number>()
+    if (!dragPreview) return { dragAllowed: allowed, dragBlocked: blocked, dragRemove: remove }
+    const { startIdx, endIdx, mode } = dragPreview
+    const step = endIdx >= startIdx ? 1 : -1
+    let room = remainingSlots
+    for (let i = startIdx; step > 0 ? i <= endIdx : i >= endIdx; i += step) {
+      if (mode === "remove") { remove.add(i); continue }
+      if (daySelected.has(i)) { allowed.add(i); continue }
+      if (room > 0) { allowed.add(i); room-- } else blocked.add(i)
+    }
+    return { dragAllowed: allowed, dragBlocked: blocked, dragRemove: remove }
+  }, [dragPreview, daySelected, remainingSlots])
 
-  const dragRange = getDragRange()
+  // Resize preview: the block's new extent, with growth beyond the cap hatched.
+  const resizeView = useMemo(() => {
+    if (!resizePreview) return null
+    const r = resizePreview
+    const newStart = r.side === "start" ? r.cur : r.start
+    const newEnd = r.side === "end" ? r.cur : r.end
+    const grown = new Set<number>(), blocked = new Set<number>(), shrunk = new Set<number>()
+    let room = remainingSlots
+    const walk = r.side === "end"
+      ? Array.from({ length: Math.max(0, newEnd - r.end) }, (_, k) => r.end + 1 + k)
+      : Array.from({ length: Math.max(0, r.start - newStart) }, (_, k) => r.start - 1 - k)
+    for (const i of walk) {
+      if (daySelected.has(i)) { grown.add(i); continue }
+      if (room > 0) { grown.add(i); room-- } else blocked.add(i)
+    }
+    for (let i = r.start; i <= r.end; i++) if (i < newStart || i > newEnd) shrunk.add(i)
+    return { newStart, newEnd, grown, blocked, shrunk }
+  }, [resizePreview, daySelected, remainingSlots])
+
+  const hoveredBlock = hoverIdx !== null ? dayBlocks.find(([a, b]) => hoverIdx >= a && hoverIdx <= b) ?? null : null
+  const blockLabel = (a: number, b: number) =>
+    `${formatTime12(SLOTS[a])} – ${formatTime12(getEndTime(SLOTS[b]))} · ${fmtHours((b - a + 1) * 30)} h`
 
   return (
     <Card className="overflow-hidden">
@@ -321,158 +507,304 @@ function FacultyCard({
         )}
       </div>
 
-      <CardContent className="p-4 space-y-3">
-        {/* Day tabs */}
-        <div className="flex gap-1 flex-wrap">
-          {DAYS.map((day) => {
-            const isActive = activeDay === day
-            const hasSlotsForDay = SLOTS.some((s) => facultySlots.has(`${day}-${s}`))
-            return (
-              <button
-                key={day}
-                type="button"
-                onClick={() => setActiveDay(day)}
-                className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors relative"
-                style={{
-                  backgroundColor: isActive ? BRAND_GREEN : "transparent",
-                  color: isActive ? "#fff" : BRAND_GREEN,
-                  border: `1.5px solid ${isActive ? BRAND_GREEN : "#d1d5db"}`,
-                }}
-              >
-                {DAY_SHORT[day]}
-                {hasSlotsForDay && (
-                  <span
-                    className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
-                    style={{ backgroundColor: BRAND_GOLD }}
-                  />
-                )}
-              </button>
-            )
-          })}
-        </div>
-
-        {/* Quick-action buttons */}
-        <div className="flex gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => applyPreset("07:30", "12:00")}
-            disabled={isSaving}
-            className="px-3 py-1.5 text-xs font-medium rounded-md border transition-colors hover:opacity-80 disabled:opacity-50"
-            style={{ borderColor: BRAND_GREEN, color: BRAND_GREEN }}
-          >
-            Morning (7:30–12:00)
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset("12:00", "17:00")}
-            disabled={isSaving}
-            className="px-3 py-1.5 text-xs font-medium rounded-md border transition-colors hover:opacity-80 disabled:opacity-50"
-            style={{ borderColor: BRAND_GREEN, color: BRAND_GREEN }}
-          >
-            Afternoon (12:00–5:00)
-          </button>
-          <button
-            type="button"
-            onClick={() => applyPreset("07:30", "21:00")}
-            disabled={isSaving}
-            className="px-3 py-1.5 text-xs font-medium rounded-md border transition-colors hover:opacity-80 disabled:opacity-50"
-            style={{ borderColor: BRAND_GREEN, color: BRAND_GREEN }}
-          >
-            Full Day (7:30–9:00 PM)
-          </button>
-          <button
-            type="button"
-            onClick={clearDay}
-            disabled={isSaving}
-            className="px-3 py-1.5 text-xs font-medium rounded-md border border-red-300 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-          >
-            Clear {DAY_SHORT[activeDay]}
-          </button>
-        </div>
-
-        {/* Timeline */}
-        <div className="relative select-none overflow-x-auto" style={{ userSelect: "none" }}>
-          <div className="min-w-[600px]">
-            {/* Hour labels — anchored to each hour's slot boundary so they sit
-                directly over the gridlines drawn on the cells below (borderLeft =
-                the cell's left edge). The previous version centered each label
-                inside its 30-min cell, floating it half a slot to the right of
-                the boundary it marks, so a block that looked like it began at
-                8:00 was really being set to 7:45–8:15. */}
-            <div className="relative h-3 mb-0.5 text-[10px] text-muted-foreground">
-              {SLOTS.map((slot, i) => {
-                const [, m] = slot.split(":").map(Number)
-                if (m !== 0) return null
-                return (
-                  <span
-                    key={i}
-                    className="absolute top-0 -translate-x-1/2 whitespace-nowrap tabular-nums"
-                    style={{ left: `${(i / SLOTS.length) * 100}%` }}
-                  >
-                    {formatTime12(slot).replace(":00 ", "").replace(" ", "")}
-                  </span>
-                )
-              })}
+      <CardContent className="p-4">
+        <div className="grid gap-4 md:grid-cols-[190px_minmax(0,1fr)]">
+          {/* ── Workload sidebar ─────────────────────────────────────────
+              Max-hours limit + live workload: hours marked available on
+              this timeline, and hours of classes already scheduled this
+              semester, both against the limit. */}
+          <aside className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+            <div className="space-y-1.5">
+              <Label htmlFor={`max-hours-${faculty.id}`} className="text-xs">Max hours / week</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id={`max-hours-${faculty.id}`}
+                  type="number"
+                  min={1}
+                  max={60}
+                  step={1}
+                  value={maxHoursDraft}
+                  onChange={(e) => setMaxHoursDraft(e.target.value)}
+                  onBlur={commitMaxHours}
+                  onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur() }}
+                  disabled={isSavingMaxHours}
+                  className="h-8 w-20 text-sm tabular-nums"
+                />
+                <span className="text-xs text-muted-foreground">hours</span>
+                {isSavingMaxHours && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+              </div>
+              <p className="text-[10px] leading-snug text-muted-foreground">
+                Caps the hours you can mark below and the classes the scheduler may assign.
+              </p>
             </div>
 
-            {/* Timeline slots */}
-            <div
-              className="flex rounded-lg overflow-hidden border border-border"
-              onMouseLeave={() => {
-                if (dragRef.current?.dragging) handleMouseUp()
-              }}
-            >
-              {SLOTS.map((slot, idx) => {
-                const key = `${activeDay}-${slot}`
-                const isAvailable = facultySlots.has(key)
-                const isInDrag = dragRange.has(idx)
+            <WorkloadBar label="Available (marked)" minutes={markedMinutes} maxMinutes={capMinutes} color="#22c55e" />
+            <WorkloadBar label="Scheduled (classes)" minutes={scheduledMinutes} maxMinutes={capMinutes} color={BRAND_GOLD} />
 
-                let bgColor: string
-                if (isInDrag) {
-                  bgColor = dragPreview?.mode === "add" ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.3)"
-                } else if (isAvailable) {
-                  bgColor = "rgba(34,197,94,0.6)"
-                } else {
-                  bgColor = "transparent"
-                }
+            <p className={`text-[11px] font-medium ${atCap ? "text-red-600" : "text-muted-foreground"}`}>
+              {atCap
+                ? "Limit reached — raise it to mark more"
+                : `${fmtHours(remainingSlots * 30)} h left to mark`}
+            </p>
+          </aside>
 
-                const [, m] = slot.split(":").map(Number)
-                const isHourBoundary = m === 0 && idx > 0
-
+          <div className="min-w-0 space-y-3">
+            {/* Day tabs */}
+            <div className="flex gap-1 flex-wrap">
+              {DAYS.map((day) => {
+                const isActive = activeDay === day
+                const hasSlotsForDay = SLOTS.some((s) => facultySlots.has(`${day}-${s}`))
                 return (
-                  <div
-                    key={idx}
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      handleMouseDown(idx)
-                    }}
-                    onMouseEnter={() => handleMouseEnter(idx)}
-                    onMouseUp={handleMouseUp}
-                    className="relative cursor-pointer transition-all hover:brightness-90 hover:scale-y-110 active:scale-y-95"
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => setActiveDay(day)}
+                    className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors relative"
                     style={{
-                      width: `${100 / SLOTS.length}%`,
-                      height: "44px",
-                      backgroundColor: bgColor,
-                      borderLeft: isHourBoundary ? "1px solid rgba(0,0,0,0.12)" : "1px solid rgba(0,0,0,0.04)",
+                      backgroundColor: isActive ? BRAND_GREEN : "transparent",
+                      color: isActive ? "#fff" : BRAND_GREEN,
+                      border: `1.5px solid ${isActive ? BRAND_GREEN : "#d1d5db"}`,
                     }}
-                    title={`${DAY_LABELS[activeDay]} ${formatTime12(slot)} – ${formatTime12(getEndTime(slot))} ${isAvailable ? "(Available)" : "(Unavailable)"}`}
-                  />
+                  >
+                    {DAY_SHORT[day]}
+                    {hasSlotsForDay && (
+                      <span
+                        className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
+                        style={{ backgroundColor: BRAND_GOLD }}
+                      />
+                    )}
+                  </button>
                 )
               })}
             </div>
 
-            {/* Start/End labels */}
-            <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5 px-0.5">
-              <span>{formatTime12(SLOTS[0])}</span>
-              <span>{formatTime12(getEndTime(SLOTS[SLOTS.length - 1]))}</span>
+            {/* Quick-action buttons */}
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => applyPreset("07:30", "12:00")}
+                disabled={isSaving || atCap}
+                className="px-3 py-1.5 text-xs font-medium rounded-md border transition-colors hover:opacity-80 disabled:opacity-50"
+                style={{ borderColor: BRAND_GREEN, color: BRAND_GREEN }}
+              >
+                Morning (7:30–12:00)
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset("12:00", "17:00")}
+                disabled={isSaving || atCap}
+                className="px-3 py-1.5 text-xs font-medium rounded-md border transition-colors hover:opacity-80 disabled:opacity-50"
+                style={{ borderColor: BRAND_GREEN, color: BRAND_GREEN }}
+              >
+                Afternoon (12:00–5:00)
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset("07:30", "21:00")}
+                disabled={isSaving || atCap}
+                className="px-3 py-1.5 text-xs font-medium rounded-md border transition-colors hover:opacity-80 disabled:opacity-50"
+                style={{ borderColor: BRAND_GREEN, color: BRAND_GREEN }}
+              >
+                Full Day (7:30–9:00 PM)
+              </button>
+              <button
+                type="button"
+                onClick={clearDay}
+                disabled={isSaving}
+                className="px-3 py-1.5 text-xs font-medium rounded-md border border-red-300 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+              >
+                Clear {DAY_SHORT[activeDay]}
+              </button>
+            </div>
+
+            {/* Timeline */}
+            <div className="relative select-none overflow-x-auto pt-6" style={{ userSelect: "none" }}>
+              <div className="min-w-[600px]">
+                {/* Hour labels — anchored to each hour's slot boundary so they sit
+                    directly over the gridlines drawn on the cells below. */}
+                <div className="relative h-3 mb-0.5 text-[10px] text-muted-foreground">
+                  {SLOTS.map((slot, i) => {
+                    const [, m] = slot.split(":").map(Number)
+                    if (m !== 0) return null
+                    return (
+                      <span
+                        key={i}
+                        className="absolute top-0 -translate-x-1/2 whitespace-nowrap tabular-nums"
+                        style={{ left: `${(i / SLOTS.length) * 100}%` }}
+                      >
+                        {formatTime12(slot).replace(":00 ", "").replace(" ", "")}
+                      </span>
+                    )
+                  })}
+                </div>
+
+                {/* Timeline slots + block overlays */}
+                <div
+                  ref={timelineRef}
+                  className="relative flex rounded-lg border border-border"
+                  onMouseLeave={() => {
+                    setHoverIdx(null)
+                    if (dragRef.current?.dragging) handleMouseUp()
+                  }}
+                >
+                  {SLOTS.map((slot, idx) => {
+                    const isAvailable = daySelected.has(idx)
+                    const [, m] = slot.split(":").map(Number)
+                    const isHourBoundary = m === 0 && idx > 0
+                    const hovered = hoverIdx === idx && !dragPreview && !resizePreview
+                    // Hovering an empty cell when nothing more can be added.
+                    const hoverBlocked = hovered && !isAvailable && atCap
+
+                    let bg: string = "transparent"
+                    let cursor = "pointer"
+                    if (resizeView) {
+                      if (resizeView.blocked.has(idx)) bg = BLOCKED_BG
+                      else if (resizeView.grown.has(idx)) bg = "rgba(34,197,94,0.5)"
+                      else if (resizeView.shrunk.has(idx)) bg = "rgba(239,68,68,0.3)"
+                      else if (isAvailable) bg = "rgba(34,197,94,0.6)"
+                      cursor = "ew-resize"
+                    } else if (dragPreview) {
+                      if (dragBlocked.has(idx)) bg = BLOCKED_BG
+                      else if (dragRemove.has(idx)) bg = "rgba(239,68,68,0.3)"
+                      else if (dragAllowed.has(idx)) bg = "rgba(34,197,94,0.5)"
+                      else if (isAvailable) bg = "rgba(34,197,94,0.6)"
+                    } else if (hoverBlocked) {
+                      bg = BLOCKED_BG
+                      cursor = "not-allowed"
+                    } else if (isAvailable) {
+                      bg = "rgba(34,197,94,0.6)"
+                    } else if (atCap) {
+                      cursor = "not-allowed"
+                    }
+
+                    const title = hoverBlocked || (!isAvailable && atCap)
+                      ? `Adding this slot would exceed the ${maxHours}-hour weekly limit`
+                      : `${DAY_LABELS[activeDay]} ${formatTime12(slot)} – ${formatTime12(getEndTime(slot))} ${isAvailable ? "(Available — drag to remove, or drag a block edge to resize)" : "(Unavailable — click or drag to add)"}`
+
+                    return (
+                      <div
+                        key={idx}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          handleMouseDown(idx)
+                        }}
+                        onMouseEnter={() => handleMouseEnter(idx)}
+                        onMouseUp={handleMouseUp}
+                        className={`relative transition-all ${hoverBlocked ? "" : "hover:brightness-90"}`}
+                        style={{
+                          width: `${100 / SLOTS.length}%`,
+                          height: "44px",
+                          background: bg,
+                          cursor,
+                          borderLeft: isHourBoundary ? "1px solid rgba(0,0,0,0.12)" : "1px solid rgba(0,0,0,0.04)",
+                        }}
+                        title={title}
+                      />
+                    )
+                  })}
+
+                  {/* Block overlays — one per contiguous green run. The body lets
+                      pointer events through to the cells (so paint-to-remove still
+                      works); the end handles capture them for resizing. Hovering a
+                      block "expands" it: raised, outlined, with its range and
+                      duration shown above. */}
+                  {!dragPreview && dayBlocks.map(([a, b]) => {
+                    const isHovered = hoveredBlock?.[0] === a && hoveredBlock?.[1] === b
+                    const isResizing = resizePreview?.start === a && resizePreview?.end === b
+                    const dispA = isResizing && resizeView ? resizeView.newStart : a
+                    const dispB = isResizing && resizeView ? resizeView.newEnd : b
+                    const left = (dispA / SLOTS.length) * 100
+                    const width = ((dispB - dispA + 1) / SLOTS.length) * 100
+                    const wide = dispB - dispA + 1 >= 5
+                    const expanded = isHovered || isResizing
+                    return (
+                      <div
+                        key={`${a}-${b}`}
+                        className={`pointer-events-none absolute top-0 bottom-0 rounded-md transition-[box-shadow,transform] duration-150 ${
+                          expanded ? "z-10 scale-y-110 ring-2 ring-emerald-600/70 shadow-md" : ""
+                        }`}
+                        style={{ left: `${left}%`, width: `${width}%` }}
+                      >
+                        {/* Range label inside the block (only when there is room) */}
+                        {wide && (
+                          <span className="absolute inset-0 flex items-center justify-center px-1 text-[10px] font-semibold text-emerald-950/80 truncate">
+                            {formatTime12(SLOTS[dispA])} – {formatTime12(getEndTime(SLOTS[dispB]))}
+                          </span>
+                        )}
+                        {/* Expanded detail above the block */}
+                        {expanded && (
+                          <span
+                            className="absolute left-1/2 -top-6 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#1B4332] px-2 py-0.5 text-[10px] font-medium text-white shadow"
+                          >
+                            {blockLabel(dispA, dispB)}{isResizing ? "" : " · drag ends to resize"}
+                          </span>
+                        )}
+                        {/* Resize handles */}
+                        <div
+                          role="separator"
+                          aria-label="Resize start"
+                          onMouseDown={(e) => startResize([a, b], "start", e)}
+                          className={`pointer-events-auto absolute inset-y-0 left-0 w-2 cursor-ew-resize rounded-l-md bg-emerald-700/70 transition-opacity ${
+                            expanded ? "opacity-100" : "opacity-0 hover:opacity-100"
+                          }`}
+                        />
+                        <div
+                          role="separator"
+                          aria-label="Resize end"
+                          onMouseDown={(e) => startResize([a, b], "end", e)}
+                          className={`pointer-events-auto absolute inset-y-0 right-0 w-2 cursor-ew-resize rounded-r-md bg-emerald-700/70 transition-opacity ${
+                            expanded ? "opacity-100" : "opacity-0 hover:opacity-100"
+                          }`}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Start/End labels */}
+                <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5 px-0.5">
+                  <span>{formatTime12(SLOTS[0])}</span>
+                  <span>{formatTime12(getEndTime(SLOTS[SLOTS.length - 1]))}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Summary — a status card that expands to a per-day breakdown */}
+            <div className="rounded-md bg-muted/50 text-xs text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => setSummaryOpen((v) => !v)}
+                aria-expanded={summaryOpen}
+                className="flex w-full items-start gap-2 px-3 py-2 text-left leading-relaxed hover:bg-muted/80 rounded-md transition-colors"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium text-foreground">Schedule: </span>
+                  <span className={summaryOpen ? "" : "line-clamp-1"}>{summary}</span>
+                </span>
+                <span className="shrink-0 pt-0.5 text-muted-foreground" aria-hidden="true">
+                  {summaryOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </span>
+              </button>
+              {summaryOpen && (
+                <div className="border-t border-border/60 px-3 py-2">
+                  <ul className="grid gap-1 sm:grid-cols-2">
+                    {dayBreakdown.map((d) => (
+                      <li key={d.day} className="flex items-baseline justify-between gap-2">
+                        <span>
+                          <span className="font-medium text-foreground">{DAY_LABELS[d.day]}</span>
+                          <span className="ml-1.5">{d.ranges.length > 0 ? d.ranges.join(", ") : "—"}</span>
+                        </span>
+                        <span className="shrink-0 tabular-nums font-medium text-foreground">{fmtHours(d.minutes)} h</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 border-t border-border/60 pt-1.5 text-right">
+                    Total marked: <span className="font-semibold text-foreground">{fmtHours(markedMinutes)} h</span> of {maxHours} h
+                  </p>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-
-        {/* Summary */}
-        <div className="rounded-md px-3 py-2 text-xs text-muted-foreground bg-muted/50 leading-relaxed">
-          <span className="font-medium text-foreground">Schedule: </span>
-          {summary}
         </div>
       </CardContent>
     </Card>
@@ -540,14 +872,14 @@ export default function AvailabilityPage() {
 
   // Add faculty dialog
   const [addOpen, setAddOpen] = useState(false)
-  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21 as number | string })
+  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21 as number | string, maxHoursPerWeek: 30 as number | string })
 
   // Edit faculty dialog
   const [editOpen, setEditOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
   // Faculty pending deactivation — drives the confirm dialog below.
   const [deactivateTarget, setDeactivateTarget] = useState<any>(null)
-  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", maxUnitsPerWeek: 21 as number | string })
+  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", maxUnitsPerWeek: 21 as number | string, maxHoursPerWeek: 30 as number | string })
 
   // ── Faculty availability data ──
   const { data: allAvailability = [], isLoading: loadingAvailability } = useQuery({
@@ -588,6 +920,40 @@ export default function AvailabilityPage() {
     return map
   }, [allAvailability])
 
+  // ── Live workload: minutes of classes scheduled per faculty this semester ──
+  // Polled + refetched on focus so a class added on Manage Schedules shows up
+  // here without a reload; also refreshed whenever availability is saved.
+  const { data: workload = {} } = useQuery<Record<string, { scheduledMinutes: number; entryCount: number; classCount: number }>>({
+    queryKey: ["faculty-workload", activeSemesterId],
+    queryFn: async () => {
+      if (!activeSemesterId) return {}
+      const res = await fetch(`/api/faculty/workload?semesterId=${activeSemesterId}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Failed to fetch workload")
+      return json.data ?? {}
+    },
+    enabled: !!activeSemesterId,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+  })
+
+  // Inline "Max hours / week" save from a faculty card's workload panel.
+  const [savingMaxHoursFor, setSavingMaxHoursFor] = useState<string | null>(null)
+  const handleSaveMaxHours = useCallback(
+    async (facultyId: string, hours: number) => {
+      setSavingMaxHoursFor(facultyId)
+      try {
+        await updateFaculty.mutateAsync({ id: facultyId, maxHoursPerWeek: hours })
+      } catch {
+        // toast surfaced by the mutation's onError
+      } finally {
+        setSavingMaxHoursFor(null)
+      }
+    },
+    [updateFaculty],
+  )
+
   // ── Save availability mutation ──
   const saveMutation = useMutation({
     mutationFn: async ({
@@ -608,6 +974,7 @@ export default function AvailabilityPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["faculty-availability-all", activeSemesterId] })
+      queryClient.invalidateQueries({ queryKey: ["faculty-workload", activeSemesterId] })
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -621,7 +988,7 @@ export default function AvailabilityPage() {
 
   // ── Add faculty handler ──
   async function handleAddFaculty() {
-    const { firstName, lastName, employeeId, maxUnitsPerWeek } = addForm
+    const { firstName, lastName, employeeId, maxUnitsPerWeek, maxHoursPerWeek } = addForm
     if (!firstName.trim()) return toast.error("First name is required")
     if (!lastName.trim()) return toast.error("Last name is required")
 
@@ -635,9 +1002,10 @@ export default function AvailabilityPage() {
         ...(employeeId.trim() ? { employeeId: employeeId.trim() } : {}),
         departmentId,
         maxUnitsPerWeek: Number(maxUnitsPerWeek) || 21,
+        maxHoursPerWeek: Number(maxHoursPerWeek) || 30,
       })
       setAddOpen(false)
-      setAddForm({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21 })
+      setAddForm({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21, maxHoursPerWeek: 30 })
     } catch (err: any) {
       toast.error(err.message)
     }
@@ -650,6 +1018,7 @@ export default function AvailabilityPage() {
       firstName: f.user?.firstName ?? "",
       lastName: f.user?.lastName ?? "",
       maxUnitsPerWeek: f.maxUnitsPerWeek ?? 21,
+      maxHoursPerWeek: f.maxHoursPerWeek ?? 30,
     })
     setEditOpen(true)
   }
@@ -665,6 +1034,7 @@ export default function AvailabilityPage() {
         firstName: editForm.firstName.trim(),
         lastName: editForm.lastName.trim(),
         maxUnitsPerWeek: Number(editForm.maxUnitsPerWeek) || 21,
+        maxHoursPerWeek: Number(editForm.maxHoursPerWeek) || 30,
       })
       setEditOpen(false)
       setEditTarget(null)
@@ -772,6 +1142,13 @@ export default function AvailabilityPage() {
           <span className="inline-block h-4 w-8 rounded bg-muted border border-border" />
           Unavailable
         </div>
+        <div className="flex items-center gap-1.5">
+          <span
+            className="inline-block h-4 w-8 rounded border border-red-300"
+            style={{ background: "repeating-linear-gradient(45deg, rgba(239,68,68,0.45) 0 4px, rgba(239,68,68,0.12) 4px 8px)" }}
+          />
+          Over max hours
+        </div>
       </div>
 
       {/* Only warn when no semesters exist at all */}
@@ -812,8 +1189,11 @@ export default function AvailabilityPage() {
                   faculty={f}
                   availabilityMap={availabilityMap}
                   allAvailability={allAvailability}
+                  scheduledMinutes={workload[f.id]?.scheduledMinutes ?? 0}
                   onSave={handleSave}
                   isSaving={saveMutation.isPending}
+                  onSaveMaxHours={handleSaveMaxHours}
+                  isSavingMaxHours={savingMaxHoursFor === f.id}
                   onEdit={openEdit}
                   onDeactivate={setDeactivateTarget}
                 />
@@ -870,15 +1250,27 @@ export default function AvailabilityPage() {
                 onChange={(e) => setAddForm(f => ({ ...f, employeeId: e.target.value }))}
               />
             </div>
-            <div className="grid gap-2">
-              <Label>Max Units / Week</Label>
-              <Input
-                type="number"
-                min={1}
-                max={40}
-                value={addForm.maxUnitsPerWeek}
-                onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label>Max Units / Week</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={addForm.maxUnitsPerWeek}
+                  onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Max Hours / Week</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={addForm.maxHoursPerWeek}
+                  onChange={(e) => setAddForm(f => ({ ...f, maxHoursPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -914,15 +1306,27 @@ export default function AvailabilityPage() {
                 />
               </div>
             </div>
-            <div className="grid gap-2">
-              <Label>Max Units / Week</Label>
-              <Input
-                type="number"
-                min={1}
-                max={40}
-                value={editForm.maxUnitsPerWeek}
-                onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label>Max Units / Week</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={editForm.maxUnitsPerWeek}
+                  onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Max Hours / Week</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={editForm.maxHoursPerWeek}
+                  onChange={(e) => setEditForm(f => ({ ...f, maxHoursPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>
