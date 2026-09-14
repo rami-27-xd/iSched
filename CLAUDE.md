@@ -42,7 +42,8 @@ The panelist required a strict workflow hierarchy. The role names in the DB do *
 - Multiple SUPER_ADMIN users can share the same `CAS` departmentId — they all manage the same pool.
 
 **NSTP is NOT auto-generated** — manually scheduled only. **PATHFit IS auto-generated** on every Dept Chair
-(SUPER_ADMIN) run: placed FIRST (before GEC) for every section in the run's scope, faculty defaulted to the
+(SUPER_ADMIN) run: placed FIRST (before GEC) for every section in the run's scope as ONE continuous block (a 2-hour
+class is a single 2-hour session, never split across days), faculty defaulted to the
 `TBA` placeholder (`Faculty.employeeId = "TBA"`, entry `facultyName = "TBA"`) and room fixed to the `GYM`
 placeholder (`Room.code = "GYM"`, building `GYM`). GYM/TBA are shared placeholders — exempt from room/faculty
 double-booking checks everywhere (engine, `entry-validation.ts`, `term-conflicts.ts`, cross-schedule checks).
@@ -131,9 +132,10 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 - **Every Delete / Deactivate / Set Inactive confirms first** via `components/shared/confirm-dialog.tsx`.
 - User Management has **Delete** (permanent; `DELETE /api/users/[id]`, also removes the Supabase Auth user) instead
   of "Revoke Approval".
-- Manage Schedules shows **one day at a time**: Mon–Sat day tabs (with per-day counts) under the entry filter bar
-  drive the List, Table and Calendar views (Calendar hides the other weekday columns via `visibleDay`). Multi-day
-  (MWF/TTh) classes appear on each of their days with a pattern badge. Faculty/Section/Room filters keep "All".
+- Manage Schedules day tabs — **All days** (default) or one weekday (Mon–Sat, with per-day counts) — under the entry
+  filter bar drive the List, Table and Calendar views (Calendar hides the other weekday columns via `visibleDay`; it is
+  remounted with `key={selectedDay}` because FullCalendar went blank when only `hiddenDays` changed in place).
+  Multi-day (MWF/TTh) classes appear on each of their days with a pattern badge. Faculty/Section/Room filters keep "All".
 - Calendar view colours events **per subject** (`subjectColor()` in `schedule-calendar.tsx`, golden-angle hues) with
   a subject colour key; conflicts stay red.
 - `/dashboard/schedules` has a route `loading.tsx` skeleton, and sidebar / dashboard links show a pending spinner
@@ -152,7 +154,11 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   `CardGridSkeleton`, `ScheduleListSkeleton`/`ScheduleDetailSkeleton`, `CalendarSkeleton`, `StatTilesSkeleton`,
   `LinesSkeleton`, `PageSkeleton`).
 - Availability timeline: green runs render as blocks with drag-to-resize end handles; hovering a block expands it
-  (range + duration label); the "Schedule" summary card expands to a per-day breakdown.
+  (range + duration label). A "Saving availability…" overlay covers the timeline from mouse-up until the save AND the
+  refetch finish (`savingFacultyId`); new drags are ignored meanwhile. The "Schedule" summary below is an aligned
+  day | ranges | hours grid (no pipe-delimited text). Legend shows Available / Unavailable only.
+- CIT test data: every CIT faculty has program-matched specializations except exactly one (Efren Zulueta, BSInfoTech) —
+  `prisma/seed-cit-one-unassigned.ts` (re-runnable; `UNASSIGNED="Last, First"` to pick another).
 - Nav links swap their icon for a spinner while a navigation is pending (`LinkPendingIcon`).
 
 ### 7. Personal teaching schedule (chairs only)

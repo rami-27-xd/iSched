@@ -12,7 +12,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search, ChevronDown, ChevronUp } from "lucide-react"
+import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search } from "lucide-react"
 import { toast } from "sonner"
 import { useFacultyList, useCreateFaculty, useUpdateFaculty, useSemesters } from "@/hooks/use-data"
 import { useCollege } from "@/lib/college-context"
@@ -149,7 +149,6 @@ function FacultyCard({
   const timelineRef = useRef<HTMLDivElement>(null)
   const resizeRef = useRef<{ start: number; end: number; side: "start" | "end"; cur: number } | null>(null)
   const [resizePreview, setResizePreview] = useState<{ start: number; end: number; side: "start" | "end"; cur: number } | null>(null)
-  const [summaryOpen, setSummaryOpen] = useState(false)
 
   const facultySlots = useMemo(
     () => availabilityMap.get(faculty.id) ?? new Set<string>(),
@@ -189,10 +188,6 @@ function FacultyCard({
       return { day, ranges, minutes: idxs.length * 30 }
     })
   }, [facultySlots])
-  const summary = useMemo(() => {
-    const parts = dayBreakdown.filter((d) => d.ranges.length > 0).map((d) => `${DAY_SHORT[d.day]}: ${d.ranges.join(", ")}`)
-    return parts.length > 0 ? parts.join(" | ") : "No availability set"
-  }, [dayBreakdown])
 
   // Selected slot indices + merged blocks for the active day.
   const daySelected = useMemo(() => {
@@ -265,6 +260,7 @@ function FacultyCard({
   // ─── Drag (paint) handlers ────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (idx: number) => {
+      if (isSaving) return // previous change still being stored — wait for the refresh
       const isCurrentlyOn = daySelected.has(idx)
       const mode = isCurrentlyOn ? "remove" : "add"
       // Nothing can be added once the cap is reached — refuse to start an add-drag.
@@ -272,7 +268,7 @@ function FacultyCard({
       dragRef.current = { dragging: true, startIdx: idx, endIdx: idx, mode }
       setDragPreview({ startIdx: idx, endIdx: idx, mode })
     },
-    [daySelected, atCap, warnCap],
+    [daySelected, atCap, warnCap, isSaving],
   )
 
   const handleMouseEnter = useCallback((idx: number) => {
@@ -320,10 +316,11 @@ function FacultyCard({
   const startResize = useCallback((block: [number, number], side: "start" | "end", e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    if (isSaving) return
     const st = { start: block[0], end: block[1], side, cur: side === "start" ? block[0] : block[1] }
     resizeRef.current = st
     setResizePreview(st)
-  }, [])
+  }, [isSaving])
 
   useEffect(() => {
     if (!resizePreview) return
@@ -597,6 +594,7 @@ function FacultyCard({
                 <div
                   ref={timelineRef}
                   className="relative flex rounded-lg border border-border"
+                  aria-busy={isSaving}
                   onMouseLeave={() => {
                     setHoverIdx(null)
                     if (dragRef.current?.dragging) handleMouseUp()
@@ -714,6 +712,23 @@ function FacultyCard({
                       </div>
                     )
                   })}
+
+                  {/* Saving indicator — covers the timeline from the moment a
+                      drag / preset / resize is released until the server has
+                      stored it and the timeline has refreshed, so the change is
+                      visibly "processing". */}
+                  {isSaving && (
+                    <div
+                      className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-background/60 backdrop-blur-[1px]"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <span className="inline-flex items-center gap-2 rounded-full bg-[#1B4332] px-3 py-1 text-[11px] font-medium text-white shadow">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Saving availability…
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Start/End labels */}
@@ -724,40 +739,34 @@ function FacultyCard({
               </div>
             </div>
 
-            {/* Summary — a status card that expands to a per-day breakdown */}
-            <div className="rounded-md bg-muted/50 text-xs text-muted-foreground">
-              <button
-                type="button"
-                onClick={() => setSummaryOpen((v) => !v)}
-                aria-expanded={summaryOpen}
-                className="flex w-full items-start gap-2 px-3 py-2 text-left leading-relaxed hover:bg-muted/80 rounded-md transition-colors"
+            {/* Schedule summary — one aligned row per day: day | time ranges | hours */}
+            <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="font-medium text-foreground">Schedule</span>
+                <span className="tabular-nums">
+                  <span className="font-semibold text-foreground">{fmtHours(markedMinutes)} h</span> of {maxHours} h
+                </span>
+              </div>
+              <div
+                className="grid gap-x-3 gap-y-1"
+                style={{ gridTemplateColumns: "2.25rem minmax(0, 1fr) 3rem" }}
+                role="table"
+                aria-label="Availability by day"
               >
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium text-foreground">Schedule: </span>
-                  <span className={summaryOpen ? "" : "line-clamp-1"}>{summary}</span>
-                </span>
-                <span className="shrink-0 pt-0.5 text-muted-foreground" aria-hidden="true">
-                  {summaryOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                </span>
-              </button>
-              {summaryOpen && (
-                <div className="border-t border-border/60 px-3 py-2">
-                  <ul className="grid gap-1 sm:grid-cols-2">
-                    {dayBreakdown.map((d) => (
-                      <li key={d.day} className="flex items-baseline justify-between gap-2">
-                        <span>
-                          <span className="font-medium text-foreground">{DAY_LABELS[d.day]}</span>
-                          <span className="ml-1.5">{d.ranges.length > 0 ? d.ranges.join(", ") : "—"}</span>
-                        </span>
-                        <span className="shrink-0 tabular-nums font-medium text-foreground">{fmtHours(d.minutes)} h</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-2 border-t border-border/60 pt-1.5 text-right">
-                    Total marked: <span className="font-semibold text-foreground">{fmtHours(markedMinutes)} h</span> of {maxHours} h
-                  </p>
-                </div>
-              )}
+                {dayBreakdown.map((d) => (
+                  <div key={d.day} role="row" className="contents">
+                    <span role="cell" className={`font-medium ${d.ranges.length > 0 ? "text-foreground" : "text-muted-foreground/70"}`}>
+                      {DAY_SHORT[d.day]}
+                    </span>
+                    <span role="cell" className={`min-w-0 break-words tabular-nums ${d.ranges.length > 0 ? "" : "text-muted-foreground/60"}`}>
+                      {d.ranges.length > 0 ? d.ranges.join(", ") : "—"}
+                    </span>
+                    <span role="cell" className={`text-right tabular-nums ${d.ranges.length > 0 ? "font-medium text-foreground" : "text-muted-foreground/60"}`}>
+                      {d.ranges.length > 0 ? `${fmtHours(d.minutes)} h` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -915,11 +924,23 @@ export default function AvailabilityPage() {
     onError: (err: Error) => toast.error(err.message),
   })
 
+  // Which faculty card is mid-save. Cleared only after the availability query
+  // has refetched, so the card's spinner covers the whole round trip (save +
+  // refresh) rather than blinking off while the old slots are still on screen.
+  const [savingFacultyId, setSavingFacultyId] = useState<string | null>(null)
   const handleSave = useCallback(
-    (facultyId: string, newSlots: { day: string; startTime: string; endTime: string }[]) => {
-      saveMutation.mutate({ facultyId, slots: newSlots })
+    async (facultyId: string, newSlots: { day: string; startTime: string; endTime: string }[]) => {
+      setSavingFacultyId(facultyId)
+      try {
+        await saveMutation.mutateAsync({ facultyId, slots: newSlots })
+        await queryClient.invalidateQueries({ queryKey: ["faculty-availability-all", activeSemesterId] })
+      } catch {
+        // error toast is surfaced by the mutation's onError
+      } finally {
+        setSavingFacultyId((cur) => (cur === facultyId ? null : cur))
+      }
     },
-    [saveMutation],
+    [saveMutation, queryClient, activeSemesterId],
   )
 
   // ── Add faculty handler ──
@@ -1078,13 +1099,6 @@ export default function AvailabilityPage() {
           <span className="inline-block h-4 w-8 rounded bg-muted border border-border" />
           Unavailable
         </div>
-        <div className="flex items-center gap-1.5">
-          <span
-            className="inline-block h-4 w-8 rounded border border-red-300"
-            style={{ background: "repeating-linear-gradient(45deg, rgba(239,68,68,0.45) 0 4px, rgba(239,68,68,0.12) 4px 8px)" }}
-          />
-          Over max hours
-        </div>
       </div>
 
       {/* Only warn when no semesters exist at all */}
@@ -1121,7 +1135,7 @@ export default function AvailabilityPage() {
                   availabilityMap={availabilityMap}
                   allAvailability={allAvailability}
                   onSave={handleSave}
-                  isSaving={saveMutation.isPending}
+                  isSaving={savingFacultyId === f.id}
                   onSaveMaxHours={handleSaveMaxHours}
                   isSavingMaxHours={savingMaxHoursFor === f.id}
                   onEdit={openEdit}

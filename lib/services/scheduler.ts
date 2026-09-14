@@ -536,19 +536,20 @@ export class SchedulingEngine {
    * PATHFIT with the TBA faculty in the GYM). Neither resource is real or
    * scarce, so the only constraints are the section's own timetable (plus
    * locked entries such as pre-plotted CIT labs) and the Saturday rule.
+   * Each class is one continuous block (its full weekly hours on one day).
    * Runs before every other task so these classes are never crowded out.
    */
   private placePriorityTasks(): void {
     for (const task of this.priorityTasks) {
       const { subject, section } = task
       const fixed = subject.fixedAssignment!
-      // Distributed patterns (MW / TTh …) first, single-block fallback last —
-      // each group shuffled so PATHFIT spreads across the week instead of
-      // piling onto the same day and hour for every section.
-      const allPatterns = this.getPatternsForTask(subject, section)
-      const distributed = shuffleInPlace(allPatterns.filter(p => p.days.length > 1))
-      const single = shuffleInPlace(allPatterns.filter(p => p.days.length === 1))
-      const patterns = [...distributed, ...single]
+      // ONE continuous block on a single day — PATHFIT is never split across
+      // days (a 2-hour class is a 2-hour block, not 2 × 1 hour). Days are
+      // shuffled so the classes spread across the week instead of piling onto
+      // the same day for every section.
+      const patterns = shuffleInPlace(
+        this.getPatternsForTask(subject, section).filter(p => p.days.length === 1)
+      )
 
       let placed: Assignment | null = null
       outer: for (const { days, minutesEach } of patterns) {

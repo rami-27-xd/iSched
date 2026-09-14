@@ -1038,8 +1038,9 @@ export default function SchedulesPage() {
   const [calFilterFaculty, setCalFilterFaculty] = useState("")
   const [calFilterSection, setCalFilterSection] = useState("")
   const [calFilterRoom, setCalFilterRoom] = useState("")
-  // Per-day navigation (Mon–Sat) — every view shows ONE day at a time.
-  const [selectedDay, setSelectedDay] = useState<string>("MONDAY")
+  // Per-day navigation: "ALL" (whole week) or one weekday, in every view.
+  const [selectedDay, setSelectedDay] = useState<string>("ALL")
+  const showAllDays = selectedDay === "ALL"
   const [entrySearch, setEntrySearch] = useState("")
   const [deleteEntryId, setDeleteEntryId] = useState<string | null>(null)
 
@@ -1377,20 +1378,22 @@ export default function SchedulesPage() {
     return counts
   }, [filteredEntries])
 
-  // Rows for the selected day, sorted by start time — the input to the List and
-  // Table views and the pager below.
+  // Rows for the selected day (or the whole week, in day order), sorted by
+  // start time — the input to the List and Table views and the pager below.
   const dayEntries = useMemo(() => {
+    const dayIndex = (d: string) => { const i = DAYS.indexOf(d); return i === -1 ? 99 : i }
     return filteredEntries
-      .filter((e: any) => e.day === selectedDay)
+      .filter((e: any) => showAllDays || e.day === selectedDay)
       .map((e: any) => {
         const g = groupInfo.get(e.groupId ?? e.id)
         return { ...e, __groupSize: g?.size ?? 1, __groupDayLabel: g?.label ?? (DAY_LABELS[e.day] ?? e.day) }
       })
       .sort((a: any, b: any) =>
+        dayIndex(a.day) - dayIndex(b.day) ||
         a.startTime.localeCompare(b.startTime) ||
         (a.subject?.code ?? "").localeCompare(b.subject?.code ?? "")
       )
-  }, [filteredEntries, selectedDay, groupInfo])
+  }, [filteredEntries, selectedDay, showAllDays, groupInfo])
 
   // One pager shared by the List and Table views — both show the selected
   // day's rows, 10 per page. Switching between the two tabs keeps the page.
@@ -2588,19 +2591,22 @@ export default function SchedulesPage() {
                       </button>
                     )}
                     <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                      {dayEntries.length} on {DAY_FULL[selectedDay] ?? selectedDay} · {filteredEntries.length} of {entries.length} this week
+                      {showAllDays
+                        ? `${filteredEntries.length} of ${entries.length} entries this week`
+                        : `${dayEntries.length} on ${DAY_FULL[selectedDay] ?? selectedDay} · ${filteredEntries.length} of ${entries.length} this week`}
                     </span>
                   </div>
                 )}
 
-                {/* ── Per-day navigation ─────────────────────────────────────
-                    One day at a time, in every view. Each tab carries the number
-                    of classes on that day (after the filters above). */}
+                {/* ── Day navigation ─────────────────────────────────────────
+                    "All" shows the whole week; a weekday shows one day at a time —
+                    in every view. Each tab carries its class count (after the
+                    filters above). */}
                 {entries.length > 0 && (
                   <div className="mt-3 flex gap-1 overflow-x-auto pb-1" role="tablist" aria-label="Day of week">
-                    {DAYS.map((day) => {
+                    {["ALL", ...DAYS].map((day) => {
                       const isActive = selectedDay === day
-                      const count = entriesPerDay[day] ?? 0
+                      const count = day === "ALL" ? filteredEntries.length : (entriesPerDay[day] ?? 0)
                       return (
                         <button
                           key={day}
@@ -2616,8 +2622,8 @@ export default function SchedulesPage() {
                                 : "border-border bg-background text-muted-foreground hover:bg-muted"
                           }`}
                         >
-                          <span className="sm:hidden">{DAY_LABELS[day] ?? day.slice(0, 3)}</span>
-                          <span className="hidden sm:inline">{DAY_FULL[day] ?? day}</span>
+                          <span className="sm:hidden">{day === "ALL" ? "All" : (DAY_LABELS[day] ?? day.slice(0, 3))}</span>
+                          <span className="hidden sm:inline">{day === "ALL" ? "All days" : (DAY_FULL[day] ?? day)}</span>
                           <span
                             className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none ${
                               isActive ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
@@ -2644,11 +2650,11 @@ export default function SchedulesPage() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {/* The selected day's rows (10 per page), grouped by time
-                          slot. A multi-day (MWF/TTh) class shows on each of its
-                          days with a pattern badge. */}
-                      {[selectedDay].map((day) => {
-                        const rows = entriesPager.pageItems
+                      {/* This page's rows (10 per page) — one card per day, each
+                          grouped by time slot. A multi-day (MWF/TTh) class shows on
+                          each of its days with a pattern badge. */}
+                      {DAYS.map((day) => {
+                        const rows = entriesPager.pageItems.filter((e: any) => e.day === day)
                         if (rows.length === 0) return null
 
                         // Group by time slot
@@ -2788,8 +2794,12 @@ export default function SchedulesPage() {
                             <th className="w-16 px-3 py-2"></th>
                           </tr>
                         </thead>
-                        {/* Single day (from the day tabs) — one banner, then this page's rows. */}
-                        {[[selectedDay, entriesPager.pageItems] as [string, any[]]].map(([dayLabel, rows]) => (
+                        {/* One <tbody> per day present on this page (a single one
+                            when a weekday tab is selected), so the day banner's
+                            colSpan can't drift from the column count above. */}
+                        {DAYS.map((day) => [day, entriesPager.pageItems.filter((e: any) => e.day === day)] as [string, any[]])
+                          .filter(([, rows]) => rows.length > 0)
+                          .map(([dayLabel, rows]) => (
                           <tbody key={dayLabel}>
                             <tr>
                               <td colSpan={6} className="bg-[#1B4332] px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white">
@@ -2869,8 +2879,14 @@ export default function SchedulesPage() {
 
                 <TabsContent value="calendar" className="mt-4 space-y-3">
                   <ScheduleCalendar
+                    // Remount on every day change. FullCalendar did not reliably
+                    // re-render its columns/events when only `hiddenDays` changed on
+                    // a mounted instance — the view stayed blank until the tab was
+                    // toggled away and back (which remounted it). A key does that
+                    // remount deterministically.
+                    key={selectedDay}
                     entries={calendarEntries}
-                    visibleDay={selectedDay}
+                    visibleDay={showAllDays ? undefined : selectedDay}
                     semesterStartDate={selectedSchedule?.semester?.startDate?.slice(0, 10)}
                     semesterEndDate={selectedSchedule?.semester?.endDate?.slice(0, 10)}
                     onEditEntry={isSuperAdmin || (isAdmin && isDraft) ? (entryId: string) => {
