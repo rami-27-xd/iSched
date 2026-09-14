@@ -157,8 +157,11 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   (range + duration label). A "Saving availability…" overlay covers the timeline from mouse-up until the save AND the
   refetch finish (`savingFacultyId`); new drags are ignored meanwhile. The "Schedule" summary below is an aligned
   day | ranges | hours grid (no pipe-delimited text). Legend shows Available / Unavailable only.
-- CIT test data: every CIT faculty has program-matched specializations except exactly one (Efren Zulueta, BSInfoTech) —
-  `prisma/seed-cit-one-unassigned.ts` (re-runnable; `UNASSIGNED="Last, First"` to pick another).
+- CIT test data: every CIT faculty has program-matched specializations, Mon–Fri availability, and building access to
+  CIT/ICT/HPB (`FacultyBuildingAvailability`) — except exactly one (Efren Zulueta, BSInfoTech) who has no
+  specializations. Run `prisma/seed-cit-specs-availability.ts` then `prisma/seed-cit-one-unassigned.ts`, in that
+  order (both re-runnable; `UNASSIGNED="Last, First"` to pick another). Each targets whatever `DATABASE_URL` is
+  set — point it at the Supabase session-pooler URL to seed production.
 - Nav links swap their icon for a spinner while a navigation is pending (`LinkPendingIcon`).
 
 ### 7. Personal teaching schedule (chairs only)

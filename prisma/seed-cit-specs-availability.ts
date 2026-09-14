@@ -1,6 +1,6 @@
 /**
- * Seeds specializations + weekly availability for every CIT faculty member,
- * scoped to their own Program Chairperson's program.
+ * Seeds specializations + weekly availability + building access for every CIT
+ * faculty member, scoped to their own Program Chairperson's program.
  *
  *  Specializations — subject TITLES (that's what the engine matches on:
  *    scheduler.ts matchesSpecialization / entry-validation.ts check #5), taken
@@ -15,13 +15,24 @@
  *        13:00 – 17:00   afternoon
  *    Times sit on the app's own 30-minute grid (07:30 … 21:00).
  *
+ *  Building access — FacultyBuildingAvailability rows for every real building a
+ *    CIT section may actually use: unrestricted buildings, plus buildings whose
+ *    DepartmentBuilding restriction lists CIT. Placeholder buildings (GYM/TBA)
+ *    are skipped — they are exempt from the building check everywhere. This is
+ *    the "faculty can teach in this building" constraint the engine enforces
+ *    (checkBuildingAvailability) and entry-validation check 0f mirrors; with no
+ *    rows a faculty member is treated as unrestricted, so seeding them makes the
+ *    constraint demonstrably active for testing.
+ *
  * Idempotent: faculty that already have specializations are left alone
- * (preserves manual edits), and availability is only added where missing.
+ * (preserves manual edits); availability and building rows are only added
+ * where missing.
  *
  * Run:  npx tsx --env-file=.env prisma/seed-cit-specs-availability.ts
  */
 import { PrismaClient } from "./generated/prisma/client/client"
 import { PrismaPg } from "@prisma/adapter-pg"
+import { GYM_BUILDING_CODE, TBA_ROOM_CODE } from "../lib/sentinels"
 
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) })
 
@@ -152,8 +163,36 @@ async function main() {
     console.log(`  ${sem.type} ${sem.academicYear?.label}: created ${res.count} of ${rows.length} rows (rest already existed)`)
   }
 
+  // ── Building access ─────────────────────────────────────────────────────
+  // A building is open to CIT when it carries no DepartmentBuilding restriction
+  // at all, or its restriction names CIT. Same union rule roomOpenToSection uses
+  // one level down for rooms.
+  const buildings = await db.building.findMany({
+    select: { id: true, code: true, name: true, departments: { select: { departmentId: true } } },
+    orderBy: { code: "asc" },
+  })
+  const placeholderCodes = new Set([GYM_BUILDING_CODE, TBA_ROOM_CODE])
+  const citBuildings = buildings.filter(b =>
+    !placeholderCodes.has(b.code) &&
+    (b.departments.length === 0 || b.departments.some(d => d.departmentId === cit.id))
+  )
+  console.log(`\nBuilding access (${citBuildings.length} buildings open to CIT): ${citBuildings.map(b => b.code).join(", ")}`)
+
+  let bldgCreated = 0
+  for (const sem of semesters) {
+    const rows: { facultyId: string; buildingId: string; semesterId: string }[] = []
+    for (const fid of facultyIds) {
+      for (const b of citBuildings) rows.push({ facultyId: fid, buildingId: b.id, semesterId: sem.id })
+    }
+    // skipDuplicates relies on @@unique([facultyId, buildingId, semesterId]).
+    const res = await db.facultyBuildingAvailability.createMany({ data: rows, skipDuplicates: true })
+    bldgCreated += res.count
+    console.log(`  ${sem.type} ${sem.academicYear?.label}: created ${res.count} of ${rows.length} rows (rest already existed)`)
+  }
+
   console.log(`\nDone. Specializations set on ${specsSet} faculty (${specsSkipped} already had some, left alone).`)
   console.log(`Availability rows created: ${availCreated}`)
+  console.log(`Building access rows created: ${bldgCreated}`)
   if (fallbackGroups.length > 0) {
     console.log(`\nNOTE: these programs have NO subjects in the database, so their faculty`)
     console.log(`were given CIT's shared department-wide subjects instead: ${fallbackGroups.join(", ")}`)

@@ -63,16 +63,19 @@ export async function GET() {
       return NextResponse.json(apiError("Forbidden"), { status: 403 })
     }
 
-    const departmentId = getUserDepartmentId(dbUser)
-
-    // A Department Chair sees every request raised against their department; a
-    // Program Chair sees the ones they submitted, so they can track their own.
+    // A Department Chair sees every request; a Program Chair sees the ones they
+    // submitted, so they can track their own.
     // Previously only the Dept Chair could read this, which left the requester
     // with no way to tell whether their request had been answered.
     const requests = await db.facultyRequest.findMany({
+      // SUPER_ADMIN (Dept Chair) sees every request. The request's departmentId is
+      // the REQUESTER's department (CIT, CAG, …), while a Dept Chair's own is CAS —
+      // filtering on it meant a CIT chair's request was invisible to the very person
+      // who approves it. The notification linked to this page, and the panel then
+      // hid itself for having nothing to show.
       where:
         dbUser.role === "SUPER_ADMIN"
-          ? { ...(departmentId ? { departmentId } : {}) }
+          ? {}
           : { requesterId: dbUser.id },
       orderBy: { createdAt: "desc" },
       take: 100,
@@ -137,10 +140,8 @@ export async function PATCH(req: Request) {
     const existing = await db.facultyRequest.findUnique({ where: { id } })
     if (!existing) return NextResponse.json(apiError("Request not found"), { status: 404 })
 
-    const departmentId = getUserDepartmentId(dbUser)
-    if (departmentId && existing.departmentId !== departmentId) {
-      return NextResponse.json(apiError("This request belongs to another department"), { status: 403 })
-    }
+    // No department check: the Dept Chair is the approver for all Program Chairs,
+    // whose requests carry THEIR department (never CAS). Role was verified above.
     if (existing.status !== "PENDING") {
       return NextResponse.json(apiError(`This request is already ${existing.status.toLowerCase()}.`), { status: 400 })
     }
