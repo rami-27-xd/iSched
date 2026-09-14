@@ -3,7 +3,7 @@ import { redirect } from "next/navigation"
 import { DashboardShell } from "@/components/layout/dashboard-shell"
 import { createClient } from "@/lib/supabase/server"
 import { ensureDbUser, getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
-import { ShieldAlert, WifiOff } from "lucide-react"
+import { ShieldAlert, WifiOff, DatabaseZap } from "lucide-react"
 
 export default async function DashboardLayout({
   children,
@@ -29,6 +29,11 @@ export default async function DashboardLayout({
   let userEmail = user.email ?? ""
   let isApproved = false
   let defaultCollegeId: string | null = null
+  // True when the account lookup itself failed (DB down, or the schema is
+  // behind the code after a deploy). Must NOT be shown as "pending approval" —
+  // that told approved chairs their account had been revoked when in fact
+  // nothing about their account could be read at all.
+  let accountLoadFailed = false
 
   try {
     // The common case — an existing, approved account — is a single cached
@@ -55,10 +60,15 @@ export default async function DashboardLayout({
         (dbUser as any).faculty?.department?.college?.id ??
         null
     }
-  } catch {
-    // DB not connected — fall back to the signed-in email, treat as unapproved
+  } catch (error) {
+    console.error("[dashboard layout] Could not load the signed-in user's account:", error)
     userName = user.email?.split("@")[0] ?? "User"
     isApproved = false
+    accountLoadFailed = true
+  }
+
+  if (accountLoadFailed) {
+    return <AccountLoadProblemScreen />
   }
 
   // Block unapproved users with a pending approval screen
@@ -101,6 +111,48 @@ function ConnectionProblemScreen() {
             className="rounded-lg bg-[#D4AF37] px-6 py-2.5 text-sm font-semibold text-[#1B4332] transition-colors hover:bg-[#D4AF37]/90"
           >
             Reload
+          </a>
+          <form action="/auth/sign-out" method="POST">
+            <button
+              type="submit"
+              className="rounded-lg bg-white/10 border border-white/20 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/20"
+            >
+              Sign Out
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Shown when the user is signed in but their account record could not be read —
+ * the database is unreachable, or (the usual cause right after a deploy) the
+ * database schema is behind the code because `prisma db push` was not run.
+ * Distinct from PendingApprovalScreen on purpose: nothing is wrong with the
+ * account, so "pending approval" would be wrong and alarming.
+ */
+function AccountLoadProblemScreen() {
+  return (
+    <div className="min-h-screen bg-[#1B4332] flex items-center justify-center px-4">
+      <div className="w-full max-w-md text-center">
+        <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-[#D4AF37]/20 mb-6">
+          <DatabaseZap className="h-8 w-8 text-[#D4AF37]" />
+        </div>
+        <h1 className="text-2xl font-bold text-white">Couldn&apos;t load your account</h1>
+        <p className="mt-3 text-sm text-white/60">
+          You are signed in, but the database returned an error while reading your account.
+          Your approval and role are unchanged. If this started right after an update, the
+          database schema likely needs to be updated (<code className="text-white/80">prisma db push</code>) —
+          the server log has the exact error.
+        </p>
+        <div className="mt-6 flex items-center justify-center gap-3">
+          <a
+            href="/dashboard"
+            className="rounded-lg bg-[#D4AF37] px-6 py-2.5 text-sm font-semibold text-[#1B4332] transition-colors hover:bg-[#D4AF37]/90"
+          >
+            Try Again
           </a>
           <form action="/auth/sign-out" method="POST">
             <button
