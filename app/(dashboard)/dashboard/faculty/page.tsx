@@ -256,7 +256,9 @@ function MobileFacultyList({
                         <Badge variant={f.isActive ? "default" : "secondary"} className="text-xs">
                           {f.isActive ? "Active" : "Inactive"}
                         </Badge>
-                        <span className="text-xs text-muted-foreground">{f.maxUnitsPerWeek}u/wk · {f.hoursPerWeek ?? 0}h/wk</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          Max {f.maxUnitsPerWeek}u · {f.maxHoursPerWeek ?? 30}h /wk
+                        </span>
                       </div>
                     </div>
                     <DropdownMenu>
@@ -310,6 +312,28 @@ function MobileFacultyList({
         </div>
       ))}
     </div>
+  )
+}
+
+/**
+ * One numeric column cell for the faculty table: the weekly cap on the first
+ * line, what is currently used beneath it. Max Units and Max Hours both render
+ * through this so the pair line up exactly — same alignment, same type scale,
+ * same secondary line — instead of two differently-shaped cells side by side.
+ * The usage line turns amber once it reaches the cap.
+ */
+function CapCell({ cap, unit, used, usedLabel }: { cap: number; unit: "u" | "h"; used: number; usedLabel: string }) {
+  const atCap = cap > 0 && used >= cap
+  return (
+    <TableCell className="text-right align-top whitespace-nowrap">
+      <p className="text-sm font-medium tabular-nums leading-tight">
+        {cap}
+        <span className="ml-0.5 text-xs font-normal text-muted-foreground">{unit}/wk</span>
+      </p>
+      <p className={`mt-0.5 text-[10px] tabular-nums ${atCap ? "text-amber-600" : "text-muted-foreground"}`}>
+        {used} {unit} {usedLabel}
+      </p>
+    </TableCell>
   )
 }
 
@@ -813,7 +837,8 @@ export default function FacultyPage() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Specializations & Load</TableHead>
-                      <TableHead>Max Units</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Max Units</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Max Hours</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-10" />
                     </TableRow>
@@ -848,7 +873,7 @@ export default function FacultyPage() {
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   <p className="text-[10px] text-muted-foreground">
-                                    {specEntries.length} {specEntries.length === 1 ? 'subject' : 'subjects'} · {specEntries.reduce((a, [, c]) => a + c, 0)} classes · {totalLoad}u / {f.maxUnitsPerWeek}u
+                                    {specEntries.length} {specEntries.length === 1 ? 'subject' : 'subjects'} · {specEntries.reduce((a, [, c]) => a + c, 0)} classes
                                   </p>
                                   {specEntries.length > 3 && (
                                     <button
@@ -863,7 +888,13 @@ export default function FacultyPage() {
                               </>
                             )}
                           </TableCell>
-                          <TableCell className="text-sm">{f.maxUnitsPerWeek}u/wk · {f.hoursPerWeek ?? 0}h/wk</TableCell>
+                          {/* Max Units and Max Hours share one layout — cap on top, usage
+                              beneath — so the two read as a matched pair rather than one
+                              cell holding both figures run together. Max Hours is the cap
+                              set on the Faculty Availability card (Faculty.maxHoursPerWeek,
+                              default 30); hoursPerWeek is what is actually scheduled. */}
+                          <CapCell cap={f.maxUnitsPerWeek} unit="u" used={totalLoad} usedLabel="assigned" />
+                          <CapCell cap={f.maxHoursPerWeek ?? 30} unit="h" used={f.hoursPerWeek ?? 0} usedLabel="scheduled" />
                           <TableCell>
                             <Badge variant={f.isActive ? "default" : "secondary"}>
                               {f.isActive ? "Active" : "Inactive"}
