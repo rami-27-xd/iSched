@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { validateEntry, validateEntryCapacity, stripConflictMarker } from "@/lib/services/entry-validation"
 import { isPlaceholderRoomCode } from "@/lib/sentinels"
+import { scheduleHasGec, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 
@@ -53,37 +54,30 @@ export async function POST(
       }
     }
 
-    // ── CIT laboratory pre-plot stage (spec Section 2 Step 1 / 4.2) ─────────
-    // Before the Department Chairperson has generated GEC/GEL into this schedule, a
-    // CIT Program Chairperson may plot ONLY laboratory subjects — labs are locked in
-    // first so the Dept Chair can schedule GEC around them (hard constraint, no
-    // override). Lecture/other major subjects are hard-blocked until GEC exists.
-    // Applies to CIT only; other colleges have no pre-plot stage.
+    // ── GEC-first gate (Workflow Guide steps 1, 4, 5) ─────────────────────
+    // Program Chairs add their major load only AFTER the Department Chairperson
+    // has generated GEC/GEL into this schedule. Before that:
+    //   CIT   — may plot LABORATORY subjects only (step 1 pre-plot: labs are
+    //           locked in first so GEC is scheduled around them; hard, no override).
+    //   others — nothing yet; wait for the Dept Chair.
     if (dbUser.role === "ADMIN" && body.subjectId) {
-      const chairCollege = (dbUser as any).programHead?.program?.department?.college?.abbreviation ?? null
-      if (chairCollege === "CIT") {
+      const hasGec = await scheduleHasGec(id)
+      if (!hasGec) {
+        const chairCollege = (dbUser as any).programHead?.program?.department?.college?.abbreviation ?? null
         const subj = await db.subject.findUnique({
           where: { id: body.subjectId },
           select: { type: true },
         })
-        if (subj && subj.type !== "LABORATORY") {
-          const gecPlotted = await db.scheduleEntry.count({
-            where: {
-              scheduleId: id,
-              OR: [
-                { subject: { code: { startsWith: "GEC" } } },
-                { subject: { code: { startsWith: "GEL" } } },
-              ],
-            },
-          })
-          if (gecPlotted === 0) {
-            return NextResponse.json(
-              apiError(
-                "CIT pre-plotting stage: only laboratory subjects may be added until the Department Chairperson has generated the GEC/GEL schedule. Lecture and other major subjects can be added once GEC is in place."
-              ),
-              { status: 409 }
-            )
-          }
+        const citLabPreplot = chairCollege === "CIT" && subj?.type === "LABORATORY"
+        if (!citLabPreplot) {
+          return NextResponse.json(
+            apiError(
+              chairCollege === "CIT"
+                ? "CIT pre-plotting stage: only laboratory subjects may be added until the Department Chairperson has generated the GEC/GEL schedule. Lecture and other major subjects can be added once GEC is in place."
+                : GEC_FIRST_MESSAGE
+            ),
+            { status: 409 }
+          )
         }
       }
     }

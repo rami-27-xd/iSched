@@ -62,6 +62,10 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
 2. **Dept Chair (SUPER_ADMIN)**: generates GEC/GEL for all sections — **no longer gated on Program Chair submission**. Already-plotted CIT labs are treated as locked slots (hard constraint, no override), so GEC can never be placed on a CIT lab's slot.
 3. **Dept Chair**: finalizes/publishes the GEC/GEL schedule. The presence of GEC entries is the signal that unlocks Program Chairs to add their full major load.
 4. **All Program Chairs (ADMIN)**: add their full major subject load (lecture + lab) on `DRAFT`, then `submit` for the Dept Chair's final approval. A CIT chair's regeneration preserves the pre-plotted labs (they are excluded from the regenerated subject scope).
+   **Enforced (`lib/services/workflow-gates.ts` → `scheduleHasGec`)**: until GEC/GEL entries exist in the schedule, every
+   Program Chair is blocked from Add Entry, Generate and Submit (409 + `GEC_FIRST_MESSAGE`) — except a CIT chair, who may
+   add/generate LABORATORY subjects only (step 1). The schedules page mirrors this with a "Waiting for GEC" banner and
+   disabled actions (`waitingForGec`, `gecReady` → `WorkflowActions`).
 5. **Dept Chair**: `approve` → `PUBLISHED` → visible to faculty.
 
 > **Compliance rule:** Department Chairperson (SUPER_ADMIN) plots GEC/GEL **first**; there is no PC-submission precondition. Only the owning **CIT Program Chairperson** may add/edit/move/delete CIT **laboratory** subjects — not the Dept Chair, not another program's chair (enforced in `lib/services/subject-permissions.ts`). The Dept Chair may view but not edit any non-CAS major subject.
@@ -136,12 +140,17 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   (`components/shared/link-pending.tsx`, `useLinkStatus`).
 - Copy: plain verbs ("Generate", "Generating…", "Save Anyway", "Ready to Publish") — avoid algorithm/constraint jargon
   in user-facing text.
-- **Faculty max hours (`Faculty.maxHoursPerWeek`, default 30)**: edited inline in each Faculty Availability card's
-  workload panel (also on the Add/Edit dialogs). It caps (a) the availability a chair may mark — the timeline shows
-  hatched "over max hours" cells on hover/drag past the cap, presets/resizes are clamped, and
-  `POST /api/faculty/availability` rejects totals over the cap — and (b) scheduled load: a hard constraint in the
-  engine (`facultyWeeklyMinutes`, locked entries included) and an override-able warning in `validateEntryCapacity`.
-  `GET /api/faculty/workload?semesterId=` returns live scheduled minutes per faculty for the "Scheduled (classes)" bar.
+- **Faculty max hours (`Faculty.maxHoursPerWeek`, default 30)**: a single "Max hours / week" input in each Faculty
+  Availability card's header (also on the Add/Edit dialogs) — no workload panel. It caps (a) the availability a chair
+  may mark — the timeline shows hatched "over max hours" cells on hover/drag past the cap, presets/resizes are clamped,
+  and `POST /api/faculty/availability` rejects saves that would ADD hours beyond the cap (reductions are always
+  accepted, so a faculty already over the cap can be trimmed) — and (b) scheduled load: a hard constraint in the engine
+  (`facultyWeeklyMinutes`, locked entries included) and an override-able warning in `validateEntryCapacity`.
+  `GET /api/faculty/workload?semesterId=` (per-faculty scheduled minutes) exists but is not currently rendered.
+- **Loading states are skeletons, never text** (`components/shared/loading-skeletons.tsx`): every dashboard route has a
+  `loading.tsx` built from the same pieces its page uses in-page (`TableSkeleton`, `CardListSkeleton`,
+  `CardGridSkeleton`, `ScheduleListSkeleton`/`ScheduleDetailSkeleton`, `CalendarSkeleton`, `StatTilesSkeleton`,
+  `LinesSkeleton`, `PageSkeleton`).
 - Availability timeline: green runs render as blocks with drag-to-resize end handles; hovering a block expands it
   (range + duration label); the "Schedule" summary card expands to a per-day breakdown.
 - Nav links swap their icon for a spinner while a navigation is pending (`LinkPendingIcon`).

@@ -25,6 +25,7 @@ import { RoleGuard } from "@/components/shared/role-guard"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { describeRequiredRoomTypes } from "@/lib/room-type-rules"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
+import { CardListSkeleton } from "@/components/shared/loading-skeletons"
 
 const TYPE_COLORS: Record<string, string> = {
   LECTURE: "bg-blue-100 text-blue-800",
@@ -404,9 +405,7 @@ export default function CoursesPage() {
       </div>
 
       {isLoading ? (
-        <div className="flex h-24 items-center justify-center text-muted-foreground text-sm">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading...
-        </div>
+        <CardListSkeleton count={4} label="Loading departments" />
       ) : filtered.length === 0 ? (
         <EmptyState icon={GraduationCap} title="No colleges found" description="No data matches your search." />
       ) : (

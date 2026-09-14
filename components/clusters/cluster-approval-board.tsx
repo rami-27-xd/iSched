@@ -24,6 +24,7 @@ import {
 import { toast } from 'sonner'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PaginationControls, usePagination } from '@/components/shared/pagination'
+import { CardListSkeleton } from '@/components/shared/loading-skeletons'
 
 // ── API helpers ────────────────────────────────────────────────────────────
 
@@ -218,9 +219,7 @@ export function ClusterApprovalBoard({
 
       {/* Schedule list */}
       {isLoading ? (
-        <div className="flex items-center gap-2 py-6 justify-center text-muted-foreground text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" />Loading pending schedules…
-        </div>
+        <CardListSkeleton count={3} label="Loading pending schedules" />
       ) : schedules.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
           <ShieldCheck className="h-9 w-9 text-emerald-400 mb-3" />

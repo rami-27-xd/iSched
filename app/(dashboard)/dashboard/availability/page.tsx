@@ -20,6 +20,7 @@ import { RoleGuard } from "@/components/shared/role-guard"
 import { PageHeader } from "@/components/shared/page-header"
 import { CollegeFilter } from "@/components/layout/college-filter"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
+import { CardGridSkeleton } from "@/components/shared/loading-skeletons"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -115,44 +116,12 @@ function toBlocks(indices: number[]): [number, number][] {
 // Hatched red fill for "would exceed max hours" cells.
 const BLOCKED_BG = "repeating-linear-gradient(45deg, rgba(239,68,68,0.45) 0 4px, rgba(239,68,68,0.12) 4px 8px)"
 
-function WorkloadBar({
-  label,
-  minutes,
-  maxMinutes,
-  color,
-}: {
-  label: string
-  minutes: number
-  maxMinutes: number
-  color: string
-}) {
-  const pct = maxMinutes > 0 ? Math.min(100, (minutes / maxMinutes) * 100) : 0
-  const over = maxMinutes > 0 && minutes > maxMinutes
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-2 text-[11px]">
-        <span className="text-muted-foreground">{label}</span>
-        <span className={`font-semibold tabular-nums ${over ? "text-red-600" : "text-foreground"}`}>
-          {fmtHours(minutes)} / {fmtHours(maxMinutes)} h
-        </span>
-      </div>
-      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
-        <div
-          className="h-full rounded-full transition-[width] duration-300"
-          style={{ width: `${pct}%`, backgroundColor: over ? "#DC2626" : color }}
-        />
-      </div>
-    </div>
-  )
-}
-
 // ─── Faculty Card Component ───────────────────────────────────────────────────
 
 function FacultyCard({
   faculty,
   availabilityMap,
   allAvailability,
-  scheduledMinutes,
   onSave,
   isSaving,
   onSaveMaxHours,
@@ -163,8 +132,6 @@ function FacultyCard({
   faculty: any
   availabilityMap: Map<string, Set<string>>
   allAvailability: any[]
-  /** Minutes of classes already scheduled for this faculty this semester (live). */
-  scheduledMinutes: number
   onSave: (facultyId: string, newSlots: { day: string; startTime: string; endTime: string }[]) => void
   isSaving: boolean
   onSaveMaxHours: (facultyId: string, hours: number) => void
@@ -475,6 +442,33 @@ function FacultyCard({
             </p>
           )}
         </div>
+        {/* Max hours / week — caps the hours marked below and the classes the
+            scheduler may assign. Saves on blur / Enter. */}
+        <div className="ml-3 flex shrink-0 items-center gap-2">
+          <Label htmlFor={`max-hours-${faculty.id}`} className="hidden text-xs font-medium text-white/85 sm:block">
+            Max hours / week
+          </Label>
+          <div className="relative">
+            <Input
+              id={`max-hours-${faculty.id}`}
+              type="number"
+              min={1}
+              max={60}
+              step={1}
+              value={maxHoursDraft}
+              onChange={(e) => setMaxHoursDraft(e.target.value)}
+              onBlur={commitMaxHours}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur() }}
+              disabled={isSavingMaxHours}
+              aria-label="Max hours per week"
+              title={`Max hours per week — ${fmtHours(markedMinutes)} h marked so far`}
+              className="h-8 w-[4.5rem] border-white/30 bg-white/10 pr-6 text-center text-sm font-semibold tabular-nums text-white placeholder:text-white/50 focus-visible:ring-[#D4AF37]"
+            />
+            {isSavingMaxHours && (
+              <Loader2 className="absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-white/80" />
+            )}
+          </div>
+        </div>
         {(onEdit || onDeactivate) && (
           <DropdownMenu>
             <DropdownMenuTrigger render={
@@ -508,46 +502,7 @@ function FacultyCard({
       </div>
 
       <CardContent className="p-4">
-        <div className="grid gap-4 md:grid-cols-[190px_minmax(0,1fr)]">
-          {/* ── Workload sidebar ─────────────────────────────────────────
-              Max-hours limit + live workload: hours marked available on
-              this timeline, and hours of classes already scheduled this
-              semester, both against the limit. */}
-          <aside className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
-            <div className="space-y-1.5">
-              <Label htmlFor={`max-hours-${faculty.id}`} className="text-xs">Max hours / week</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id={`max-hours-${faculty.id}`}
-                  type="number"
-                  min={1}
-                  max={60}
-                  step={1}
-                  value={maxHoursDraft}
-                  onChange={(e) => setMaxHoursDraft(e.target.value)}
-                  onBlur={commitMaxHours}
-                  onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur() }}
-                  disabled={isSavingMaxHours}
-                  className="h-8 w-20 text-sm tabular-nums"
-                />
-                <span className="text-xs text-muted-foreground">hours</span>
-                {isSavingMaxHours && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-              </div>
-              <p className="text-[10px] leading-snug text-muted-foreground">
-                Caps the hours you can mark below and the classes the scheduler may assign.
-              </p>
-            </div>
-
-            <WorkloadBar label="Available (marked)" minutes={markedMinutes} maxMinutes={capMinutes} color="#22c55e" />
-            <WorkloadBar label="Scheduled (classes)" minutes={scheduledMinutes} maxMinutes={capMinutes} color={BRAND_GOLD} />
-
-            <p className={`text-[11px] font-medium ${atCap ? "text-red-600" : "text-muted-foreground"}`}>
-              {atCap
-                ? "Limit reached — raise it to mark more"
-                : `${fmtHours(remainingSlots * 30)} h left to mark`}
-            </p>
-          </aside>
-
+        <div className="grid gap-4">
           <div className="min-w-0 space-y-3">
             {/* Day tabs */}
             <div className="flex gap-1 flex-wrap">
@@ -920,25 +875,7 @@ export default function AvailabilityPage() {
     return map
   }, [allAvailability])
 
-  // ── Live workload: minutes of classes scheduled per faculty this semester ──
-  // Polled + refetched on focus so a class added on Manage Schedules shows up
-  // here without a reload; also refreshed whenever availability is saved.
-  const { data: workload = {} } = useQuery<Record<string, { scheduledMinutes: number; entryCount: number; classCount: number }>>({
-    queryKey: ["faculty-workload", activeSemesterId],
-    queryFn: async () => {
-      if (!activeSemesterId) return {}
-      const res = await fetch(`/api/faculty/workload?semesterId=${activeSemesterId}`)
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? "Failed to fetch workload")
-      return json.data ?? {}
-    },
-    enabled: !!activeSemesterId,
-    staleTime: 10_000,
-    refetchOnWindowFocus: true,
-    refetchInterval: 30_000,
-  })
-
-  // Inline "Max hours / week" save from a faculty card's workload panel.
+  // Inline "Max hours / week" save from a faculty card's header.
   const [savingMaxHoursFor, setSavingMaxHoursFor] = useState<string | null>(null)
   const handleSaveMaxHours = useCallback(
     async (facultyId: string, hours: number) => {
@@ -974,7 +911,6 @@ export default function AvailabilityPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["faculty-availability-all", activeSemesterId] })
-      queryClient.invalidateQueries({ queryKey: ["faculty-workload", activeSemesterId] })
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -1160,12 +1096,7 @@ export default function AvailabilityPage() {
       )}
 
       {/* Loading state */}
-      {isLoading && (
-        <div className="flex h-40 items-center justify-center text-muted-foreground text-sm">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading faculty availability...
-        </div>
-      )}
+      {isLoading && <CardGridSkeleton count={4} label="Loading faculty availability" />}
 
       {/* No faculty */}
       {activeSemesterId && !isLoading && faculty.length === 0 && (
@@ -1189,7 +1120,6 @@ export default function AvailabilityPage() {
                   faculty={f}
                   availabilityMap={availabilityMap}
                   allAvailability={allAvailability}
-                  scheduledMinutes={workload[f.id]?.scheduledMinutes ?? 0}
                   onSave={handleSave}
                   isSaving={saveMutation.isPending}
                   onSaveMaxHours={handleSaveMaxHours}

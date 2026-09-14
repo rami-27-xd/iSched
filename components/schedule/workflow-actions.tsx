@@ -65,6 +65,12 @@ export interface WorkflowActionsProps {
    */
   isOwnSchedule?: boolean
   /**
+   * False while the schedule has no GEC/GEL entries yet (the Dept Chair has
+   * not plotted them). A Program Chair cannot submit before that — Workflow
+   * Guide steps 4–5; the server refuses it too.
+   */
+  gecReady?: boolean
+  /**
    * Count of unresolved, blocking ConflictLog rows (LOAD_EXCEEDED warnings
    * excluded, matching what the server allows through on approve). When > 0,
    * the Approve button on a PENDING_APPROVAL schedule is disabled so the Dept
@@ -100,6 +106,7 @@ export function WorkflowActions({
   departmentName,
   isOwnSchedule = true,
   unresolvedConflictCount = 0,
+  gecReady,
   onStatusChange,
 }: WorkflowActionsProps) {
   const queryClient = useQueryClient()
@@ -181,11 +188,13 @@ export function WorkflowActions({
 
   if (userRole === 'ADMIN') {
     if (status === 'DRAFT') {
+      const blockedByGec = gecReady === false
       return (
         <div className="flex items-center gap-3">
           <Button
             onClick={() => submitMutation.mutate()}
-            disabled={isBusy}
+            disabled={isBusy || blockedByGec}
+            title={blockedByGec ? "Submit unlocks once the Department Chairperson has generated GEC/GEL into this schedule" : undefined}
             className="bg-[#1B4332] hover:bg-[#2D6A4F] text-white gap-2"
           >
             {submitMutation.isPending ? (
@@ -196,7 +205,9 @@ export function WorkflowActions({
             Submit for Review
           </Button>
           <p className="text-xs text-muted-foreground hidden sm:block">
-            Locks the schedule and sends it to the Department Chair for approval.
+            {blockedByGec
+              ? "Waiting for the Department Chair's GEC/GEL before this can be submitted."
+              : "Locks the schedule and sends it to the Department Chair for approval."}
           </p>
         </div>
       )

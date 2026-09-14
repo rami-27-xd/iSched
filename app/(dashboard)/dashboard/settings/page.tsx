@@ -16,6 +16,7 @@ import { createClient } from "@/lib/supabase/client"
 import { useDepartments } from "@/hooks/use-data"
 import { passwordError } from "@/lib/password"
 import { PasswordRequirements } from "@/components/shared/password-requirements"
+import { LinesSkeleton } from "@/components/shared/loading-skeletons"
 
 export default function SettingsPage() {
   const searchParams = useSearchParams()
@@ -125,9 +126,7 @@ export default function SettingsPage() {
 
         <TabsContent value="profile" className="mt-4">
           {isLoading ? (
-            <div className="flex h-40 items-center justify-center text-muted-foreground text-sm">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading...
-            </div>
+            <LinesSkeleton lines={6} className="rounded-lg border border-border p-4" label="Loading profile" />
           ) : (
             <Card>
               <CardHeader>

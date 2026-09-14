@@ -35,6 +35,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useQuery } from '@tanstack/react-query'
 import { PaginationControls, usePagination } from '@/components/shared/pagination'
+import { CardListSkeleton } from '@/components/shared/loading-skeletons'
 
 // ── Specialization metadata ───────────────────────────────────────────────
 
@@ -262,12 +263,7 @@ export function LabInventory({ collegeId }: { collegeId?: string | null }) {
   const activeLabs = rooms.filter((r: any) => r.isActive !== false).length
 
   if (isLoading) {
-    return (
-      <div className="flex h-32 items-center justify-center text-muted-foreground text-sm gap-2">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-        Loading lab inventory...
-      </div>
-    )
+    return <CardListSkeleton count={3} label="Loading lab inventory" />
   }
 
   if (rooms.length === 0) {

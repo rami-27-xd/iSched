@@ -39,8 +39,8 @@ const STEPS: Step[] = [
   {
     n: 2,
     role: "DC",
-    title: "Dept Chair generates GEC/GEL for all colleges",
-    body: "The DC plots minor/general-education subjects university-wide. Hard-blocked from any slot a CIT lab already occupies — no override, no bypass.",
+    title: "Dept Chair generates PATHFIT and GEC/GEL for all colleges",
+    body: "The DC runs Generate: PATHFIT is placed first for every section (in the GYM, faculty TBA), then the general-education subjects. Hard-blocked from any slot a CIT lab already occupies — no override, no bypass. NSTP is added by hand.",
     hard: true,
   },
   {
@@ -52,8 +52,9 @@ const STEPS: Step[] = [
   {
     n: 4,
     role: "DC",
-    title: "Dept Chair finalizes / publishes the GEC/GEL schedule",
-    body: "Once GEC/GEL is in place it becomes the fixed backbone. This unlocks the Program Chairs to add their majors.",
+    title: "Dept Chair finalizes the GEC/GEL schedule",
+    body: "Once GEC/GEL is in place it becomes the fixed backbone. Only then do Add Entry, Generate and Submit unlock for the Program Chairs — the app blocks them until GEC/GEL exists in the schedule.",
+    hard: true,
   },
   {
     n: 5,
@@ -70,8 +71,8 @@ const STEPS: Step[] = [
   {
     n: 7,
     role: "FACULTY",
-    title: "Faculty view / print their schedule",
-    body: "Faculty access the finalized, published schedule (view and print only).",
+    title: "Faculty receive their printed schedule",
+    body: "Faculty do not log in. The Dept Chair / Program Chair exports the published schedule (Teaching Load) and hands each faculty member their copy.",
   },
 ]
 
@@ -79,7 +80,8 @@ const RULES = [
   "Only the owning CIT Program Chair may add, edit, move, or delete a CIT laboratory subject — not the Dept Chair, not another program's chair.",
   "The Dept Chair may view a Program Chair's major-subject schedule but cannot edit it (except in CAS, where the DC holds delegated PC-level access).",
   "Program Chairs edit only within their own college; each sees only their own college's schedule.",
-  "Both DC and PC are bound by faculty availability, specialization, maximum unit load, and room/building availability.",
+  "Both DC and PC are bound by faculty availability, specialization, maximum unit load and maximum hours per week, and room/building availability.",
+  "Laboratory subjects go only to laboratory rooms (computer-based labs to a Computer Laboratory); lectures go to lecture rooms.",
   "GEC/GEL faculty may be assigned across departments (not specialized); PC assignments stay within their own majors.",
 ]
 
@@ -190,8 +192,8 @@ export function WorkflowGuideDialog({ open, onOpenChange }: { open: boolean; onO
           <div className="rounded-lg border bg-card p-3">
             <p className="text-xs font-semibold text-[#1B4332]">CIT — labs first</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              The CIT chair may add only laboratory subjects, and only before the Dept Chair generates GEC/GEL
-              (Step 1).
+              Before the Dept Chair generates GEC/GEL, the CIT chair may add only laboratory subjects (Step 1) —
+              Generate places labs only during this stage, and lectures unlock after Step 4.
             </p>
           </div>
         </div>

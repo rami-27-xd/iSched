@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog"
 import { Check, Inbox, Loader2, Send, X } from "lucide-react"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
+import { CardListSkeleton } from "@/components/shared/loading-skeletons"
 
 interface FacultyRequestRow {
   id: string
@@ -157,9 +158,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
 
       <CardContent className="space-y-2">
         {isLoading ? (
-          <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading requests…
-          </p>
+          <CardListSkeleton count={2} compact label="Loading requests" />
         ) : visible.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             {settled.length > 0 ? "No pending requests." : "No requests yet."}

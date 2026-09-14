@@ -25,6 +25,7 @@ import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
 import { useFacultyList, useUpdateFaculty, useCreateFaculty, useDeleteFaculty, useUsers, useSubjects, useSections } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { TableSkeleton } from "@/components/shared/loading-skeletons"
 
 // Type for section counts per subject: { "Subject Title": numberOfSections }
 type SectionCountMap = Record<string, number>
@@ -773,9 +774,7 @@ export default function FacultyPage() {
       <FacultyRequestsPanel isSuperAdmin={isSuperAdminEditor} />
 
       {isLoading ? (
-        <div className="flex h-24 items-center justify-center text-muted-foreground text-sm">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading...
-        </div>
+        <TableSkeleton rows={8} cols={6} label="Loading faculty" />
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={Users}

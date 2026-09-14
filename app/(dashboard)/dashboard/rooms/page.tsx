@@ -26,6 +26,7 @@ import { LabInventory } from "@/components/rooms/lab-inventory"
 import { useCollege } from "@/lib/college-context"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
+import { CardListSkeleton } from "@/components/shared/loading-skeletons"
 
 const ROOM_TYPE_LABELS: Record<string, string> = {
   LECTURE_ROOM: "Lecture Room",
@@ -428,9 +429,7 @@ export default function RoomsPage() {
           </div>
 
       {isLoading ? (
-        <div className="flex h-24 items-center justify-center text-muted-foreground text-sm">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading...
-        </div>
+        <CardListSkeleton count={5} label="Loading buildings" />
       ) : buildingsWithRooms.length === 0 ? (
         <EmptyState icon={Building2} title="No buildings found" description={search ? "No buildings or rooms match your search." : "No buildings have been added yet."} />
       ) : (

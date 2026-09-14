@@ -30,6 +30,7 @@ import { RoleGuard } from "@/components/shared/role-guard"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
+import { TableSkeleton } from "@/components/shared/loading-skeletons"
 
 const ROLE_COLORS: Record<string, string> = {
   SUPER_ADMIN: "bg-amber-100 text-amber-800 border-amber-200",
@@ -375,9 +376,7 @@ export default function UsersPage() {
       <Card>
         <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
+            <TableSkeleton rows={8} cols={7} className="rounded-none border-0" label="Loading users" />
           ) : users.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">
               No users found.

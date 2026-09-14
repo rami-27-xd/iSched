@@ -22,6 +22,7 @@ import { getAuthenticatedUser, getCurrentUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { apiResponse, apiError } from '@/lib/api-helpers'
 import { createNotification } from '@/lib/notifications'
+import { scheduleHasGec, GEC_FIRST_MESSAGE } from '@/lib/services/workflow-gates'
 
 type WorkflowAction = 'submit' | 'approve' | 'reject' | 'reset'
 
@@ -98,6 +99,16 @@ export async function POST(
           currentStatus: schedule.status,
           allowedFrom: allowedFrom[action],
         },
+        { status: 409 }
+      )
+    }
+
+    // ── GEC-first gate on submit (Workflow Guide steps 4–5) ────────────────
+    // Majors are built around the Dept Chair's GEC/GEL; submitting for review
+    // before that backbone exists would send an incomplete schedule up.
+    if (action === 'submit' && !(await scheduleHasGec(id))) {
+      return NextResponse.json(
+        { success: false, error: 'Cannot submit yet', details: [GEC_FIRST_MESSAGE] },
         { status: 409 }
       )
     }

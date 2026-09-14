@@ -11,6 +11,7 @@ import { detectCrossScheduleConflicts, type CrossScheduleEntry } from "@/lib/ser
 import { ensurePathfitSentinels } from "@/lib/services/sentinels"
 import { PLACEHOLDER_ROOM_CODES, PATHFIT_FACULTY_LABEL, isPathfitCode } from "@/lib/sentinels"
 import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
+import { scheduleHasGec, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 
 // Allow up to 60 seconds for schedule generation
 export const maxDuration = 60
@@ -194,17 +195,22 @@ export async function POST(
     // only during this stage instead of blocking it outright, so "Generate" still
     // does something useful (auto-places the labs) rather than just erroring.
     let citLabsOnlyStage = false
-    if (isCitAdmin) {
-      const gecPlotted = await db.scheduleEntry.count({
-        where: {
-          scheduleId: id,
-          OR: [
-            { subject: { code: { startsWith: "GEC" } } },
-            { subject: { code: { startsWith: "GEL" } } },
-          ],
-        },
-      })
-      citLabsOnlyStage = gecPlotted === 0
+    if (isAdmin) {
+      const hasGec = await scheduleHasGec(id)
+      if (isCitAdmin) {
+        citLabsOnlyStage = !hasGec
+      } else if (!hasGec) {
+        // Every other Program Chair has no pre-plot stage: their whole major
+        // load waits for the Dept Chair's GEC/GEL (Workflow Guide steps 4–5).
+        return NextResponse.json(
+          {
+            success: false,
+            error: "GEC/GEL has not been generated for this schedule yet",
+            details: [GEC_FIRST_MESSAGE],
+          },
+          { status: 409 }
+        )
+      }
     }
 
     const subjectWhere: any = isAdmin

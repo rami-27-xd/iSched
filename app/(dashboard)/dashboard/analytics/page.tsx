@@ -36,6 +36,7 @@ import {
   Line,
   Legend,
 } from "recharts"
+import { StatTilesSkeleton, LinesSkeleton } from "@/components/shared/loading-skeletons"
 
 // Total schedulable hours per week per room: 7:30 AM – 9:00 PM × 6 days = 81 h
 const TOTAL_WEEKLY_ROOM_HOURS = 81
@@ -235,9 +236,12 @@ export default function AnalyticsPage() {
           Select a schedule to view analytics
         </div>
       ) : loadingDetail ? (
-        <div className="flex h-64 items-center justify-center text-muted-foreground text-sm">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading analytics…
+        <div className="space-y-6">
+          <StatTilesSkeleton />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <LinesSkeleton lines={8} className="rounded-xl border border-border p-4" label="Loading chart" />
+            <LinesSkeleton lines={8} className="rounded-xl border border-border p-4" label="Loading chart" />
+          </div>
         </div>
       ) : entries.length === 0 ? (
         <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-border text-center text-sm text-muted-foreground">

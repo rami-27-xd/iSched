@@ -10,6 +10,7 @@
 import * as React from 'react'
 import { Building2, ChevronDown, Check } from 'lucide-react'
 import { useCollege } from '@/lib/college-context'
+import { LinesSkeleton } from '@/components/shared/loading-skeletons'
 
 export function CollegeFilter({ userRole }: { userRole: string }) {
   const { colleges, loadingColleges, selectedCollegeId, setSelectedCollegeId, selectedCollege } =
@@ -78,7 +79,7 @@ export function CollegeFilter({ userRole }: { userRole: string }) {
           <div className="my-1 h-px bg-border" />
 
           {loadingColleges ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">Loading...</p>
+            <LinesSkeleton lines={3} className="px-3 py-2" label="Loading colleges" />
           ) : (
             colleges.map((c) => (
               <button

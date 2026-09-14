@@ -135,11 +135,25 @@ export async function POST(req: Request) {
     )
     const maxHours = target?.maxHoursPerWeek ?? 30
     if (totalMinutes > maxHours * 60) {
-      const name = target?.user ? `${target.user.firstName} ${target.user.lastName}`.trim() : "This faculty member"
-      return NextResponse.json(
-        apiError(`${name}'s availability would be ${(totalMinutes / 60).toFixed(1)} hours, over their ${maxHours}-hour weekly limit. Raise the limit or mark fewer hours.`),
-        { status: 400 }
+      // Only refuse saves that ADD hours beyond the cap. A faculty whose existing
+      // availability already exceeds the limit (marked before the limit was set or
+      // lowered) must still be able to trim it — otherwise every reduction that
+      // stays above the cap would be rejected and they could never get back under.
+      const existing = await db.facultyAvailability.findMany({
+        where: { facultyId, semesterId },
+        select: { startTime: true, endTime: true },
+      })
+      const currentMinutes = existing.reduce(
+        (sum, s) => sum + Math.max(0, toMin(s.endTime) - toMin(s.startTime)),
+        0
       )
+      if (totalMinutes > currentMinutes) {
+        const name = target?.user ? `${target.user.firstName} ${target.user.lastName}`.trim() : "This faculty member"
+        return NextResponse.json(
+          apiError(`${name}'s availability would be ${(totalMinutes / 60).toFixed(1)} hours, over their ${maxHours}-hour weekly limit. Raise the limit or mark fewer hours.`),
+          { status: 400 }
+        )
+      }
     }
 
     // Delete existing availability for this faculty+semester

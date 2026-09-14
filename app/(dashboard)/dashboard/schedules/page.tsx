@@ -106,11 +106,7 @@ const ScheduleCalendar = dynamic(
   () => import("@/components/schedule/schedule-calendar").then((m) => m.ScheduleCalendar),
   {
     ssr: false,
-    loading: () => (
-      <div className="flex h-64 items-center justify-center rounded-lg border border-border text-sm text-muted-foreground">
-        Loading calendar…
-      </div>
-    ),
+    loading: () => <CalendarSkeleton />,
   }
 )
 const ExportDialog = dynamic(
@@ -119,6 +115,7 @@ const ExportDialog = dynamic(
 )
 import { useCollege } from "@/lib/college-context"
 import { DAY_LABELS } from "@/lib/constants"
+import { CalendarSkeleton, ScheduleListSkeleton, ScheduleDetailSkeleton } from "@/components/shared/loading-skeletons"
 
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
 // Full day names for the day tabs / banners (DAY_LABELS from lib/constants is the short "Mon" form).
@@ -1202,15 +1199,28 @@ export default function SchedulesPage() {
   )
   const GENED_OR_MANUAL_CODE_RE = /^(GEC|GEL|NSTP|NST|PATHFIT)/i
 
+  // ── GEC-first gate (Workflow Guide steps 1, 4, 5) ──────────────────────────
+  // The Dept Chair plots GEC/GEL first. Until it exists in this schedule a
+  // Program Chair may not add/generate/submit majors — except a CIT chair, who
+  // pre-plots laboratory subjects during this stage (step 1). Mirrors the
+  // server gates in entries/route.ts, generate/route.ts and workflow/route.ts.
+  const gecReady = useMemo(
+    () => entries.some((e: any) => /^(GEC|GEL)/i.test(e.subject?.code ?? "")),
+    [entries]
+  )
+  const chairIsCit =
+    isAdmin && (currentUser as any)?.programHead?.program?.department?.college?.abbreviation === "CIT"
+  const waitingForGec = isAdmin && isOwnSchedule && isDraft && !gecReady
+
   const canModifyEntries = isSuperAdmin || (isAdmin && isOwnSchedule && isDraft)
-  const canAddEntry = isSuperAdmin || (isAdmin && isOwnSchedule && isDraft)
-  // New workflow order (spec Section 2): the Dept Chair (SUPER_ADMIN) generates GEC/GEL
-  // FIRST — no longer gated on Program Chairs submitting. Program Chairs (ADMIN) then add
-  // their major load on their own DRAFT. (CIT chairs are additionally restricted to
-  // labs-only until GEC exists — enforced server-side in the entries route.)
+  // A CIT chair keeps Add Entry during the pre-plot stage (labs only — the
+  // server refuses anything else); every other chair waits for GEC.
+  const canAddEntry = isSuperAdmin || (isAdmin && isOwnSchedule && isDraft && (gecReady || chairIsCit))
+  // Generate: the Dept Chair any time; a Program Chair on their own DRAFT once
+  // GEC exists (CIT may run it earlier — it then places labs only).
   const canGenerate =
     (isSuperAdmin) ||
-    (isAdmin && isOwnSchedule && isDraft)
+    (isAdmin && isOwnSchedule && isDraft && (gecReady || chairIsCit))
   // SUPER_ADMIN: publish from PENDING_APPROVAL (approve ADMIN submission). Can also directly publish DRAFT.
   // ADMIN: "Notify Faculty" action on an already-PUBLISHED schedule (does not change status)
   const canPublish = (isSuperAdmin && (isDraft || isPendingApproval)) || (isAdmin && isOwnSchedule && isPublished)
@@ -2144,6 +2154,7 @@ export default function SchedulesPage() {
           departmentName={selectedSchedule.department?.name}
           isOwnSchedule={isSuperAdminOwnSchedule}
           unresolvedConflictCount={blockingConflictCount}
+          gecReady={gecReady}
           onStatusChange={() => {
             // Invalidation is handled inside WorkflowActions via useQueryClient
           }}
@@ -2173,6 +2184,29 @@ export default function SchedulesPage() {
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Waiting-for-GEC banner — Program Chair on their own DRAFT before the
+          Dept Chair has plotted GEC/GEL (Workflow Guide steps 2–4). */}
+      {selectedScheduleId && waitingForGec && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <Workflow className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">Waiting for the Department Chairperson&apos;s GEC/GEL schedule</p>
+            <p className="mt-0.5 text-amber-700">
+              {chairIsCit
+                ? "Step 1: you can pre-plot your laboratory subjects now. Lecture and other major subjects, Generate for the full load, and Submit unlock once GEC/GEL has been generated into this schedule."
+                : "Add Entry, Generate and Submit unlock once GEC/GEL has been generated into this schedule (Workflow steps 2–4). Your major subjects are built around that backbone."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setWorkflowGuideOpen(true)}
+            className="shrink-0 rounded-md border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+          >
+            View workflow
           </button>
         </div>
       )}
@@ -2256,10 +2290,7 @@ export default function SchedulesPage() {
           </div>
 
           {isLoading ? (
-            <div className="flex h-24 items-center justify-center text-muted-foreground text-sm">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading…
-            </div>
+            <ScheduleListSkeleton />
           ) : schedules.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               {isAdmin && !adminDeptId ? (
@@ -2342,10 +2373,7 @@ export default function SchedulesPage() {
               Select a schedule to view its entries
             </div>
           ) : loadingSchedule ? (
-            <div className="flex h-64 items-center justify-center text-muted-foreground text-sm">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading…
-            </div>
+            <ScheduleDetailSkeleton />
           ) : (
             <div className="space-y-4">
               {/* ── Conflicts & Unassigned Queue ──────────────────────────────

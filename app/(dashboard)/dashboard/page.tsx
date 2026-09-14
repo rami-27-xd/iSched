@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge"
 import { useDashboardStats } from "@/hooks/use-data"
 import { useQuery } from "@tanstack/react-query"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { CardListSkeleton, LinesSkeleton } from "@/components/shared/loading-skeletons"
 
 export default function DashboardPage() {
   const contextRole = useUserRole()
@@ -215,9 +216,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="flex h-24 items-center justify-center text-muted-foreground text-sm">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading…
-              </div>
+              <CardListSkeleton count={3} compact label="Loading schedules" />
             ) : recentSchedules.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">No schedules yet.</p>
             ) : (
@@ -262,9 +261,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {loadingMySchedule ? (
-              <div className="flex items-center justify-center py-6 text-muted-foreground text-sm">
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />Loading…
-              </div>
+              <LinesSkeleton lines={5} label="Loading your schedule" />
             ) : (
               <div className="space-y-3">
                 {byDay.map(({ day, label, entries: dayEntries }) => (
