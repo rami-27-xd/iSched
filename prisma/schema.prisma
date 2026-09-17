@@ -146,6 +146,31 @@ model FacultyCluster {
   supervisors User[]       // SUPER_ADMINs assigned to this cluster
   programs    Program[]    // programs that belong to this cluster
   faculty     Faculty[]    // faculty members assigned to this cluster
+  gecFinalizations GecFinalization[]
+}
+
+// One row per (schedule, CAS cluster) that cluster's chairperson has declared
+// their GEC/GEL scheduling COMPLETE for this schedule (spec: "the three
+// department chairpersons handling GEC/GEL must complete their scheduling
+// before their schedules become visible to the program chairpersons"). A
+// non-CAS department's schedule unlocks Program Chairperson actions (Add Entry,
+// Generate, Submit — beyond the CIT labs-only pre-plot) only once EVERY
+// FacultyCluster has a row here for that schedule — see
+// lib/services/workflow-gates.ts `isGecFinalized`. Re-generating or manually
+// editing a GEC/GEL entry for that cluster in this schedule deletes the row
+// again (the declaration is stale the moment the underlying entries change).
+model GecFinalization {
+  id          String   @id @default(cuid())
+  scheduleId  String
+  clusterId   String
+  finalizedBy String
+  finalizedAt DateTime @default(now())
+
+  schedule Schedule       @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  cluster  FacultyCluster @relation(fields: [clusterId], references: [id])
+
+  @@unique([scheduleId, clusterId])
+  @@index([scheduleId])
 }
 
 model DepartmentChair {
@@ -439,6 +464,7 @@ model Schedule {
   unassigned UnassignedEntry[]
 
   @@index([departmentId])
+  gecFinalizations GecFinalization[]
 }
 
 model ScheduleEntry {

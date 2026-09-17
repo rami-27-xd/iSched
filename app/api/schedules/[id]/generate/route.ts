@@ -10,7 +10,7 @@ import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { detectCrossScheduleConflicts, type CrossScheduleEntry } from "@/lib/services/cross-schedule-conflicts"
 import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
 import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
-import { scheduleHasGec, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { runPathfitGeneration } from "@/lib/services/pathfit-generation"
 import { recordAudit } from "@/lib/audit"
 
@@ -214,16 +214,16 @@ export async function POST(
     // does something useful (auto-places the labs) rather than just erroring.
     let citLabsOnlyStage = false
     if (isAdmin) {
-      const hasGec = await scheduleHasGec(id)
+      const gecReady = await isGecFinalized(id)
       if (isCitAdmin) {
-        citLabsOnlyStage = !hasGec
-      } else if (!hasGec) {
+        citLabsOnlyStage = !gecReady
+      } else if (!gecReady) {
         // Every other Program Chair has no pre-plot stage: their whole major
-        // load waits for the Dept Chair's GEC/GEL (Workflow Guide steps 4–5).
+        // load waits for all three CAS cluster chairpersons to finalize GEC/GEL.
         return NextResponse.json(
           {
             success: false,
-            error: "GEC/GEL has not been generated for this schedule yet",
+            error: "GEC/GEL has not been finalized by all three cluster chairpersons yet",
             details: [GEC_FIRST_MESSAGE],
           },
           { status: 409 }
@@ -896,6 +896,16 @@ export async function POST(
       where: { id },
       data: { generatedAt: new Date() },
     })
+
+    // A Dept Chairperson's regeneration rewrites their cluster's GEC/GEL
+    // entries wholesale — any earlier finalization for this schedule is now
+    // stale (spec: finalization must reflect the entries actually placed).
+    if (isSuperAdmin) {
+      const myClusterId = (dbUser as any).clusterId as string | null
+      if (myClusterId) {
+        await db.gecFinalization.deleteMany({ where: { scheduleId: id, clusterId: myClusterId } })
+      }
+    }
 
     const labCount = entryRows.filter(r => r.set !== null).length
     const assignedCount = result.assignments.length

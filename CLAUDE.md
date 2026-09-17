@@ -80,13 +80,41 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
 2. **Dept Chair (SUPER_ADMIN)**: generates GEC/GEL for all sections — **no longer gated on Program Chair submission**. Already-plotted CIT labs are treated as locked slots (hard constraint, no override), so GEC can never be placed on a CIT lab's slot.
 3. **Dept Chair**: finalizes/publishes the GEC/GEL schedule. The presence of GEC entries is the signal that unlocks Program Chairs to add their full major load.
 4. **All Program Chairs (ADMIN)**: add their full major subject load (lecture + lab) on `DRAFT`, then `submit` for the Dept Chair's final approval. A CIT chair's regeneration preserves the pre-plotted labs (they are excluded from the regenerated subject scope).
-   **Enforced (`lib/services/workflow-gates.ts` → `scheduleHasGec`)**: until GEC/GEL entries exist in the schedule, every
-   Program Chair is blocked from Add Entry, Generate and Submit (409 + `GEC_FIRST_MESSAGE`) — except a CIT chair, who may
-   add/generate LABORATORY subjects only (step 1). The schedules page mirrors this with a "Waiting for GEC" banner and
-   disabled actions (`waitingForGec`, `gecReady` → `WorkflowActions`).
+   **Enforced (`lib/services/workflow-gates.ts` → `isGecFinalized`, updated 2026-09-17)**: a Program Chair is blocked
+   from Add Entry, Generate and Submit (409 + `GEC_FIRST_MESSAGE`) until **all three CAS cluster chairpersons** have
+   explicitly finalized GEC/GEL for THIS schedule — not merely "some GEC entry exists" — except a CIT chair, who may
+   add/generate LABORATORY subjects only in the meantime (step 1). The schedules page mirrors this with a
+   "Waiting for GEC" banner listing per-cluster status (`waitingForGec`, `gecReady`/`gecClusters` from
+   `GET /api/schedules/[id]/gec-finalize`).
 5. **Dept Chair**: `approve` → `PUBLISHED` → visible to faculty.
 
-> **Compliance rule:** Department Chairperson (SUPER_ADMIN) plots GEC/GEL **first**; there is no PC-submission precondition. Only the owning **CIT Program Chairperson** may add/edit/move/delete CIT **laboratory** subjects — not the Dept Chair, not another program's chair (enforced in `lib/services/subject-permissions.ts`). The Dept Chair may view but not edit any non-CAS major subject.
+> **Compliance rule (updated 2026-09-17):** Every course code other than GEC/GEL, PATHFit and NSTP is a major
+> subject under its own program's Program Chairperson (enforced in `lib/services/subject-permissions.ts` and the
+> Add/Edit subject-pool filters). A department's schedule becomes actionable for its Program Chairpersons only once
+> **all three** CAS cluster chairpersons handling GEC/GEL have **finalized** their scheduling for that schedule — see
+> "GEC/GEL Finalization" below. Only the owning **CIT Program Chairperson** may add/edit/move/delete CIT
+> **laboratory** subjects — not the Dept Chair, not another program's chair. The Dept Chair may view but not edit
+> any non-CAS major subject.
+
+### GEC/GEL Finalization (spec, 2026-09-17)
+- **Model**: `GecFinalization` — one row per (scheduleId, clusterId) recording which CAS cluster chairperson declared
+  their GEC/GEL scheduling COMPLETE for that specific schedule, and when. Finalization is per schedule, not global —
+  each department's schedule (CIT, CTE, CEN, CAM, CABHA, CAG, plus CAS's own) is finalized independently, and all
+  three clusters must finalize each one separately.
+- **Not inferred from entries** — a cluster chair placing a few GEC classes does not unlock Program Chairs; they must
+  explicitly click **Finalize** (`POST /api/schedules/[id]/gec-finalize { action: "finalize" }`, SUPER_ADMIN only —
+  their own cluster, or any cluster by `clusterId` for a no-cluster full-access chair). `GET` on the same route
+  returns per-cluster status (name, finalized, finalizedBy, finalizedAt) for the UI.
+- **Auto-reopens on further edits** (`reopenGecIfStale` in `workflow-gates.ts`): creating, editing, or deleting a
+  GEC/GEL entry for a cluster that already finalized this schedule deletes that cluster's `GecFinalization` row again
+  — wired into `entries/route.ts` POST, `entries/[entryId]/route.ts` PATCH/DELETE, and the SUPER_ADMIN branch of
+  `generate/route.ts` (a full regeneration always reopens). The declaration must reflect the entries actually placed.
+- **Notification**: the moment the last of the three clusters finalizes a schedule, every approved Program
+  Chairperson of that department is notified ("GEC/GEL Finalized — You May Proceed"). CAS's own schedule has no
+  Program Chairpersons, so finalizing it is harmless bookkeeping that gates nothing.
+- **UI** (`app/(dashboard)/dashboard/schedules/page.tsx`): a "GEC/GEL finalization" card above the entry list for
+  SUPER_ADMIN (their own cluster's Finalize/Reopen button + all three clusters' status); the "Waiting for GEC" banner
+  for ADMIN lists the same per-cluster breakdown so a Program Chair can see who they're waiting on.
 
 ---
 

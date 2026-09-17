@@ -3,7 +3,7 @@ import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { validateEntry, validateEntryCapacity, stripConflictMarker, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
-import { scheduleHasGec, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 import { isGeUnitRole } from "@/lib/roles"
@@ -60,15 +60,15 @@ export async function POST(
       }
     }
 
-    // ── GEC-first gate (Workflow Guide steps 1, 4, 5) ─────────────────────
-    // Program Chairs add their major load only AFTER the Department Chairperson
-    // has generated GEC/GEL into this schedule. Before that:
+    // ── GEC-finalized gate ──────────────────────────────────────────────
+    // Program Chairs add their major load only after ALL THREE CAS cluster
+    // chairpersons have finalized GEC/GEL for this schedule. Before that:
     //   CIT   — may plot LABORATORY subjects only (step 1 pre-plot: labs are
     //           locked in first so GEC is scheduled around them; hard, no override).
-    //   others — nothing yet; wait for the Dept Chair.
+    //   others — nothing yet; wait for the cluster chairpersons.
     if (dbUser.role === "ADMIN" && body.subjectId) {
-      const hasGec = await scheduleHasGec(id)
-      if (!hasGec) {
+      const gecReady = await isGecFinalized(id)
+      if (!gecReady) {
         const chairCollege = (dbUser as any).programHead?.program?.department?.college?.abbreviation ?? null
         const subj = await db.subject.findUnique({
           where: { id: body.subjectId },
@@ -199,6 +199,7 @@ export async function POST(
     if (body.facultyId) {
       await syncFacultySpecializations(body.facultyId).catch(() => {})
     }
+    await reopenGecIfStale(id, entry.subject?.code, dbUser)
 
     await recordAudit({
       actor: dbUser as any,

@@ -59,6 +59,7 @@ import {
   X,
   Workflow,
   BookOpenCheck,
+  Circle,
   Rows3,
   ChevronDown,
   ChevronUp,
@@ -81,7 +82,7 @@ import {
   useFaculty,
   useRooms,
 } from "@/hooks/use-schedules"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query"
 import { Input } from "@/components/ui/input"
 import { useSubjects, useSections, useDepartments } from "@/hooks/use-data"
 import { RoleGuard } from "@/components/shared/role-guard"
@@ -1215,18 +1216,57 @@ export default function SchedulesPage() {
   )
   const GENED_OR_MANUAL_CODE_RE = /^(GEC|GEL|NSTP|NST|PATHFIT)/i
 
-  // ── GEC-first gate (Workflow Guide steps 1, 4, 5) ──────────────────────────
-  // The Dept Chair plots GEC/GEL first. Until it exists in this schedule a
-  // Program Chair may not add/generate/submit majors — except a CIT chair, who
-  // pre-plots laboratory subjects during this stage (step 1). Mirrors the
-  // server gates in entries/route.ts, generate/route.ts and workflow/route.ts.
-  const gecReady = useMemo(
-    () => entries.some((e: any) => /^(GEC|GEL)/i.test(e.subject?.code ?? "")),
-    [entries]
-  )
+  // ── GEC-finalized gate ──────────────────────────────────────────────────
+  // Program Chairs may not add/generate/submit majors until ALL THREE CAS
+  // cluster chairpersons have explicitly finalized GEC/GEL for this schedule —
+  // not merely "some GEC entry exists". Mirrors the server gates in
+  // entries/route.ts, generate/route.ts and workflow/route.ts.
+  interface GecClusterStatus { id: string; name: string; finalized: boolean; finalizedBy: string | null; finalizedAt: string | null }
+  const { data: gecFinalization, refetch: refetchGecFinalization } = useQuery<{ clusters: GecClusterStatus[]; allFinalized: boolean }>({
+    queryKey: ["gec-finalization", selectedScheduleId],
+    queryFn: async () => {
+      const res = await fetch(`/api/schedules/${selectedScheduleId}/gec-finalize`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Failed to load GEC finalization status")
+      return json.data
+    },
+    enabled: !!selectedScheduleId,
+    staleTime: 10_000,
+  })
+  const gecClusters = gecFinalization?.clusters ?? []
+  const gecReady = !!gecFinalization?.allFinalized
   const chairIsCit =
     isAdmin && (currentUser as any)?.programHead?.program?.department?.college?.abbreviation === "CIT"
   const waitingForGec = isAdmin && isOwnSchedule && isDraft && !gecReady
+
+  // The signed-in Dept Chairperson's own cluster row, if they have one.
+  const myClusterId: string | null = isSuperAdmin ? ((currentUser as any)?.clusterId ?? null) : null
+  const myClusterStatus = myClusterId ? gecClusters.find((c) => c.id === myClusterId) : null
+
+  const gecFinalizeMutation = useMutation({
+    mutationFn: async (vars: { action: "finalize" | "unfinalize"; clusterId?: string }) => {
+      const res = await fetch(`/api/schedules/${selectedScheduleId}/gec-finalize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(vars),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Failed to update finalization status")
+      return json.data
+    },
+    onSuccess: (data, vars) => {
+      refetchGecFinalization()
+      queryClient.invalidateQueries({ queryKey: ["schedules"] })
+      toast.success(
+        vars.action === "finalize"
+          ? data.allFinalized
+            ? "Finalized — all three clusters are now done. Program Chairs are unlocked."
+            : "Your cluster's GEC/GEL is finalized for this schedule."
+          : "Reopened — your cluster's GEC/GEL is editable again."
+      )
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
 
   // The Dean is read-only: every flag below stays false for them. The PATHFit /
   // NSTP coordinators may place their own classes at any stage (server mirrors
@@ -2216,18 +2256,34 @@ export default function SchedulesPage() {
         </div>
       )}
 
-      {/* Waiting-for-GEC banner — Program Chair on their own DRAFT before the
-          Dept Chair has plotted GEC/GEL (Workflow Guide steps 2–4). */}
+      {/* Waiting-for-GEC banner — Program Chair on their own DRAFT before ALL
+          THREE CAS cluster chairpersons have finalized GEC/GEL. */}
       {selectedScheduleId && waitingForGec && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <Workflow className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
           <div className="flex-1 min-w-0">
-            <p className="font-medium">Waiting for the Department Chairperson&apos;s GEC/GEL schedule</p>
+            <p className="font-medium">Waiting for GEC/GEL to be finalized</p>
             <p className="mt-0.5 text-amber-700">
               {chairIsCit
-                ? "Step 1: you can pre-plot your laboratory subjects now. Lecture and other major subjects, Generate for the full load, and Submit unlock once GEC/GEL has been generated into this schedule."
-                : "Add Entry, Generate and Submit unlock once GEC/GEL has been generated into this schedule (Workflow steps 2–4). Your major subjects are built around that backbone."}
+                ? "Step 1: you can pre-plot your laboratory subjects now. Lecture and other major subjects, Generate for the full load, and Submit unlock once all three CAS cluster chairpersons have finalized GEC/GEL."
+                : "Add Entry, Generate and Submit unlock once all three CAS cluster chairpersons have finalized GEC/GEL for this schedule. Your major subjects are built around that backbone."}
             </p>
+            {gecClusters.length > 0 && (
+              <ul className="mt-2 space-y-0.5">
+                {gecClusters.map((c) => (
+                  <li key={c.id} className="flex items-center gap-1.5 text-xs">
+                    {c.finalized ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                    ) : (
+                      <Circle className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                    )}
+                    <span className={c.finalized ? "text-green-700" : "text-amber-700"}>
+                      {c.name}{c.finalized ? ` — finalized${c.finalizedBy ? ` by ${c.finalizedBy}` : ""}` : " — pending"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           <Link
             href="/dashboard/manual#workflow"
@@ -2235,6 +2291,53 @@ export default function SchedulesPage() {
           >
             User Manual
           </Link>
+        </div>
+      )}
+
+      {/* GEC/GEL Finalization — CAS Dept Chairperson control. Declares their
+          cluster's GEC/GEL scheduling for THIS schedule complete; Program
+          Chairpersons unlock once every cluster has done this. Shown for any
+          selected schedule (own CAS schedule included, for consistency), not
+          just non-CAS ones — finalizing the CAS schedule itself is harmless,
+          it just doesn't gate anything there (CAS has no Program Chairpersons). */}
+      {selectedScheduleId && isSuperAdmin && (
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">GEC/GEL finalization</p>
+            <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+              {gecClusters.map((c) => (
+                <li key={c.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {c.finalized ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-600" />
+                  ) : (
+                    <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                  )}
+                  <span>
+                    {c.name}
+                    {c.finalized && c.finalizedBy ? ` (${c.finalizedBy})` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {myClusterId ? (
+            <Button
+              size="sm"
+              variant={myClusterStatus?.finalized ? "outline" : "default"}
+              className={myClusterStatus?.finalized ? "" : "bg-[#1B4332] text-white hover:bg-[#2D6A4F]"}
+              disabled={gecFinalizeMutation.isPending}
+              onClick={() =>
+                gecFinalizeMutation.mutate({ action: myClusterStatus?.finalized ? "unfinalize" : "finalize" })
+              }
+            >
+              {gecFinalizeMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {myClusterStatus?.finalized ? "Reopen my cluster" : "Finalize my cluster"}
+            </Button>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              You have no cluster assigned — ask another Dept Chairperson to finalize on their own cluster&apos;s behalf.
+            </p>
+          )}
         </div>
       )}
 

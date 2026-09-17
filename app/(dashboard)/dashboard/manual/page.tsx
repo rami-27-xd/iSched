@@ -43,8 +43,8 @@ const WORKFLOW_STEPS: { n: number; role: StepRole; title: string; body: string; 
   {
     n: 2,
     role: "DC",
-    title: "Department Chairperson generates GEC/GEL for all colleges",
-    body: "The Department Chairperson runs Generate: the general-education subjects under their area are placed for every section. A GEC class can never land on a slot a CIT lab already occupies — no override.",
+    title: "The three cluster chairpersons generate and FINALIZE GEC/GEL",
+    body: "Each of the three CAS cluster chairpersons (Social Sciences; Languages, Literature, and Humanities; Mathematics and Natural Sciences) generates their cluster's GEC/GEL subjects into the schedule, then clicks Finalize once done. A GEC class can never land on a slot a CIT lab already occupies — no override. Editing or regenerating after finalizing reopens that cluster automatically.",
     hard: true,
   },
   {
@@ -62,8 +62,8 @@ const WORKFLOW_STEPS: { n: number; role: StepRole; title: string; body: string; 
   {
     n: 5,
     role: "DC",
-    title: "GEC/GEL becomes the backbone",
-    body: "Once GEC/GEL exists in a schedule, Add Entry, Generate and Submit unlock for its Program Chairpersons. Until then the app blocks them (a \"Waiting for GEC\" banner explains this).",
+    title: "All three clusters finalized — the schedule unlocks",
+    body: "Only once EVERY cluster chairperson has finalized does GEC/GEL become the fixed backbone: Add Entry, Generate and Submit unlock for that department's Program Chairpersons. Until then they see a \"Waiting for GEC\" banner listing which clusters are still pending.",
     hard: true,
   },
   {
@@ -84,6 +84,8 @@ const ENFORCED_RULES = [
   "Only the owning CIT Program Chairperson may add, edit, move, or delete a CIT laboratory subject — not the Department Chairperson, not another program's chairperson.",
   "The Department Chairperson may view a Program Chairperson's major-subject schedule but cannot edit it (except in CAS, where the Department Chairperson holds delegated access).",
   "Only the PATHFit Director may add, edit, or delete PATHFit classes; only the NSTP Director may add, edit, or delete NSTP classes.",
+  "Every course code other than GEC/GEL, PATHFit and NSTP is a major subject under its own program's Program Chairperson.",
+  "A department's schedule becomes visible for its Program Chairpersons to act on only once ALL THREE CAS cluster chairpersons have finalized GEC/GEL for that schedule — not merely once GEC exists.",
   "Program Chairpersons edit only within their own college; each sees only their own college's schedules.",
   "Every placement — generated or entered by hand — is bound by the faculty member's tagged specializations (no exceptions: a CAS faculty member must be tagged for each GEC/GEL subject they teach, e.g. \"GEC01 - Understanding the Self\"), their availability and building access for that term, and room/building access.",
   "Laboratory subjects go only to laboratory rooms (computer-based labs to a Computer Laboratory); lectures go to lecture rooms.",
@@ -214,6 +216,7 @@ const SECTIONS: Section[] = [
         <Li>Use the <strong>day tabs</strong> (All days, Mon–Sat) and the Faculty / Section / Room filters to narrow the view; the Calendar view colours classes per subject and marks conflicts in red.</Li>
         <Li>Classes that could not be placed appear in the <strong>Unassigned</strong> list with the reason; use <em>Manually Assign</em> to fix them.</Li>
         <Li><strong>Submit</strong> sends a Draft for approval (Program Chairpersons). <strong>Publish</strong> / <strong>Approve</strong> finalise it (Department Chairperson). Archive removes a finished term from the working lists without deleting it.</Li>
+        <Li>A <strong>GEC/GEL finalization</strong> panel appears above the entry list for Department Chairpersons: it shows which of the three CAS clusters have finalized this schedule, and a button to finalize (or reopen) your own cluster. A Program Chairperson sees the same breakdown in the "Waiting for GEC" banner until all three are done.</Li>
       </ul>
     ),
   },

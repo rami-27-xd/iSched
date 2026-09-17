@@ -15,6 +15,9 @@ export type AuditAction =
   | "schedule.reset"
   | "schedule.published"
   | "schedule.unpublished"
+  | "schedule.gecClusterFinalized"
+  | "schedule.gecFullyFinalized"
+  | "schedule.gecReopened"
   | "entry.created"
   | "entry.updated"
   | "entry.deleted"
@@ -49,6 +52,9 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   "schedule.reset": "Schedule reset to draft",
   "schedule.published": "Schedule published",
   "schedule.unpublished": "Schedule unpublished",
+  "schedule.gecClusterFinalized": "GEC/GEL finalized (one cluster)",
+  "schedule.gecFullyFinalized": "GEC/GEL fully finalized",
+  "schedule.gecReopened": "GEC/GEL reopened",
   "entry.created": "Class added",
   "entry.updated": "Class edited",
   "entry.deleted": "Class removed",

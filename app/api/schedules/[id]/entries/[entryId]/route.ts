@@ -6,6 +6,7 @@ import { validateEntry, validateEntryCapacity, isHardConflict, stripConflictMark
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 import { isGeUnitRole } from "@/lib/roles"
+import { reopenGecIfStale } from "@/lib/services/workflow-gates"
 import { recordAudit } from "@/lib/audit"
 
 export async function PATCH(
@@ -139,6 +140,8 @@ export async function PATCH(
     if (body.facultyId && body.facultyId !== entry.facultyId) affectedFacultyIds.add(body.facultyId)
     await Promise.all([...affectedFacultyIds].map(fid => syncFacultySpecializations(fid).catch(() => {})))
 
+    await reopenGecIfStale(id, updated.subject?.code, dbUser)
+
     await recordAudit({
       actor: dbUser as any,
       action: "entry.updated",
@@ -231,6 +234,8 @@ export async function DELETE(
     if (entry.facultyId) {
       await syncFacultySpecializations(entry.facultyId).catch(() => {})
     }
+
+    await reopenGecIfStale(id, removed.subject?.code, dbUser)
 
     await recordAudit({
       actor: dbUser as any,
