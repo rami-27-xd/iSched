@@ -14,6 +14,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  ScrollText,
+  BookOpenCheck,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -24,8 +26,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { LinkPendingIcon } from '@/components/shared/link-pending'
-
-type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'FACULTY'
+import { formatRole as formatRoleLabel, type UserRole } from '@/lib/roles'
 
 interface NavItem {
   title: string
@@ -42,14 +43,21 @@ export interface SidebarProps {
   onToggleCollapse?: () => void
 }
 
+// Who sees which page (lib/roles.ts has the role descriptions):
+//   DEAN            — read-only on every data page + User Management (Dean only) + System Logs
+//   SUPER_ADMIN     — Department Chair: everything scheduling-related
+//   ADMIN           — Program Chair: everything scheduling-related (own program)
+//   PATHFIT / NSTP  — Manage Schedules only (their own subject family)
 const navItems: NavItem[] = [
-  { title: 'Dashboard',          href: '/dashboard',             icon: LayoutDashboard, roles: ['SUPER_ADMIN', 'ADMIN', 'FACULTY'] },
-  { title: 'Manage Schedules',   href: '/dashboard/schedules',   icon: CalendarDays,    roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { title: 'Faculty Availability', href: '/dashboard/availability', icon: Clock,         roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { title: 'Faculty',            href: '/dashboard/faculty',     icon: Users,           roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { title: 'Departments',        href: '/dashboard/subjects',    icon: BookOpen,        roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { title: 'Buildings',          href: '/dashboard/rooms',       icon: Building2,       roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { title: 'User Management',    href: '/dashboard/users',       icon: Users,           roles: ['SUPER_ADMIN', 'ADMIN'] },
+  { title: 'Dashboard',            href: '/dashboard',              icon: LayoutDashboard, roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP', 'FACULTY'] },
+  { title: 'Manage Schedules',     href: '/dashboard/schedules',    icon: CalendarDays,    roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'] },
+  { title: 'Faculty Availability', href: '/dashboard/availability', icon: Clock,           roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
+  { title: 'Faculty',              href: '/dashboard/faculty',      icon: Users,           roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
+  { title: 'Departments',          href: '/dashboard/subjects',     icon: BookOpen,        roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
+  { title: 'Buildings',            href: '/dashboard/rooms',        icon: Building2,       roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
+  { title: 'User Management',      href: '/dashboard/users',        icon: Users,           roles: ['DEAN'] },
+  { title: 'System Logs',          href: '/dashboard/logs',         icon: ScrollText,      roles: ['DEAN'] },
+  { title: 'User Manual',          href: '/dashboard/manual',       icon: BookOpenCheck,   roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'] },
 ]
 
 function getFilteredNavItems(role: string): NavItem[] {
@@ -62,7 +70,7 @@ function getInitials(name?: string): string {
 }
 
 function formatRole(role: string): string {
-  return { SUPER_ADMIN: 'Department Chair', ADMIN: 'Program Chair', FACULTY: 'Faculty' }[role] ?? role
+  return formatRoleLabel(role)
 }
 
 export function Sidebar({ userRole, userName, userEmail, collapsed = false, onToggleCollapse }: SidebarProps) {

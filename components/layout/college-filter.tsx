@@ -10,6 +10,7 @@
 import * as React from 'react'
 import { Building2, ChevronDown, Check } from 'lucide-react'
 import { useCollege } from '@/lib/college-context'
+import { isUniversityWideRole } from '@/lib/roles'
 import { LinesSkeleton } from '@/components/shared/loading-skeletons'
 
 export function CollegeFilter({ userRole }: { userRole: string }) {
@@ -17,7 +18,8 @@ export function CollegeFilter({ userRole }: { userRole: string }) {
     useCollege()
   const [open, setOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
-  const isSuperAdmin = userRole === 'SUPER_ADMIN'
+  // Dept Chairs and the PATHFit / NSTP coordinators switch colleges; others are locked.
+  const isSuperAdmin = isUniversityWideRole(userRole)
 
   // Close on outside click
   React.useEffect(() => {

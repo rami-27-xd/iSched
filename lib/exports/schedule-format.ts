@@ -59,8 +59,6 @@ export interface Signatories {
   /** VP for Academic Affairs — "Noted by" on the teaching-load letter. */
   notedByName: string
   notedByPosition: string
-  /** ISO document control number shown in the footer. */
-  isoFormCode: string
 }
 
 const DAY_ORDER = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
@@ -141,7 +139,7 @@ const PRINT_BASE_CSS = `
   .grid th { background: #f0f0f0; text-align: center; font-weight: bold; }
   .stack { display: flex; flex-direction: column; gap: 2px; }
   .muted { color: #555; }
-  .footer-iso { position: absolute; bottom: 18px; left: 34px; right: 34px; display: flex; justify-content: space-between; font-size: 10px; color: #333; }
+  .footer-iso { position: absolute; bottom: 18px; left: 34px; right: 34px; display: flex; justify-content: flex-end; font-size: 10px; color: #333; }
   .sig-row { display: flex; justify-content: space-between; margin-top: 34px; gap: 24px; }
   .sig { flex: 1; font-size: 12px; }
   .sig .name { font-weight: bold; text-transform: uppercase; border-top: 1px solid #111; padding-top: 2px; margin-top: 22px; }
@@ -280,7 +278,6 @@ function isoSectionPage(group: SectionGroup, pageNo: number, pageCount: number, 
       </div>
 
       <div class="footer-iso">
-        <span>${escapeHtml(sig.isoFormCode)}</span>
         <span>Page ${pageNo} of ${pageCount}</span>
       </div>
     </div>`

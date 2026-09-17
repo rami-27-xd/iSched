@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
-import { getAuthenticatedUser } from "@/lib/auth"
+import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
+import { recordAudit } from "@/lib/audit"
+import { DATA_EDIT_ROLES } from "@/lib/roles"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 
@@ -26,6 +28,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
+
+    // Only chairs edit subjects — the Dean is read-only (RBAC spec §1).
+    const dbUser = await getCurrentUser()
+    if (!dbUser || !DATA_EDIT_ROLES.includes(dbUser.role as any)) {
+      return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
+    }
 
     const { id } = await params
     const body = await req.json()
@@ -57,6 +65,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       include: { department: true, yearLevel: true },
     })
 
+    await recordAudit({
+      actor: dbUser as any,
+      action: "subject.updated",
+      entityType: "subject",
+      entityId: id,
+      departmentId: subject.departmentId,
+      summary: `Updated subject ${subject.code} — ${subject.title}`,
+    })
+
     return NextResponse.json(apiResponse(subject))
   } catch (error: any) {
     if (error?.code === "P2025") return NextResponse.json(apiError("Subject not found"), { status: 404 })
@@ -69,6 +86,11 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   try {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
+
+    const dbUser = await getCurrentUser()
+    if (!dbUser || !DATA_EDIT_ROLES.includes(dbUser.role as any)) {
+      return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
+    }
 
     const { id } = await params
 
@@ -83,7 +105,15 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
     // Delete related teaching loads first, then the subject
     await db.teachingLoad.deleteMany({ where: { subjectId: id } })
-    await db.subject.delete({ where: { id } })
+    const removed = await db.subject.delete({ where: { id } })
+    await recordAudit({
+      actor: dbUser as any,
+      action: "subject.deleted",
+      entityType: "subject",
+      entityId: id,
+      departmentId: removed.departmentId,
+      summary: `Removed subject ${removed.code} — ${removed.title}`,
+    })
     return NextResponse.json(apiResponse({ deleted: true }))
   } catch (error: any) {
     if (error?.code === "P2025") return NextResponse.json(apiError("Subject not found"), { status: 404 })

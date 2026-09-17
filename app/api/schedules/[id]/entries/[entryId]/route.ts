@@ -2,9 +2,11 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
-import { validateEntry, validateEntryCapacity, isHardConflict, stripConflictMarker } from "@/lib/services/entry-validation"
+import { validateEntry, validateEntryCapacity, isHardConflict, stripConflictMarker, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
+import { isGeUnitRole } from "@/lib/roles"
+import { recordAudit } from "@/lib/audit"
 
 export async function PATCH(
   req: Request,
@@ -38,12 +40,26 @@ export async function PATCH(
     // - SUPER_ADMIN: full access on any status — they manage GEC entries (Phase 1) and
     //   review/correct Program Chair entries (Phase 2 conflict resolution).
     // - ADMIN: full access on their own DRAFT (Phase 2 major subjects only).
-    if (dbUser.role === "SUPER_ADMIN") {
+    // - PATHFIT / NSTP: any status — their own codes only (ownership below).
+    // - DEAN: never (read-only).
+    if (dbUser.role === "SUPER_ADMIN" || isGeUnitRole(dbUser.role)) {
       // Any status — but subject ownership is checked below
     } else if (dbUser.role === "ADMIN" && schedule.status === "DRAFT") {
       // Own DRAFT — subject ownership checked below
     } else {
       return NextResponse.json(apiError("You don't have permission to modify this schedule"), { status: 403 })
+    }
+
+    // Room moved to a different building? Same rule as the generator and POST:
+    // the building must be shared (no department links) or linked to this department.
+    if (body.roomId !== undefined && body.roomId && body.roomId !== entry.roomId && schedule.departmentId) {
+      const access = await roomBuildingOpenToDepartment(body.roomId, schedule.departmentId)
+      if (!access.ok) {
+        return NextResponse.json(
+          apiError(`Room "${access.roomCode}" is in a building reserved for other departments. Choose a room from a shared building or one assigned to this department.`),
+          { status: 409 }
+        )
+      }
     }
 
     // Subject ownership: check both the entry's current subject and (if changing) the new one
@@ -123,6 +139,25 @@ export async function PATCH(
     if (body.facultyId && body.facultyId !== entry.facultyId) affectedFacultyIds.add(body.facultyId)
     await Promise.all([...affectedFacultyIds].map(fid => syncFacultySpecializations(fid).catch(() => {})))
 
+    await recordAudit({
+      actor: dbUser as any,
+      action: "entry.updated",
+      entityType: "entry",
+      entityId: entryId,
+      departmentId: schedule.departmentId,
+      scheduleId: id,
+      summary: `Edited ${updated.subject?.code ?? "class"} for ${updated.section?.name ?? "section"} — now ${updated.day} ${updated.startTime}–${updated.endTime}${updated.room ? ` in ${updated.room.code}` : ""}`,
+      metadata: {
+        Subject: `${updated.subject?.code ?? ""} — ${updated.subject?.title ?? ""}`.trim(),
+        Section: updated.section?.name ?? "",
+        Faculty: updated.facultyName ?? (updated.faculty?.user ? `${updated.faculty.user.firstName} ${updated.faculty.user.lastName}` : ""),
+        Room: updated.room?.code ?? "",
+        Before: `${entry.day} ${entry.startTime}–${entry.endTime}`,
+        After: `${updated.day} ${updated.startTime}–${updated.endTime}`,
+        ...(updated.set ? { Set: updated.set } : {}),
+      },
+    })
+
     const responsePayload = apiResponse(updated)
     if (validationError) {
       return NextResponse.json({ ...responsePayload, warning: validationError })
@@ -164,7 +199,8 @@ export async function DELETE(
     // Permission rules (two-phase workflow):
     // - SUPER_ADMIN: delete on any status — for GEC/PATHFIT conflict resolution.
     // - ADMIN: delete own entries on DRAFT only.
-    if (dbUser.role === "SUPER_ADMIN") {
+    // - PATHFIT / NSTP: any status — their own codes only (ownership below).
+    if (dbUser.role === "SUPER_ADMIN" || isGeUnitRole(dbUser.role)) {
       // Any status — subject ownership checked below
     } else if (dbUser.role === "ADMIN" && schedule.status === "DRAFT") {
       // OK — subject ownership checked below
@@ -179,12 +215,40 @@ export async function DELETE(
       return NextResponse.json(apiError(permError), { status: 403 })
     }
 
-    await db.scheduleEntry.delete({ where: { id: entryId, scheduleId: id } })
+    // Multi-day (MWF/TTh) classes are one logical entry stored as one row per day
+    // sharing a groupId. The delete dialog promises "all sessions go together" —
+    // remove every sibling, otherwise the leftover days keep the subject marked as
+    // already scheduled for the section and it can never be re-added by hand.
+    const removed = await db.scheduleEntry.findUniqueOrThrow({
+      where: { id: entryId, scheduleId: id },
+      include: { subject: { select: { code: true } }, section: { select: { name: true } } },
+    })
+    const removedRows = removed.groupId
+      ? await db.scheduleEntry.deleteMany({ where: { scheduleId: id, groupId: removed.groupId } })
+      : await db.scheduleEntry.deleteMany({ where: { id: entryId, scheduleId: id } })
 
     // Re-sync the faculty's specializations now that one entry is removed
     if (entry.facultyId) {
       await syncFacultySpecializations(entry.facultyId).catch(() => {})
     }
+
+    await recordAudit({
+      actor: dbUser as any,
+      action: "entry.deleted",
+      entityType: "entry",
+      entityId: entryId,
+      departmentId: schedule.departmentId,
+      scheduleId: id,
+      summary: `Removed ${removed.subject?.code ?? "class"} for ${removed.section?.name ?? "section"} (${removed.day} ${removed.startTime}–${removed.endTime}${removedRows.count > 1 ? ` and ${removedRows.count - 1} more session${removedRows.count > 2 ? "s" : ""}` : ""})`,
+      metadata: {
+        Subject: removed.subject?.code ?? "",
+        Section: removed.section?.name ?? "",
+        Day: removed.day,
+        Time: `${removed.startTime}–${removed.endTime}`,
+        "Sessions removed": removedRows.count,
+        ...(removed.set ? { Set: removed.set } : {}),
+      },
+    })
 
     return NextResponse.json(apiResponse({ deleted: true }))
   } catch (error) {

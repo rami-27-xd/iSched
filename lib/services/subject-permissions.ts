@@ -1,4 +1,5 @@
 import { db } from "@/lib/db"
+import { ROLE_LABELS, geUnitOwnsCode, isGeUnitRole, isNstpCode, isPathfitSubjectCode } from "@/lib/roles"
 
 /**
  * Per-cluster GEC/GEL ownership (compliance spec / rule.docx).
@@ -8,21 +9,25 @@ import { db } from "@/lib/db"
 export const CLUSTER_GEC_CODES: Record<string, string[]> = {
   "Social Sciences":                         ["GEC01", "GEC02", "GEC03", "GEC04", "GEC09", "GEL07", "GEL10"],
   "Languages, Literature, and Humanities":   ["GEC06", "GEC07", "GEC10", "GEC11", "GEC12", "GEC13", "GEC14"],
-  "Mathematics and Natural Sciences":        ["GEC05", "GEC08", "GEL01"],
+  // GEL04/05/08 are the GE electives the CTE / CABHA / CAM curricula use
+  // (Living in the IT Era, The Entrepreneurial Mind, Human Reproduction) —
+  // seeded into CAS by prisma/seed-curriculum-colleges.ts.
+  "Mathematics and Natural Sciences":        ["GEC05", "GEC08", "GEL01", "GEL04", "GEL05", "GEL08"],
 }
-
-// NSTP is manually scheduled; PATHFit is auto-placed (GYM / TBA) by every Dept
-// Chair generation run. Either way, any Department Chairperson may edit them.
-const MANUAL_PREFIXES = ["NSTP", "NST", "PATHFIT"]
 
 /**
  * May this user manually add/edit/delete schedule entries for this subject?
  *
- *   SUPER_ADMIN with a cluster — their cluster's GEC codes (university-wide),
- *     their cluster programs' major subjects, and NSTP/PATHFit.
- *   SUPER_ADMIN without a cluster — anything (fallback super-user).
+ *   PATHFIT / NSTP (the single coordinator accounts) — ONLY their own subject
+ *     family (PATHFit0n / NSTPn), in every college's schedule. Nothing else.
+ *   SUPER_ADMIN with a cluster — their cluster's GEC codes (university-wide)
+ *     and their cluster programs' CAS major subjects. NOT PATHFit / NSTP any
+ *     more — those belong to the coordinator accounts above.
+ *   SUPER_ADMIN without a cluster — anything except PATHFit / NSTP and other
+ *     colleges' majors (fallback super-user).
  *   ADMIN (Program Chair) — their own program's majors and their department's
- *     shared non-GEC subjects. Never GEC/GEL (Dept Chair territory).
+ *     shared non-GEC subjects. Never GEC/GEL/PATHFit/NSTP.
+ *   DEAN — read-only; never edits entries.
  *
  * Returns null when allowed, or a human-readable error message when not.
  */
@@ -69,11 +74,18 @@ export async function checkSubjectEditPermission(
     return `${subject.code} is a CIT laboratory subject — only its own CIT Program Chairperson may edit it.`
   }
 
-  if (MANUAL_PREFIXES.some((p) => code.startsWith(p))) {
-    // NSTP/PATHFit: Dept Chairs only (manual scheduling responsibility)
-    return dbUser.role === "SUPER_ADMIN"
-      ? null
-      : `${subject.code} is manually scheduled by the Department Chairperson`
+  // PATHFit / NSTP: exclusively the matching coordinator account (spec §3).
+  if (isPathfitSubjectCode(code) || isNstpCode(code)) {
+    if (geUnitOwnsCode(dbUser.role, code)) return null
+    const owner = isPathfitSubjectCode(code) ? ROLE_LABELS.PATHFIT : ROLE_LABELS.NSTP
+    return `${subject.code} is managed by the ${owner} account only`
+  }
+  if (isGeUnitRole(dbUser.role)) {
+    return `${subject.code} is outside your unit — the ${ROLE_LABELS[dbUser.role as "PATHFIT" | "NSTP"]} account may only schedule ${dbUser.role === "PATHFIT" ? "PATHFit" : "NSTP"} classes`
+  }
+
+  if (dbUser.role === "DEAN") {
+    return "The Dean has view-only access to schedules"
   }
 
   if (dbUser.role === "SUPER_ADMIN") {

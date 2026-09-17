@@ -4,14 +4,31 @@ import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { CalendarDays, Loader2, ShieldCheck, Lock, Users, GraduationCap, Building2, Eye, EyeOff } from 'lucide-react'
+import { CalendarDays, Loader2, ShieldCheck, Lock, GraduationCap, Building2, Eye, EyeOff, Landmark, Dumbbell, Flag } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { passwordError } from '@/lib/password'
 import { PasswordRequirements } from '@/components/shared/password-requirements'
+import { ROLE_LABELS } from '@/lib/roles'
 
-const ALLOWED_ROLES: Record<string, { label: string; description: string }> = {
-  ADMIN: { label: 'Program Chair', description: 'Manage major subjects and schedules per program' },
-  SUPER_ADMIN: { label: 'Department Chair', description: 'Full system access — manage all schedules, faculty, and settings' },
+// Roles a person may register as, shown by their exact titles. DEAN and ADMIN pick
+// a department (ADMIN also a program); SUPER_ADMIN / PATHFIT / NSTP are placed in
+// CAS automatically.
+const ALLOWED_ROLES: Record<string, { label: string; icon: LucideIcon; accent: 'green' | 'gold' }> = {
+  ADMIN:       { label: ROLE_LABELS.ADMIN,       icon: GraduationCap, accent: 'green' },
+  SUPER_ADMIN: { label: ROLE_LABELS.SUPER_ADMIN, icon: ShieldCheck,   accent: 'gold' },
+  DEAN:        { label: ROLE_LABELS.DEAN,        icon: Landmark,      accent: 'gold' },
+  PATHFIT:     { label: ROLE_LABELS.PATHFIT,     icon: Dumbbell,      accent: 'green' },
+  NSTP:        { label: ROLE_LABELS.NSTP,        icon: Flag,          accent: 'green' },
 }
+
+interface BootstrapStatus {
+  superAdminExists: boolean
+  pathfitExists: boolean
+  nstpExists: boolean
+  deanDepartmentIds: string[]
+}
+// Pessimistic defaults so the form never over-promises before the check resolves.
+const PESSIMISTIC_STATUS: BootstrapStatus = { superAdminExists: true, pathfitExists: true, nstpExists: true, deanDepartmentIds: [] }
 
 // Supabase reports a taken email in two ways: an explicit error, OR — when
 // email-enumeration protection is on (the default) — a "success" response whose
@@ -55,24 +72,43 @@ function SignUpForm() {
   const [success, setSuccess] = useState(false)
   // Blocking popup shown when the email is already registered — routes back to sign-in.
   const [existingAccountEmail, setExistingAccountEmail] = useState('')
-  // Whether an approved Department Chair already exists. When none does, the
-  // first person to register as Department Chair is auto-approved (no approver
-  // needed) — see ensureDbUser() bootstrap in lib/auth.ts. Default true so we
-  // never over-promise before the check resolves.
-  const [superAdminExists, setSuperAdminExists] = useState(true)
+  // Which accounts already exist — drives the auto-approve / blocked messages
+  // (see resolveAutoApproval() in lib/auth.ts for the rules being mirrored).
+  const [status, setStatus] = useState<BootstrapStatus>(PESSIMISTIC_STATUS)
+  const [statusLoaded, setStatusLoaded] = useState(false)
 
   useEffect(() => {
     fetch('/api/auth/bootstrap-status')
       .then((res) => res.json())
-      .then((json) => setSuperAdminExists(json.data?.superAdminExists ?? true))
-      .catch(() => setSuperAdminExists(true))
+      .then((json) => setStatus({ ...PESSIMISTIC_STATUS, ...(json.data ?? {}) }))
+      .catch(() => setStatus(PESSIMISTIC_STATUS))
+      .finally(() => setStatusLoaded(true))
   }, [])
 
-  // This registration will be auto-approved only if it's the first Department Chair.
-  const willAutoApprove = role === 'SUPER_ADMIN' && !superAdminExists
+  // Department picker: Deans and Program Chairs. Program picker: Program Chairs only.
+  const needsDepartment = role === 'ADMIN' || role === 'DEAN'
+  const needsProgram = role === 'ADMIN'
 
-  // Show department + program selectors for ADMIN (Program Chair) only
-  const needsDepartment = role === 'ADMIN'
+  // A registration that can never be approved — one Dean per department, one
+  // PATHFit account, one NSTP account. The form refuses these up front so no
+  // orphaned Supabase account gets created.
+  const roleBlocked: string | null =
+    role === 'PATHFIT' && status.pathfitExists
+      ? 'A PATHFit Director account already exists — only one is allowed. Ask that account holder or your Dean if you need access.'
+      : role === 'NSTP' && status.nstpExists
+        ? 'An NSTP Director account already exists — only one is allowed. Ask that account holder or your Dean if you need access.'
+        : role === 'DEAN' && selectedDepartmentId && status.deanDepartmentIds.includes(selectedDepartmentId)
+          ? 'This department already has a Dean — only one Dean account is allowed per department.'
+          : null
+
+  // Approved on the spot: the first Department Chair (bootstrap), the first Dean
+  // of a department, and the single PATHFit / NSTP accounts.
+  const willAutoApprove =
+    !roleBlocked &&
+    ((role === 'SUPER_ADMIN' && !status.superAdminExists) ||
+      (role === 'PATHFIT' && !status.pathfitExists) ||
+      (role === 'NSTP' && !status.nstpExists) ||
+      (role === 'DEAN' && !!selectedDepartmentId && !status.deanDepartmentIds.includes(selectedDepartmentId)))
 
   // Programs belonging to the chosen department.
   const programsForDept: any[] =
@@ -111,8 +147,13 @@ function SignUpForm() {
       return
     }
 
-    if (needsDepartment && !selectedProgramId) {
+    if (needsProgram && !selectedProgramId) {
       setError('Please select the program you chair.')
+      return
+    }
+
+    if (roleBlocked) {
+      setError(roleBlocked)
       return
     }
 
@@ -147,7 +188,7 @@ function SignUpForm() {
           full_name: `${firstName} ${lastName}`.trim(),
           requested_role: role,
           department_id: needsDepartment ? selectedDepartmentId : undefined,
-          program_id: needsDepartment ? selectedProgramId : undefined,
+          program_id: needsProgram ? selectedProgramId : undefined,
         },
       },
     })
@@ -183,8 +224,12 @@ function SignUpForm() {
       setError('Please select your department first.')
       return
     }
-    if (needsDepartment && !selectedProgramId) {
+    if (needsProgram && !selectedProgramId) {
       setError('Please select the program you chair first.')
+      return
+    }
+    if (roleBlocked) {
+      setError(roleBlocked)
       return
     }
     // Every failure here used to be invisible: createClient() throws when the
@@ -208,10 +253,8 @@ function SignUpForm() {
     // and extra query string that a stricter Supabase redirect allow-list can
     // reject outright.
     const params = new URLSearchParams({ role })
-    if (needsDepartment) {
-      params.set('department_id', selectedDepartmentId)
-      params.set('program_id', selectedProgramId)
-    }
+    if (needsDepartment) params.set('department_id', selectedDepartmentId)
+    if (needsProgram) params.set('program_id', selectedProgramId)
 
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -255,7 +298,7 @@ function SignUpForm() {
           <div className="mt-4 rounded-lg bg-white/10 border border-white/20 p-4 space-y-2">
             {willAutoApprove ? (
               <p className="text-sm text-white/80">
-                You are the first <strong className="text-[#D4AF37]">Department Chair</strong>, so your account is
+                Your <strong className="text-[#D4AF37]">{roleInfo?.label}</strong> account is
                 {' '}<strong className="text-[#D4AF37]">approved automatically</strong> — no one else needs to approve it.
                 Confirm your email, then sign in.
               </p>
@@ -263,7 +306,7 @@ function SignUpForm() {
               <>
                 <p className="text-sm text-white/80">
                   Your account will be flagged as <strong className="text-[#D4AF37]">Pending Approval</strong>.
-                  A Department Chair (Super Admin) must approve your account before you can access the system.
+                  The Dean of your department must approve it before you can access the system.
                 </p>
                 {deptName && (
                   <p className="text-xs text-white/60">
@@ -409,69 +452,61 @@ function SignUpForm() {
               {hasLockedRole ? (
                 <div className="flex items-center gap-3 rounded-lg border border-[#1B4332] bg-[#1B4332]/5 p-3 ring-1 ring-[#1B4332]">
                   <Lock className="h-4 w-4 text-[#1B4332] shrink-0" />
-                  <div>
-                    <span className="text-sm font-semibold text-[#1B4332]">{roleInfo?.label}</span>
-                    <p className="text-xs text-gray-500">{roleInfo?.description}</p>
-                  </div>
+                  <span className="text-sm font-semibold text-[#1B4332]">{roleInfo?.label}</span>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <label
-                    className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
-                      selectedRole === 'ADMIN'
-                        ? 'border-[#1B4332] bg-[#1B4332]/5 ring-1 ring-[#1B4332]'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="role"
-                      value="ADMIN"
-                      checked={selectedRole === 'ADMIN'}
-                      onChange={() => { setSelectedRole('ADMIN'); setSelectedDepartmentId('') }}
-                      className="mt-0.5 accent-[#1B4332]"
-                    />
-                    <div className="flex items-start gap-2">
-                      <GraduationCap className="h-4 w-4 text-[#1B4332] mt-0.5 shrink-0" />
-                      <div>
-                        <span className="text-sm font-medium text-gray-800">Program Chair</span>
-                        <p className="text-xs text-gray-500">Manage major subjects and schedules per program</p>
-                      </div>
-                    </div>
-                  </label>
-                  <label
-                    className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
-                      selectedRole === 'SUPER_ADMIN'
-                        ? 'border-[#D4AF37] bg-[#D4AF37]/10 ring-1 ring-[#D4AF37]'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="role"
-                      value="SUPER_ADMIN"
-                      checked={selectedRole === 'SUPER_ADMIN'}
-                      onChange={() => { setSelectedRole('SUPER_ADMIN'); setSelectedDepartmentId('') }}
-                      className="mt-0.5 accent-[#D4AF37]"
-                    />
-                    <div className="flex items-start gap-2">
-                      <ShieldCheck className="h-4 w-4 text-[#D4AF37] mt-0.5 shrink-0" />
-                      <div>
-                        <span className="text-sm font-medium text-gray-800">Department Chair</span>
-                        <p className="text-xs text-gray-500">Full system access — manage all schedules, faculty, and settings</p>
-                      </div>
-                    </div>
-                  </label>
+                  {Object.entries(ALLOWED_ROLES).map(([value, info]) => {
+                    const Icon = info.icon
+                    const selected = selectedRole === value
+                    const ring = info.accent === 'gold'
+                      ? 'border-[#D4AF37] bg-[#D4AF37]/10 ring-1 ring-[#D4AF37]'
+                      : 'border-[#1B4332] bg-[#1B4332]/5 ring-1 ring-[#1B4332]'
+                    const iconColor = info.accent === 'gold' ? 'text-[#D4AF37]' : 'text-[#1B4332]'
+                    return (
+                      <label
+                        key={value}
+                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                          selected ? ring : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="role"
+                          value={value}
+                          checked={selected}
+                          onChange={() => { setSelectedRole(value); setSelectedDepartmentId(''); setSelectedProgramId('') }}
+                          className={`mt-0.5 ${info.accent === 'gold' ? 'accent-[#D4AF37]' : 'accent-[#1B4332]'}`}
+                        />
+                        <div className="flex items-center gap-2">
+                          <Icon className={`h-4 w-4 shrink-0 ${iconColor}`} />
+                          <span className="text-sm font-medium text-gray-800">{info.label}</span>
+                        </div>
+                      </label>
+                    )
+                  })}
                 </div>
               )}
 
-              <p className="mt-1.5 text-xs text-amber-600">
-                {willAutoApprove
-                  ? 'You will be the first Department Chair — your account is approved automatically, no approval needed.'
-                  : selectedRole === 'SUPER_ADMIN'
-                  ? 'A Department Chair already exists, so additional Department Chair accounts require approval.'
-                  : 'All accounts require Department Chair approval before access is granted.'}
-              </p>
+              {roleBlocked ? (
+                <p className="mt-1.5 text-xs text-red-600">{roleBlocked}</p>
+              ) : (
+                <p className="mt-1.5 text-xs text-amber-600">
+                  {!statusLoaded
+                    ? 'Checking account availability…'
+                    : willAutoApprove
+                      ? role === 'SUPER_ADMIN'
+                        ? 'You will be the first Department Chairperson — your account is approved automatically.'
+                        : role === 'DEAN'
+                          ? 'This department has no Dean yet — your account is approved automatically.'
+                          : `This is the only ${roleInfo?.label} account — it is approved automatically.`
+                      : role === 'DEAN'
+                        ? 'Select your department. The first Dean of a department is approved automatically.'
+                        : role === 'PATHFIT' || role === 'NSTP'
+                          ? `The single ${roleInfo?.label} account is approved automatically.`
+                          : 'Your account will be approved by the Dean of your department.'}
+                </p>
+              )}
             </div>
 
             {/* Department Selection — shown for Program Chair and Faculty */}
@@ -505,13 +540,13 @@ function SignUpForm() {
                 <p className="mt-1 text-xs text-gray-400">
                   {role === 'ADMIN'
                     ? 'You will only see schedules, faculty, and data from this department.'
-                    : 'Your schedule and availability will be linked to this department.'}
+                    : 'You will approve this department\'s accounts and see its schedules, logs and rooms.'}
                 </p>
               </div>
             )}
 
             {/* Program Selection — which program this Program Chairperson heads */}
-            {needsDepartment && selectedDepartmentId && (
+            {needsProgram && selectedDepartmentId && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   <GraduationCap className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
@@ -546,7 +581,7 @@ function SignUpForm() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !!roleBlocked}
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#1B4332] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#2D6A4F] disabled:opacity-50"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}

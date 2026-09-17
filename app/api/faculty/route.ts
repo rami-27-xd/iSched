@@ -3,6 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { notifyAllSuperAdmins } from "@/lib/notifications"
+import { recordAudit } from "@/lib/audit"
 
 export async function GET(req: Request) {
   try {
@@ -67,11 +68,28 @@ export async function GET(req: Request) {
     // Add/Edit Entry when no real faculty is available yet to resolve an
     // Unassigned Queue item, so it must be selectable everywhere, not scoped
     // to whichever department happens to own the seeded row.
+    // Instructors the Department Chairperson allocated to this Program Chairperson's
+    // program (approved faculty requests) join the schedulable pool — for the term
+    // given by ?semesterId=, or for any term when none is given — so the Add/Edit
+    // picker offers exactly who the generator may assign.
+    const semesterId = searchParams.get("semesterId")
+    const chairProgramId = dbUser?.role === "ADMIN" ? ((dbUser as any).programHead?.programId ?? null) : null
+    const allocatedIds =
+      schedulable && chairProgramId
+        ? (
+            await db.facultyRequest.findMany({
+              where: { status: "APPROVED", programId: chairProgramId, facultyId: { not: null }, ...(semesterId ? { semesterId } : {}) },
+              select: { facultyId: true },
+            })
+          ).map((r) => r.facultyId as string)
+        : []
+
     const faculty = await db.faculty.findMany({
       where: {
         OR: [
           scopeFilter,
           { employeeId: "TBA" },
+          ...(allocatedIds.length ? [{ id: { in: allocatedIds } }] : []),
         ],
       },
       include: {
@@ -230,6 +248,15 @@ export async function POST(req: Request) {
       "faculty_added",
       "/dashboard/faculty"
     )
+
+    await recordAudit({
+      actor: dbUser as any,
+      action: "faculty.created",
+      entityType: "faculty",
+      entityId: faculty.id,
+      departmentId: faculty.departmentId,
+      summary: `Added faculty ${facName.trim()} (${employeeId})`,
+    })
 
     return NextResponse.json(apiResponse(faculty), { status: 201 })
   } catch (error) {

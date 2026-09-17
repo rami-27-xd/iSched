@@ -52,10 +52,12 @@ function tokensCover(needle: string[], haystack: string[]): boolean {
  */
 export function specializationsCoverSubject(
   specializations: string[] | null | undefined,
-  subjectTitle: string | null | undefined
+  subjectTitle: string | null | undefined,
+  subjectCode?: string | null
 ): boolean {
   const title = (subjectTitle ?? "").toLowerCase().trim()
-  if (!title) return true
+  const code = (subjectCode ?? "").toLowerCase().trim()
+  if (!title && !code) return true
   const specs = specializations ?? []
   if (specs.length === 0) return false
 
@@ -63,6 +65,12 @@ export function specializationsCoverSubject(
   return specs.some((raw) => {
     const sp = (raw ?? "").toLowerCase().trim()
     if (!sp) return false
+    // A tag written as the subject CODE — "GEC01", "GEC01 - Understanding the Self",
+    // "GEC01: Understanding the Self" — is an exact claim on that subject. This is
+    // the form chairs use for general-education subjects (there is no exemption
+    // for GEC any more: a CAS faculty member must be tagged for each GEC they teach).
+    if (code && (sp === code || sp.startsWith(`${code} `) || sp.startsWith(`${code}-`) || sp.startsWith(`${code}:`))) return true
+    if (!title) return false
     if (sp === title || title.includes(sp) || sp.includes(title)) return true
     const spTokens = specTokens(sp)
     return tokensCover(spTokens, titleTokens) || tokensCover(titleTokens, spTokens)
@@ -71,5 +79,5 @@ export function specializationsCoverSubject(
 
 /** Convenience wrapper for the shapes the UI holds (a faculty row + a subject row). */
 export function facultyMatchesSubject(faculty: any, subject: any): boolean {
-  return specializationsCoverSubject(faculty?.specializations, subject?.title)
+  return specializationsCoverSubject(faculty?.specializations, subject?.title, subject?.code)
 }

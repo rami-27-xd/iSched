@@ -12,13 +12,13 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search } from "lucide-react"
+import Link from "next/link"
+import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search, CalendarDays, Building2 } from "lucide-react"
 import { toast } from "sonner"
-import { useFacultyList, useCreateFaculty, useUpdateFaculty, useSemesters } from "@/hooks/use-data"
-import { useCollege } from "@/lib/college-context"
+import { useFacultyList, useCreateFaculty, useUpdateFaculty, useBuildings } from "@/hooks/use-data"
+import { useSchedules } from "@/hooks/use-schedules"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { PageHeader } from "@/components/shared/page-header"
-import { CollegeFilter } from "@/components/layout/college-filter"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { CardGridSkeleton } from "@/components/shared/loading-skeletons"
 
@@ -128,6 +128,11 @@ function FacultyCard({
   isSavingMaxHours,
   onEdit,
   onDeactivate,
+  readOnly = false,
+  buildings,
+  buildingIds,
+  onSaveBuildings,
+  isSavingBuildings,
 }: {
   faculty: any
   availabilityMap: Map<string, Set<string>>
@@ -138,6 +143,14 @@ function FacultyCard({
   isSavingMaxHours: boolean
   onEdit?: (faculty: any) => void
   onDeactivate?: (faculty: any) => void
+  /** Dean: the timeline, presets and max-hours box are displayed but cannot be changed. */
+  readOnly?: boolean
+  /** Buildings this department may use — the choices for per-term building access. */
+  buildings: { id: string; name: string; code: string }[]
+  /** Buildings this faculty may teach in THIS term (empty = no restriction). */
+  buildingIds: Set<string>
+  onSaveBuildings: (facultyId: string, buildingIds: string[]) => void
+  isSavingBuildings: boolean
 }) {
   const [activeDay, setActiveDay] = useState<string>("MONDAY")
   const dragRef = useRef<{ dragging: boolean; startIdx: number; endIdx: number; mode: "add" | "remove" } | null>(null)
@@ -260,7 +273,7 @@ function FacultyCard({
   // ─── Drag (paint) handlers ────────────────────────────────────────────
   const handleMouseDown = useCallback(
     (idx: number) => {
-      if (isSaving) return // previous change still being stored — wait for the refresh
+      if (isSaving || readOnly) return // previous change still being stored — wait for the refresh
       const isCurrentlyOn = daySelected.has(idx)
       const mode = isCurrentlyOn ? "remove" : "add"
       // Nothing can be added once the cap is reached — refuse to start an add-drag.
@@ -268,7 +281,7 @@ function FacultyCard({
       dragRef.current = { dragging: true, startIdx: idx, endIdx: idx, mode }
       setDragPreview({ startIdx: idx, endIdx: idx, mode })
     },
-    [daySelected, atCap, warnCap, isSaving],
+    [daySelected, atCap, warnCap, isSaving, readOnly],
   )
 
   const handleMouseEnter = useCallback((idx: number) => {
@@ -456,7 +469,7 @@ function FacultyCard({
               onChange={(e) => setMaxHoursDraft(e.target.value)}
               onBlur={commitMaxHours}
               onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur() }}
-              disabled={isSavingMaxHours}
+              disabled={isSavingMaxHours || readOnly}
               aria-label="Max hours per week"
               title={`Max hours per week — ${fmtHours(markedMinutes)} h marked so far`}
               className="h-8 w-[4.5rem] border-white/30 bg-white/10 pr-6 text-center text-sm font-semibold tabular-nums text-white placeholder:text-white/50 focus-visible:ring-[#D4AF37]"
@@ -501,6 +514,44 @@ function FacultyCard({
       <CardContent className="p-4">
         <div className="grid gap-4">
           <div className="min-w-0 space-y-3">
+            {/* Building access for this term — which buildings this faculty may be
+                scheduled in. No selection = any building. A hard constraint for the
+                generator and for manual entry, per term like the hours below. */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                <Building2 className="h-3.5 w-3.5" /> Buildings
+                {isSavingBuildings && <Loader2 className="h-3 w-3 animate-spin" />}
+              </span>
+              {buildings.length === 0 ? (
+                <span className="text-xs text-muted-foreground">No buildings assigned to this department</span>
+              ) : (
+                buildings.map((b) => {
+                  const on = buildingIds.has(b.id)
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      disabled={readOnly || isSavingBuildings}
+                      title={b.name}
+                      onClick={() => {
+                        const next = new Set(buildingIds)
+                        if (on) next.delete(b.id); else next.add(b.id)
+                        onSaveBuildings(faculty.id, [...next])
+                      }}
+                      className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70 ${
+                        on ? "border-[#1B4332] bg-[#1B4332] text-white" : "border-input bg-background text-muted-foreground hover:bg-muted"
+                      }`}
+                    >
+                      {b.code}
+                    </button>
+                  )
+                })
+              )}
+              {buildings.length > 0 && buildingIds.size === 0 && (
+                <span className="text-[11px] text-muted-foreground">— any building</span>
+              )}
+            </div>
+
             {/* Day tabs */}
             <div className="flex gap-1 flex-wrap">
               {DAYS.map((day) => {
@@ -530,7 +581,8 @@ function FacultyCard({
               })}
             </div>
 
-            {/* Quick-action buttons */}
+            {/* Quick-action buttons — hidden for a read-only viewer */}
+            {!readOnly && (
             <div className="flex gap-2 flex-wrap">
               <button
                 type="button"
@@ -568,6 +620,7 @@ function FacultyCard({
                 Clear {DAY_SHORT[activeDay]}
               </button>
             </div>
+            )}
 
             {/* Timeline */}
             <div className="relative select-none overflow-x-auto pt-6" style={{ userSelect: "none" }}>
@@ -781,9 +834,7 @@ export default function AvailabilityPage() {
   const queryClient = useQueryClient()
 
   // ── Data ──
-  const { selectedCollegeId } = useCollege()
-
-  // Fetch current user first so we can scope the faculty query correctly
+  // Fetch current user first so we know the role and department.
   const { data: currentUser } = useQuery({
     queryKey: ["current-user-me"],
     queryFn: async () => {
@@ -792,36 +843,101 @@ export default function AvailabilityPage() {
       return json.data ?? null
     },
   })
-  const isAdminUser = currentUser?.role === "ADMIN"
+  const isDean = currentUser?.role === "DEAN"
   const userDeptId: string | undefined = currentUser?.departmentId ?? undefined
 
-  // ADMIN sees only their own department's faculty; SUPER_ADMIN follows college filter
-  const { data: faculty = [], isLoading: loadingFaculty } = useFacultyList(
-    isAdminUser
-      ? (userDeptId ? { departmentId: userDeptId } : undefined)
-      : (selectedCollegeId ? { collegeId: selectedCollegeId } : undefined)
-  )
+  // Everyone sees their own department's faculty — /api/faculty scopes on the
+  // server and ignores any department/college param, so no filter is offered.
+  const { data: faculty = [], isLoading: loadingFaculty } = useFacultyList()
   const createFaculty = useCreateFaculty()
   const updateFaculty = useUpdateFaculty()
 
-  // ── Semesters ──
-  const { data: semesters = [], isLoading: loadingSemesters } = useSemesters()
-
-  // User-selected semester (dropdown). Empty = follow the active/most-recent one.
-  const [selectedSemesterId, setSelectedSemesterId] = useState("")
-
-  // Prefer the user's dropdown choice; else the explicitly-active semester;
-  // else the most recent one so the page always works.
-  const activeSemester = useMemo(() => {
-    const sems = semesters as any[]
-    if (selectedSemesterId) {
-      const chosen = sems.find((s) => s.id === selectedSemesterId)
-      if (chosen) return chosen
+  // ── Term ──
+  // Availability and building access are recorded per Academic Year + Semester.
+  // The chair picks WHICH term they are entering — the choices are the terms that
+  // have a non-archived schedule in their department (archived terms never
+  // count), defaulting to the active semester when it has one, else the most
+  // recently created schedule's term. Generation and manual entry then read
+  // strictly that term's rows — never another semester's.
+  const { data: deptSchedules = [], isLoading: loadingSchedules } = useSchedules(undefined, false)
+  const terms = useMemo(() => {
+    const byTerm = new Map<string, any>()
+    for (const sc of deptSchedules as any[]) {
+      if (!sc.semester || sc.isArchived || sc.status === "ARCHIVED") continue
+      if (userDeptId && (sc.departmentId ?? sc.department?.id) !== userDeptId) continue
+      if (!byTerm.has(sc.semesterId)) byTerm.set(sc.semesterId, sc.semester)
     }
-    return sems.find((s) => s.isActive) ?? sems[0] ?? null
-  }, [semesters, selectedSemesterId])
-
+    return [...byTerm.entries()]
+      .map(([id, sem]) => ({ id, sem }))
+      .sort((a, b) => {
+        const ay = (b.sem.academicYear?.startYear ?? 0) - (a.sem.academicYear?.startYear ?? 0)
+        if (ay !== 0) return ay
+        const order = { FIRST: 0, SECOND: 1, SUMMER: 2 } as Record<string, number>
+        return (order[b.sem.type] ?? 0) - (order[a.sem.type] ?? 0)
+      })
+  }, [deptSchedules, userDeptId])
+  const [selectedTermId, setSelectedTermId] = useState("")
+  const activeSemester = useMemo(() => {
+    const chosen = terms.find((t) => t.id === selectedTermId)
+    if (chosen) return chosen.sem
+    return terms.find((t) => t.sem.isActive)?.sem ?? terms[0]?.sem ?? null
+  }, [terms, selectedTermId])
   const activeSemesterId = activeSemester?.id ?? ""
+  // True as soon as a term is selectable at all — every listed term has a
+  // non-archived schedule in this department by construction.
+  const hasActiveSchedule = !!activeSemesterId
+  const loadingSemesters = loadingSchedules
+
+  // ── Buildings this department may use (per-term building access choices) ──
+  const { data: allBuildings = [] } = useBuildings()
+  const deptBuildings = useMemo(
+    () =>
+      (allBuildings as any[])
+        .filter((b) => {
+          const links: any[] = b.departments ?? []
+          return links.length === 0 || links.some((l) => (l.departmentId ?? l.department?.id) === userDeptId)
+        })
+        .filter((b) => !["TBA", "GYM"].includes(b.code))
+        .map((b) => ({ id: b.id, name: b.name, code: b.code })),
+    [allBuildings, userDeptId]
+  )
+  const { data: buildingRows = [] } = useQuery({
+    queryKey: ["faculty-building-availability", activeSemesterId],
+    queryFn: async () => {
+      const res = await fetch(`/api/faculty/building-availability?semesterId=${activeSemesterId}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Failed to fetch building access")
+      return (json.data ?? []) as { facultyId: string; buildingId: string }[]
+    },
+    enabled: !!activeSemesterId,
+  })
+  const buildingMap = useMemo(() => {
+    const m = new Map<string, Set<string>>()
+    for (const r of buildingRows) {
+      if (!m.has(r.facultyId)) m.set(r.facultyId, new Set())
+      m.get(r.facultyId)!.add(r.buildingId)
+    }
+    return m
+  }, [buildingRows])
+  const [savingBuildingsFor, setSavingBuildingsFor] = useState<string | null>(null)
+  async function handleSaveBuildings(facultyId: string, buildingIds: string[]) {
+    if (!activeSemesterId) return
+    setSavingBuildingsFor(facultyId)
+    try {
+      const res = await fetch("/api/faculty/building-availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ facultyId, semesterId: activeSemesterId, buildingIds }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Failed to save building access")
+      await queryClient.invalidateQueries({ queryKey: ["faculty-building-availability", activeSemesterId] })
+    } catch (err: any) {
+      toast.error(err.message)
+    } finally {
+      setSavingBuildingsFor(null)
+    }
+  }
 
   const semesterLabel = useCallback((s: any) => {
     const type =
@@ -1029,17 +1145,16 @@ export default function AvailabilityPage() {
     }
   }
 
-  const isLoading = loadingFaculty || loadingAvailability || loadingSemesters
+  const isLoading = loadingFaculty || loadingAvailability || loadingSemesters || loadingSchedules
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "DEAN"]}>
     {/* flex/gap instead of space-y: space-y's margin-bottom lands on the sticky
         bar itself (it's not the last child), which throws off the browser's
         sticky release point and shows as a gap/overlap once you scroll. */}
     <div className="flex flex-col gap-6">
 
-      {/* Sticky action bar: Add Faculty + Search + Semester + College filter,
-          all in one top row. Uses a negative `top` (not a negative margin) to
+      {/* Sticky action bar: Add Faculty + Search in one top row. Uses a negative `top` (not a negative margin) to
           cancel <main>'s p-4 lg:p-6 padding — sticky's clamp only ever honors
           the `top` inset once pinned, so a negative margin here would leave
           the bar's stuck position sitting margin px lower than its resting
@@ -1049,10 +1164,12 @@ export default function AvailabilityPage() {
         <PageHeader
           action={
             <>
-              <Button onClick={() => setAddOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Faculty
-              </Button>
+              {!isDean && (
+                <Button onClick={() => setAddOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Faculty
+                </Button>
+              )}
               <div className="relative w-full sm:w-56">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -1063,23 +1180,23 @@ export default function AvailabilityPage() {
                   className="w-full rounded-lg border border-input bg-background pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
                 />
               </div>
-              <select
-                value={activeSemesterId}
-                onChange={(e) => setSelectedSemesterId(e.target.value)}
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring sm:w-48"
-              >
-                {(semesters as any[]).map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {semesterLabel(s)}{s.isActive ? " (Active)" : ""}
-                  </option>
-                ))}
-              </select>
-              {/* Only a Dept Chair can actually switch colleges. For a Program Chair
-                  CollegeFilter renders a read-only badge naming the one college they are
-                  already locked to — a control that cannot be operated and states
-                  something the page never varies by, so it is not shown to them. */}
-              {currentUser?.role === "SUPER_ADMIN" && (
-                <CollegeFilter userRole={currentUser.role} />
+              {terms.length > 0 && (
+                <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  <span className="sr-only sm:not-sr-only">Term</span>
+                  <select
+                    value={activeSemesterId}
+                    onChange={(e) => setSelectedTermId(e.target.value)}
+                    className="rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    aria-label="Term"
+                  >
+                    {terms.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {semesterLabel(t.sem)}{t.sem.isActive ? " (active)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               )}
             </>
           }
@@ -1101,11 +1218,16 @@ export default function AvailabilityPage() {
         </div>
       </div>
 
-      {/* Only warn when no semesters exist at all */}
-      {!loadingSemesters && (semesters as any[]).length === 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <strong>No semesters found.</strong>{" "}
-          Add an academic year and semester in Settings before managing faculty availability.
+      {/* No term to work on — availability is not computed or shown */}
+      {!isLoading && !hasActiveSchedule && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
+          <p className="font-semibold">No active schedule for your department.</p>
+          <p className="mt-1">
+            Faculty availability is recorded per term, against that term&apos;s schedule. Create a schedule for the
+            term in{" "}
+            <Link href="/dashboard/schedules" className="font-medium underline underline-offset-2">Manage Schedules</Link>
+            {" "}first — archived schedules do not count.
+          </p>
         </div>
       )}
 
@@ -1113,14 +1235,14 @@ export default function AvailabilityPage() {
       {isLoading && <CardGridSkeleton count={4} label="Loading faculty availability" />}
 
       {/* No faculty */}
-      {activeSemesterId && !isLoading && faculty.length === 0 && (
+      {activeSemesterId && !isLoading && hasActiveSchedule && faculty.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
           No faculty members found. Use the <strong>Add Faculty</strong> button to add one.
         </div>
       )}
 
       {/* Faculty cards — 10 per page */}
-      {activeSemesterId && !isLoading && faculty.length > 0 && (
+      {activeSemesterId && !isLoading && hasActiveSchedule && faculty.length > 0 && (
         filteredFaculty.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
             No faculty found matching &ldquo;{searchQuery}&rdquo;
@@ -1138,8 +1260,13 @@ export default function AvailabilityPage() {
                   isSaving={savingFacultyId === f.id}
                   onSaveMaxHours={handleSaveMaxHours}
                   isSavingMaxHours={savingMaxHoursFor === f.id}
-                  onEdit={openEdit}
-                  onDeactivate={setDeactivateTarget}
+                  onEdit={isDean ? undefined : openEdit}
+                  onDeactivate={isDean ? undefined : setDeactivateTarget}
+                  readOnly={isDean}
+                  buildings={deptBuildings}
+                  buildingIds={buildingMap.get(f.id) ?? new Set<string>()}
+                  onSaveBuildings={handleSaveBuildings}
+                  isSavingBuildings={savingBuildingsFor === f.id}
                 />
               ))}
             </div>

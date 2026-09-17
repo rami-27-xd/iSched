@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, canManageBuilding } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { recordAudit } from "@/lib/audit"
 import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
 
 export async function GET(req: Request) {
@@ -14,24 +15,22 @@ export async function GET(req: Request) {
     const buildingId = searchParams.get("buildingId")
     const collegeId = searchParams.get("collegeId")
 
-    // Department-building restriction filter:
-    // When ?departmentId=X is passed, only return rooms whose building is mapped
-    // to that department via DepartmentBuilding. This enforces the rule that users
-    // can only choose rooms in buildings assigned to their department.
+    // Department-building restriction filter — the same union rule the generator
+    // and the entry routes apply: when ?departmentId=X is passed, return rooms in
+    // buildings that are SHARED (no department links at all) or linked to X. A
+    // building restricted to other departments is left out. (Previously only the
+    // mapped buildings came back, so a generated class sitting in a shared
+    // building's room could not be re-chosen or edited by hand.)
     const departmentId = searchParams.get("departmentId")
 
     let allowedBuildingIds: string[] | undefined
 
     if (departmentId) {
-      const mappings = await db.departmentBuilding.findMany({
-        where: { departmentId },
-        select: { buildingId: true },
+      const open = await db.building.findMany({
+        where: { OR: [{ departments: { none: {} } }, { departments: { some: { departmentId } } }] },
+        select: { id: true },
       })
-      allowedBuildingIds = mappings.map((m) => m.buildingId)
-      // If the department has no building mappings, return all (fallback for legacy data)
-      if (allowedBuildingIds.length === 0) {
-        allowedBuildingIds = undefined
-      }
+      allowedBuildingIds = open.map((b) => b.id)
     }
 
     // Handle comma-separated type values (e.g. type=LABORATORY,COMPUTER_LAB)
@@ -127,6 +126,14 @@ export async function POST(req: Request) {
         departments: { include: { department: true } },
         programs: { include: { program: { select: { id: true, name: true, abbreviation: true } } } },
       },
+    })
+
+    await recordAudit({
+      actor: dbUser as any,
+      action: "room.created",
+      entityType: "room",
+      entityId: room.id,
+      summary: `Added room ${room.code} in ${room.building?.name ?? "building"}`,
     })
 
     return NextResponse.json(apiResponse(room), { status: 201 })

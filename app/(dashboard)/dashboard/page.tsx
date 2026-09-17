@@ -1,8 +1,8 @@
 "use client"
 
 import Link from "next/link"
-import { LinkPendingIcon } from "@/components/shared/link-pending"
 import { useUserRole } from "@/components/layout/dashboard-shell"
+import { DeanDashboard } from "@/components/dashboard/dean-dashboard"
 import { KPICard } from "@/components/shared/kpi-card"
 import {
   CalendarDays,
@@ -13,7 +13,6 @@ import {
   Loader2,
   Clock,
   BookOpen,
-  Building2,
   MapPin,
   Inbox,
 } from "lucide-react"
@@ -161,7 +160,22 @@ export default function DashboardPage() {
     )
   }
 
-  // ─── ADMIN / SUPER_ADMIN DASHBOARD ─────────────────────────────────────
+  // ─── DEAN DASHBOARD ────────────────────────────────────────────────────
+  // Pending approvals, department schedule status and the audit trail — the
+  // Dean neither schedules nor manages data, so the generic KPIs below are
+  // not theirs.
+  if (userRole === "DEAN") {
+    return (
+      <DeanDashboard
+        stats={stats}
+        statsLoading={isLoading}
+        recentSchedules={recentSchedules}
+        renderStatus={(status) => <StatusBadge status={status} />}
+      />
+    )
+  }
+
+  // ─── ADMIN / SUPER_ADMIN / PATHFIT / NSTP DASHBOARD ────────────────────
 
   const kpiData = [
     {
@@ -206,8 +220,8 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Recent Schedules */}
-        <Card>
+        {/* Recent Schedules — full width unless a teaching schedule sits beside it */}
+        <Card className={myEntries.length > 0 ? "" : "lg:col-span-2"}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -283,104 +297,6 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
         )}
-
-        {/* Management Hub — SUPER_ADMIN (Department Chair) */}
-        {userRole === "SUPER_ADMIN" && (
-        <Card className="border-2 border-[#1B4332]/20 shadow-sm">
-          <CardHeader className="pb-3 bg-gradient-to-r from-[#1B4332]/5 to-transparent rounded-t-lg border-b">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-[#1B4332]">
-              <div className="flex h-7 w-7 items-center justify-center text-[#1B4332]">
-                <Building2 className="h-5 w-5" />
-              </div>
-              Management Hub
-              <span className="ml-auto text-[10px] font-normal text-muted-foreground uppercase tracking-wider">Department Chair</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <QuickActionButton
-                href="/dashboard/schedules"
-                icon={CalendarDays}
-                label="Manage Schedules"
-                description="View & publish schedules"
-              />
-              <QuickActionButton
-                href="/dashboard/availability"
-                icon={Clock}
-                label="Faculty Availability"
-                description="Assign time slots"
-              />
-              <QuickActionButton
-                href="/dashboard/faculty"
-                icon={Users}
-                label="Faculty"
-                description="View & manage faculty"
-              />
-              <QuickActionButton
-                href="/dashboard/rooms"
-                icon={Building2}
-                label="Buildings"
-                description="Manage rooms & labs"
-              />
-              <QuickActionButton
-                href="/dashboard/subjects"
-                icon={BookOpen}
-                label="Departments"
-                description="Manage departments & subjects"
-              />
-              <QuickActionButton
-                href="/dashboard/sections"
-                icon={Users}
-                label="Sections"
-                description="Manage sections"
-              />
-            </div>
-          </CardContent>
-        </Card>
-        )}
-
-        {/* Management Hub — ADMIN (Program Chair) */}
-        {userRole === "ADMIN" && (
-        <Card className="border-2 border-[#1B4332]/20 shadow-sm">
-          <CardHeader className="pb-3 bg-gradient-to-r from-[#1B4332]/5 to-transparent rounded-t-lg border-b">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-[#1B4332]">
-              <div className="flex h-7 w-7 items-center justify-center text-[#1B4332]">
-                <BookOpen className="h-5 w-5" />
-              </div>
-              Management Hub
-              <span className="ml-auto text-[10px] font-normal text-muted-foreground uppercase tracking-wider">Program Chair</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <QuickActionButton
-                href="/dashboard/schedules"
-                icon={CalendarDays}
-                label="Manage Schedules"
-                description="Add major subjects to published schedules"
-              />
-              <QuickActionButton
-                href="/dashboard/subjects"
-                icon={BookOpen}
-                label="Courses"
-                description="View course offerings"
-              />
-              <QuickActionButton
-                href="/dashboard/faculty"
-                icon={Users}
-                label="Faculty"
-                description="View faculty list"
-              />
-              <QuickActionButton
-                href="/dashboard/sections"
-                icon={Users}
-                label="Sections"
-                description="View program sections"
-              />
-            </div>
-          </CardContent>
-        </Card>
-        )}
       </div>
     </div>
   )
@@ -403,33 +319,5 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[status] ?? map.DRAFT}`}>
       {label[status] ?? status}
     </span>
-  )
-}
-
-function QuickActionButton({
-  href,
-  icon: Icon,
-  label,
-  description,
-}: {
-  href: string
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  description: string
-}) {
-  return (
-    <Link
-      href={href}
-      className="group flex items-start gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-secondary"
-    >
-      <div className="p-2 text-primary transition-colors group-hover:text-primary/70">
-        {/* Icon becomes a spinner while the destination page loads */}
-        <LinkPendingIcon icon={Icon} className="h-4 w-4" />
-      </div>
-      <div className="flex-1">
-        <p className="text-sm font-medium">{label}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-    </Link>
   )
 }

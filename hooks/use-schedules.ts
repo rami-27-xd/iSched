@@ -343,16 +343,18 @@ export function useCreateEntry() {
 // ---------- Fetch faculty ----------
 export function useFaculty(
   departmentId?: string,
-  opts?: { enabled?: boolean; scope?: "schedulable" }
+  opts?: { enabled?: boolean; scope?: "schedulable"; semesterId?: string | null }
 ) {
   return useQuery({
-    // scope is part of the key: the schedulable pool is wider than the management
-    // list, so the two must not share a cache entry.
-    queryKey: ["faculty", { departmentId, scope: opts?.scope ?? null }],
+    // scope + term are part of the key: the schedulable pool is wider than the
+    // management list (and includes instructors allocated for that term), so the
+    // two must not share a cache entry.
+    queryKey: ["faculty", { departmentId, scope: opts?.scope ?? null, semesterId: opts?.semesterId ?? null }],
     queryFn: async () => {
       const params = new URLSearchParams()
       if (departmentId) params.set("departmentId", departmentId)
       if (opts?.scope) params.set("scope", opts.scope)
+      if (opts?.semesterId) params.set("semesterId", opts.semesterId)
       return safeFetch<any[]>(`/api/faculty?${params}`)
     },
     // 30s rather than 0. Freshness after a CHANGE does not depend on this: every

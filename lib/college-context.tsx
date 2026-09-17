@@ -12,6 +12,7 @@
  */
 
 import * as React from 'react'
+import { isUniversityWideRole } from '@/lib/roles'
 import { useQuery } from '@tanstack/react-query'
 
 export interface CollegeOption {
@@ -53,9 +54,11 @@ export function CollegeProvider({
   userRole: string
   defaultCollegeId?: string | null
 }) {
-  const isSuperAdmin = userRole === 'SUPER_ADMIN'
+  // Department Chairs and the PATHFit / NSTP coordinators work across every
+  // college; everyone else (Program Chairs, Deans) is locked to their own.
+  const isSuperAdmin = isUniversityWideRole(userRole)
 
-  // Read persisted value on mount (SUPER_ADMIN only — others are locked)
+  // Read persisted value on mount (university-wide roles only — others are locked)
   const [selectedCollegeId, setSelectedCollegeIdRaw] = React.useState<string | null>(() => {
     if (!isSuperAdmin) return defaultCollegeId ?? null
     if (typeof window === 'undefined') return null

@@ -10,9 +10,12 @@ datasource db {
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 enum UserRole {
-  SUPER_ADMIN // Department/College Chairpersons — final approval, algorithm execution
-  ADMIN       // Program Chairpersons — data submission, managed within their program
-  FACULTY     // End users — view assigned schedule only
+  SUPER_ADMIN // Department Chairperson (CAS) — GEC/GEL + CAS majors, schedule approve/reject
+  ADMIN       // Program Chairperson — their own program's major subjects
+  FACULTY     // Record-only stub — cannot sign in
+  DEAN        // One per department — approves that department's accounts, reads System Logs
+  PATHFIT     // Single PATHFit coordinator account — generates/edits PATHFit entries everywhere
+  NSTP        // Single NSTP coordinator account — edits NSTP entries everywhere
 }
 
 enum SubjectType {
@@ -532,6 +535,31 @@ model DepartmentWorkflowState {
   @@index([departmentId, status])
 }
 
+// Append-only trail of what people did in the system. Every write route
+// records one row (lib/audit.ts). A Dean reads the rows whose departmentId
+// (the department the action was ABOUT) or actorDepartmentId (the department
+// the actor belongs to) is their own — see GET /api/audit-logs.
+model AuditLog {
+  id                String   @id @default(cuid())
+  actorId           String?
+  actorName         String
+  actorRole         String
+  actorDepartmentId String?
+  // Dotted verb, e.g. "schedule.generated", "entry.deleted", "user.approved"
+  action            String
+  entityType        String
+  entityId          String?
+  summary           String
+  departmentId      String?
+  scheduleId        String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  @@index([departmentId, createdAt])
+  @@index([actorDepartmentId, createdAt])
+  @@index([createdAt])
+}
+
 model Notification {
   id        String   @id @default(cuid())
   userId    String
@@ -546,13 +574,22 @@ model Notification {
   @@index([userId, createdAt])
 }
 
+// A Program Chairperson's request for an instructor when their own program has no
+// qualified faculty for a subject. The Department Chairperson answers it by
+// ALLOCATING a faculty member (facultyId) to the requesting program for the term
+// (semesterId): from then on that faculty is part of the program's candidate pool
+// in both the generator and the Add/Edit Entry picker for that term — still
+// subject to specialization, availability and building access.
 model FacultyRequest {
   id           String    @id @default(cuid())
   requesterId  String
   departmentId String
+  programId    String?   // the requesting Program Chairperson's program
+  semesterId   String?   // the term the instructor is needed for
   subjectId    String?
   reason       String
   status       String    @default("PENDING") // PENDING, APPROVED, DENIED
+  facultyId    String?   // the instructor allocated on approval
   respondedBy  String?
   respondedAt  DateTime?
   responseNote String?
@@ -560,6 +597,7 @@ model FacultyRequest {
 
   @@index([departmentId, status])
   @@index([requesterId])
+  @@index([programId, semesterId, status])
 }
 
 model ScheduleSwapRequest {

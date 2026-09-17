@@ -217,7 +217,7 @@ function MobileFacultyList({
   onEdit,
   onDelete,
 }: {
-  grouped: { label: string; abbr: string; members: any[] }[]
+  grouped: { label: string; abbr: string; members: any[]; total: number }[]
   expandedRows: Set<string>
   subjectInfoMap: Record<string, { units: number; year: number; type: string }>
   onToggleRow: (id: string) => void
@@ -226,7 +226,7 @@ function MobileFacultyList({
 }) {
   return (
     <div className="space-y-5">
-      {grouped.map(({ label, abbr, members: deptMembers }) => (
+      {grouped.map(({ label, abbr, members: deptMembers, total }) => (
         <div key={label} className="space-y-2">
           {/* Dept header */}
           <div className="flex items-center gap-2 px-1">
@@ -234,7 +234,7 @@ function MobileFacultyList({
               {abbr.slice(0, 2)}
             </div>
             <span className="text-sm font-semibold text-[#1B4332]">{label}</span>
-            <span className="text-xs text-muted-foreground">({deptMembers.length})</span>
+            <span className="text-xs text-muted-foreground">({deptMembers.length} out of {total})</span>
           </div>
           {/* Members */}
           {deptMembers.map((f: any) => {
@@ -525,18 +525,26 @@ export default function FacultyPage() {
   // 10 faculty per page; the page's rows are then grouped by department below.
   const pager = usePagination(filtered)
 
-  // Group this page's faculty by department for the desktop table / mobile list
+  // Group this page's faculty by department for the desktop table / mobile list.
+  // `total` is the department's full count across every page (of the current
+  // search), so the header can say "9 out of 50 members" rather than just the
+  // handful that happen to fall on this page.
   const grouped = useMemo(() => {
-    const map = new Map<string, { label: string; abbr: string; members: any[] }>()
+    const totals = new Map<string, number>()
+    for (const f of filtered) {
+      const key = f.department?.id ?? "__none__"
+      totals.set(key, (totals.get(key) ?? 0) + 1)
+    }
+    const map = new Map<string, { label: string; abbr: string; members: any[]; total: number }>()
     for (const f of pager.pageItems) {
       const key = f.department?.id ?? "__none__"
       const label = f.department?.name ?? "Unassigned"
       const abbr = f.department?.abbreviation ?? "—"
-      if (!map.has(key)) map.set(key, { label, abbr, members: [] })
+      if (!map.has(key)) map.set(key, { label, abbr, members: [], total: totals.get(key) ?? 0 })
       map.get(key)!.members.push(f)
     }
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
-  }, [pager.pageItems])
+  }, [pager.pageItems, filtered])
 
   function buildSectionCounts(f: any): SectionCountMap {
     const saved = f.sectionCounts as SectionCountMap | null
@@ -636,7 +644,7 @@ export default function FacultyPage() {
   }
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "DEAN"]}>
     {/* flex/gap instead of space-y: space-y's margin-bottom lands on the sticky
         bar itself (it's not the last child), which throws off the browser's
         sticky release point and shows as a gap/overlap once you scroll. */}
@@ -819,7 +827,7 @@ export default function FacultyPage() {
         ) : (
         /* ── Desktop: department-grouped tables ── */
         <div className="space-y-5">
-          {grouped.map(({ label, abbr, members }) => (
+          {grouped.map(({ label, abbr, members, total }) => (
             <Card key={label}>
               {/* Department section header */}
               <div className="flex items-center gap-3 px-5 py-3 border-b bg-[#1B4332]/5 rounded-t-lg">
@@ -828,7 +836,7 @@ export default function FacultyPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-[#1B4332]">{label}</p>
-                  <p className="text-[11px] text-muted-foreground">{members.length} {members.length === 1 ? "member" : "members"}</p>
+                  <p className="text-[11px] text-muted-foreground">{members.length} out of {total} {total === 1 ? "member" : "members"}</p>
                 </div>
               </div>
               <CardContent className="p-0 overflow-x-auto">

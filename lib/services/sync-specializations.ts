@@ -2,8 +2,8 @@ import { db } from "@/lib/db"
 
 /**
  * Recomputes a faculty member's `sectionCounts` fresh from their actual schedule
- * entries (across all schedules in any status). Called whenever an entry is created,
- * updated, or deleted.
+ * entries (across all NON-ARCHIVED schedules in any status). Called whenever an
+ * entry is created, updated, or deleted.
  *
  * IMPORTANT — this NO LONGER touches `specializations` (Section 7 / Bug 3 fix).
  * It previously MERGED every assigned subject's title back into `specializations`,
@@ -25,7 +25,9 @@ export async function syncFacultySpecializations(facultyId: string): Promise<voi
   if (!facultyId) return
 
   const entries = await db.scheduleEntry.findMany({
-    where: { facultyId },
+    // Archived schedules are finished terms — their classes must not inflate
+    // the load / section counts availability checks are made against.
+    where: { facultyId, schedule: { isArchived: false } },
     select: {
       sectionId: true,
       startTime: true,

@@ -22,15 +22,15 @@ export async function GET(
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
 
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
-      return NextResponse.json(apiError("Only Department and Program Chairpersons can export schedules"), { status: 403 })
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "DEAN", "PATHFIT", "NSTP"].includes(dbUser.role)) {
+      return NextResponse.json(apiError("Only chairpersons, coordinators and Deans can export schedules"), { status: 403 })
     }
 
     const { id } = await params
 
-    // ADMIN (Program Chair) only sees their own department's sections, mirroring
-    // the main schedule GET's scoping.
-    const adminDeptId = dbUser.role === "ADMIN" ? getUserDepartmentId(dbUser) : null
+    // ADMIN (Program Chair) and DEAN only see their own department's sections,
+    // mirroring the main schedule GET's scoping.
+    const adminDeptId = dbUser.role === "ADMIN" || dbUser.role === "DEAN" ? getUserDepartmentId(dbUser) : null
 
     const schedule = await db.schedule.findUnique({
       where: { id },

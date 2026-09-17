@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId, getUserCollegeId, departmentIdsAllInCollege, canManageBuilding } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { recordAudit } from "@/lib/audit"
 
 export async function GET(_req: Request) {
   try {
@@ -102,6 +103,14 @@ export async function POST(req: Request) {
       },
     })
 
+    await recordAudit({
+      actor: dbUser as any,
+      action: "building.created",
+      entityType: "building",
+      entityId: created.id,
+      summary: `Added building ${name}`,
+    })
+
     return NextResponse.json(apiResponse(building), { status: 201 })
   } catch (error) {
     console.error("POST /api/buildings error:", error)
@@ -179,6 +188,14 @@ export async function PATCH(req: Request) {
         },
         _count: { select: { rooms: true } },
       },
+    })
+
+    await recordAudit({
+      actor: dbUser as any,
+      action: "building.updated",
+      entityType: "building",
+      entityId: id,
+      summary: `Updated building ${name ?? building?.name ?? id}`,
     })
 
     return NextResponse.json(apiResponse(building))

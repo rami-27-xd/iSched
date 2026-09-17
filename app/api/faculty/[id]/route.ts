@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { recordAudit } from "@/lib/audit"
 import { createAdminClient } from "@/lib/supabase/admin"
 
 /**
@@ -195,6 +196,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       include: { user: true, department: true },
     })
 
+    await recordAudit({
+      actor: access.dbUser,
+      action: "faculty.updated",
+      entityType: "faculty",
+      entityId: id,
+      departmentId: updated?.departmentId ?? null,
+      summary: `Updated faculty ${updated?.user?.firstName ?? ""} ${updated?.user?.lastName ?? ""}`.trim(),
+    })
+
     return NextResponse.json(apiResponse(updated))
   } catch (error: any) {
     if (error?.code === "P2025") return NextResponse.json(apiError("Faculty not found"), { status: 404 })
@@ -227,10 +237,18 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
     const faculty = await db.faculty.findUnique({
       where: { id },
-      select: { userId: true, user: { select: { supabaseId: true } } },
+      select: { userId: true, departmentId: true, employeeId: true, user: { select: { supabaseId: true, firstName: true, lastName: true } } },
     })
 
     await db.faculty.delete({ where: { id } })
+    await recordAudit({
+      actor: access.dbUser,
+      action: "faculty.deleted",
+      entityType: "faculty",
+      entityId: id,
+      departmentId: faculty?.departmentId ?? null,
+      summary: `Removed faculty ${faculty?.user?.firstName ?? ""} ${faculty?.user?.lastName ?? ""} (${faculty?.employeeId ?? id})`.trim(),
+    })
 
     // Faculty are stub records ("manual-" supabaseId, no login). Remove the
     // orphaned stub User too so it stops appearing in User Management.

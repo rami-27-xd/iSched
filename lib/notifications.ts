@@ -93,3 +93,27 @@ export async function notifyAllSuperAdmins(title: string, message: string, type:
     })),
   })
 }
+
+/**
+ * Notifies the Dean of a department (spec: the Dean — not the Department
+ * Chairperson — approves the accounts of their department). Resolves 0 when the
+ * department has no approved Dean yet.
+ */
+export async function notifyDepartmentDeans(
+  departmentId: string,
+  title: string,
+  message: string,
+  type: NotificationType,
+  link?: string
+): Promise<number> {
+  if (!departmentId) return 0
+  const deans = await db.user.findMany({
+    where: { role: "DEAN", departmentId, isApproved: true, isActive: true },
+    select: { id: true },
+  })
+  if (deans.length === 0) return 0
+  await db.notification.createMany({
+    data: deans.map((d) => ({ userId: d.id, title, message, type, link })),
+  })
+  return deans.length
+}

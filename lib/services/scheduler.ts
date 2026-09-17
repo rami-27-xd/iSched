@@ -1,3 +1,4 @@
+import { specializationsCoverSubject } from '@/lib/specialization-match'
 // Constraint-Based Scheduling Engine with Backtracking Algorithm
 // Uses MRV (Minimum Remaining Values) and LCV (Least Constraining Value) heuristics
 //
@@ -699,9 +700,8 @@ export class SchedulingEngine {
     // Same hard specialization constraint as initializeCandidates — this dynamic
     // fallback path must not bypass it (that was the corruption source: mismatched
     // rescue assignments getting synced back into Faculty.specializations as real).
-    const isGecSubject = subject.programId === null
     const allAvail = this.faculty.filter(f =>
-      f.availability.length > 0 && (isGecSubject || this.matchesSpecialization(f, subject))
+      f.availability.length > 0 && this.matchesSpecialization(f, subject)
     )
     // Restrict rescue to the expected faculty when a partner is already placed.
     // Fall back to the full pool only when the expected faculty truly has no slots.
@@ -824,16 +824,14 @@ export class SchedulingEngine {
       const { subject, section } = task
       const possible: Assignment[] = []
 
-      // Specialization is a HARD constraint for major subjects: a task with no
+      // Specialization is a HARD constraint for EVERY subject — GEC/GEL included: a
+      // CAS faculty member must be tagged for each general-education subject they
+      // teach (e.g. "GEC01 - Understanding the Self"). A task with no
       // specialization-matched faculty produces no candidates and falls through to
       // the unassigned queue for manual assignment, rather than being silently
-      // filled by a mismatched faculty member. GEC/GEL subjects are exempt — they're
-      // generalist and not tied to a program's specialization pool.
-      const isGecSubject = subject.programId === null
+      // filled by a mismatched faculty member.
       const allAvailFaculty = this.faculty.filter(f => f.availability.length > 0)
-      const eligibleFaculty = isGecSubject
-        ? allAvailFaculty
-        : allAvailFaculty.filter(f => this.matchesSpecialization(f, subject))
+      const eligibleFaculty = allAvailFaculty.filter(f => this.matchesSpecialization(f, subject))
 
       const compatibleRooms = this.rooms.filter(r =>
         this.checkLabSpecialization(subject.id, r.id) &&
@@ -1048,16 +1046,12 @@ export class SchedulingEngine {
 
   private matchesSpecialization(faculty: FacultyInput, subject: SubjectInput): boolean {
     // Strict (Section 7 / Bug 3): a faculty member with NO specializations set is not
-    // eligible to teach a major subject — they surface in the unassigned queue so the
-    // chair knows to set their specializations, rather than being matched to anything.
-    // (GEC/GEL subjects never reach this check — they're generalist and exempt at every
-    // call site via the isGecSubject guard.)
-    if (faculty.specializations.length === 0) return false
-    const titleLower = (subject.title?.toLowerCase() ?? '').trim()
-    return faculty.specializations.some(sp => {
-      const spLower = sp.toLowerCase().trim()
-      return spLower === titleLower || titleLower.includes(spLower) || spLower.includes(titleLower)
-    })
+    // eligible to teach anything — they surface in the unassigned queue so the chair
+    // knows to set their specializations, rather than being matched to anything.
+    // ONE matcher shared with manual entry and the Add/Edit pickers
+    // (lib/specialization-match.ts), so what the generator assigns is exactly what a
+    // chair may also save by hand — a tag may be the subject title or its code.
+    return specializationsCoverSubject(faculty.specializations, subject.title, subject.code)
   }
 
   // Checks room type compatibility only (not lab specialization — that's a separate constraint).

@@ -1,4 +1,5 @@
 import { cookies } from "next/headers"
+import { ROLE_LABELS } from "@/lib/roles"
 import { redirect } from "next/navigation"
 import { DashboardShell } from "@/components/layout/dashboard-shell"
 import { createClient } from "@/lib/supabase/server"
@@ -169,11 +170,10 @@ function AccountLoadProblemScreen() {
 }
 
 function PendingApprovalScreen({ userName, userEmail, userRole }: { userName: string; userEmail: string; userRole: string }) {
-  const roleLabel: Record<string, string> = {
-    SUPER_ADMIN: "Department Chair",
-    ADMIN: "Program Chair",
-    FACULTY: "Faculty",
-  }
+  const roleLabel: Record<string, string> = ROLE_LABELS
+  // A second Dean for a department, or a second PATHFit / NSTP account, is never
+  // approved — say so instead of implying someone will get to it.
+  const isSingleton = userRole === "DEAN" || userRole === "PATHFIT" || userRole === "NSTP"
 
   return (
     <div className="min-h-screen bg-[#1B4332] flex items-center justify-center px-4">
@@ -204,7 +204,11 @@ function PendingApprovalScreen({ userName, userEmail, userRole }: { userName: st
         </div>
 
         <p className="mt-4 text-xs text-white/40">
-          A Department Chair (Super Admin) must approve your account. Please contact your department for assistance.
+          {isSingleton
+            ? userRole === "DEAN"
+              ? "Your department already has a Dean, so this account cannot be approved — only one Dean is allowed per department. Contact the current Dean if you need access."
+              : `A ${roleLabel[userRole] ?? userRole} account already exists, so this one cannot be approved — only one is allowed. Contact the current account holder or your Dean.`
+            : "The Dean of your department must approve your account. Please contact your department for assistance."}
         </p>
 
         <form action="/auth/sign-out" method="POST" className="mt-6">

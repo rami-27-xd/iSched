@@ -35,7 +35,6 @@ interface RememberedFields {
   deanPosition: string
   notedByName: string
   notedByPosition: string
-  isoFormCode: string
 }
 
 const EMPTY_REMEMBERED: RememberedFields = {
@@ -46,7 +45,6 @@ const EMPTY_REMEMBERED: RememberedFields = {
   deanPosition: "",
   notedByName: "",
   notedByPosition: "Vice President for Academic Affairs",
-  isoFormCode: "AA-INS-1.03F4, Rev.0",
 }
 
 function loadRemembered(): Partial<RememberedFields> {
@@ -152,7 +150,6 @@ export function ExportDialog({
             (payload.header.collegeName ? `Dean, ${payload.header.collegeName}` : "Dean"),
           notedByName: remembered.notedByName ?? "",
           notedByPosition: remembered.notedByPosition || EMPTY_REMEMBERED.notedByPosition,
-          isoFormCode: remembered.isoFormCode || EMPTY_REMEMBERED.isoFormCode,
           date: formatLongDate(new Date()),
           classesStartDate: formatLongDate(payload.header.startDate),
         })
@@ -221,7 +218,6 @@ export function ExportDialog({
         deanPosition: form.deanPosition,
         notedByName: form.notedByName,
         notedByPosition: form.notedByPosition,
-        isoFormCode: form.isoFormCode,
       }
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(remembered))
     } catch {
@@ -255,7 +251,6 @@ export function ExportDialog({
         deanPosition: form.deanPosition,
         notedByName: form.notedByName,
         notedByPosition: form.notedByPosition,
-        isoFormCode: form.isoFormCode,
       }
       const html =
         kind === "iso"
@@ -392,10 +387,6 @@ export function ExportDialog({
                 <Input value={form.notedByPosition} onChange={(e) => set("notedByPosition", e.target.value)} />
               </div>
 
-              <div className="space-y-1 sm:col-span-2">
-                <Label className="text-xs">ISO form control number</Label>
-                <Input value={form.isoFormCode} onChange={(e) => set("isoFormCode", e.target.value)} />
-              </div>
             </div>
 
             <div className="flex flex-col gap-2 border-t pt-4 sm:flex-row">

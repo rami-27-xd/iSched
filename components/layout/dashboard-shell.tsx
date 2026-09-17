@@ -34,7 +34,9 @@ const PAGE_TITLES: Record<string, string> = {
   '/dashboard/rooms': 'Buildings & Labs',
   '/dashboard/subjects': 'Departments',
   '/dashboard/analytics': 'Analytics',
-  '/dashboard/users': 'Users',
+  '/dashboard/users': 'User Management',
+  '/dashboard/logs': 'System Logs',
+  '/dashboard/manual': 'User Manual',
   '/dashboard/settings': 'Settings',
 }
 

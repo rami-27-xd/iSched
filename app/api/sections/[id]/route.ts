@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { getAuthenticatedUser } from "@/lib/auth"
+import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
+import { DATA_EDIT_ROLES } from "@/lib/roles"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 
@@ -28,6 +29,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
+
+    const dbUser = await getCurrentUser()
+    if (!dbUser || !DATA_EDIT_ROLES.includes(dbUser.role as any)) {
+      return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
+    }
 
     const { id } = await params
     const body = await req.json()
@@ -65,6 +71,11 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   try {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
+
+    const dbUser = await getCurrentUser()
+    if (!dbUser || !DATA_EDIT_ROLES.includes(dbUser.role as any)) {
+      return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
+    }
 
     const { id } = await params
     await db.section.delete({ where: { id } })

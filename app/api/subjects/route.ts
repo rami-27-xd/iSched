@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { recordAudit } from "@/lib/audit"
 
 export async function GET(req: Request) {
   try {
@@ -123,6 +124,15 @@ export async function POST(req: Request) {
         // major subjects, so cluster ownership can't rely on yearLevel.program alone.
         program: { select: { id: true, abbreviation: true, clusterId: true } },
       },
+    })
+
+    await recordAudit({
+      actor: dbUser as any,
+      action: "subject.created",
+      entityType: "subject",
+      entityId: subject.id,
+      departmentId: subject.departmentId,
+      summary: `Added subject ${subject.code} — ${subject.title}`,
     })
 
     return NextResponse.json(apiResponse(subject), { status: 201 })

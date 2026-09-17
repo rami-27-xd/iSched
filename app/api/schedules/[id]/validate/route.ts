@@ -19,7 +19,7 @@ export async function GET(
     }
 
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "DEAN", "PATHFIT", "NSTP"].includes(dbUser.role)) {
       return NextResponse.json(apiError("Forbidden"), { status: 403 })
     }
 

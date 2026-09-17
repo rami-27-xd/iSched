@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server'
 import { getAuthenticatedUser, getCurrentUser } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { apiResponse, apiError } from '@/lib/api-helpers'
+import { recordAudit } from '@/lib/audit'
 import { createNotification } from '@/lib/notifications'
 import { scheduleHasGec, GEC_FIRST_MESSAGE } from '@/lib/services/workflow-gates'
 
@@ -232,6 +233,24 @@ export async function POST(
         )
       )
     }
+
+    const auditAction = (
+      { submit: 'schedule.submitted', approve: 'schedule.approved', reject: 'schedule.rejected', reset: 'schedule.reset' } as const
+    )[action]
+    await recordAudit({
+      actor: dbUser as any,
+      action: auditAction,
+      entityType: 'schedule',
+      entityId: id,
+      departmentId: schedule.departmentId,
+      scheduleId: id,
+      summary: `${schedule.status} → ${updated.status}${action === 'reject' && reviewNote ? ` — ${reviewNote.trim()}` : ''}`,
+      metadata: {
+        From: schedule.status,
+        To: updated.status,
+        ...(reviewNote?.trim() ? { Note: reviewNote.trim() } : {}),
+      },
+    })
 
     return NextResponse.json(
       apiResponse({

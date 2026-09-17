@@ -1,80 +1,83 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireRole, getUserDepartmentId } from '@/lib/auth'
+import { requireRole, getUserDepartmentId, singletonRoleHolderExists, departmentDeanExists } from '@/lib/auth'
 import { apiResponse, apiError, handleApiError } from '@/lib/api-helpers'
 import { createNotification } from '@/lib/notifications'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { recordAudit } from '@/lib/audit'
+import { ROLE_LABELS, isSingletonRole, type UserRole } from '@/lib/roles'
 
 // PATCH /api/users/[id] — Update user (approve, change role, deactivate)
-// SUPER_ADMIN: full access. ADMIN (Program Chair): may only approve/revoke and
-// activate/deactivate FACULTY accounts in their own department.
+//   DEAN only — accounts of their OWN department (spec §1: the Dean, not the
+//   Department Chairperson, approves accounts). May approve, set the
+//   department / program / cluster, change the role and (de)activate. No other
+//   role can reach User Management at all.
+// One Dean per department and exactly one PATHFIT / NSTP account are enforced
+// here as well as at sign-up, so a role change or approval can never create a
+// second one.
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const currentUser = await requireRole('SUPER_ADMIN', 'ADMIN')
+    const currentUser = await requireRole('DEAN')
     const { id } = await params
     const body = await request.json()
 
     const { role, isApproved, isActive, departmentId, programId, clusterId } = body
 
-    if (currentUser.role === 'ADMIN') {
-      const adminDeptId = getUserDepartmentId(currentUser)
+    const target = await db.user.findUnique({
+      where: { id },
+      select: { id: true, role: true, departmentId: true, isApproved: true, isActive: true, firstName: true, lastName: true, email: true, createdAt: true },
+    })
+    if (!target) {
+      return NextResponse.json(apiError('User not found'), { status: 404 })
+    }
 
-      if (id === currentUser.id) {
-        // Self-service: a Program Chairperson may set the program they chair —
-        // and nothing else. Without this they cannot fix their own "No program
-        // assigned" state, which blocks them from scheduling their majors.
-        if (
-          role !== undefined || departmentId !== undefined || clusterId !== undefined ||
-          isApproved !== undefined || isActive !== undefined
-        ) {
-          return NextResponse.json(
-            apiError('Forbidden — you can only change the program you chair'),
-            { status: 403 }
-          )
-        }
-        if (programId) {
-          const program = await db.program.findUnique({ where: { id: programId } })
-          if (!program || !adminDeptId || program.departmentId !== adminDeptId) {
-            return NextResponse.json(
-              apiError('Forbidden — choose a program from your own department'),
-              { status: 403 }
-            )
-          }
-        }
-      } else {
-        // Acting on someone else: approval/active flags only, and only for
-        // faculty in their own department.
-        if (role !== undefined || departmentId !== undefined || programId !== undefined || clusterId !== undefined) {
-          return NextResponse.json(
-            apiError('Forbidden — Program Chairs can only approve or deactivate faculty accounts'),
-            { status: 403 }
-          )
-        }
-
-        const target = await db.user.findUnique({
-          where: { id },
-          select: { role: true, departmentId: true },
-        })
-        if (!target) {
-          return NextResponse.json(apiError('User not found'), { status: 404 })
-        }
-
-        if (target.role !== 'FACULTY' || !adminDeptId || target.departmentId !== adminDeptId) {
-          return NextResponse.json(
-            apiError('Forbidden — you can only manage faculty accounts in your own department'),
-            { status: 403 }
-          )
-        }
-      }
+    const deanDeptId = getUserDepartmentId(currentUser)
+    if (!deanDeptId) {
+      return NextResponse.json(apiError('Your Dean account is not linked to a department'), { status: 403 })
+    }
+    // Strictly their own department — both the account's current department and
+    // any department it is being moved to.
+    if (target.departmentId !== deanDeptId && id !== currentUser.id) {
+      return NextResponse.json(
+        apiError('Forbidden — you can only manage accounts that belong to your own department'),
+        { status: 403 }
+      )
+    }
+    if (departmentId !== undefined && departmentId && departmentId !== deanDeptId) {
+      return NextResponse.json(
+        apiError('Forbidden — you cannot move an account to another department'),
+        { status: 403 }
+      )
     }
 
     // Validate role if provided
-    const validRoles = ['SUPER_ADMIN', 'ADMIN', 'FACULTY']
+    const validRoles: UserRole[] = ['SUPER_ADMIN', 'ADMIN', 'FACULTY', 'DEAN', 'PATHFIT', 'NSTP']
     if (role !== undefined && !validRoles.includes(role)) {
       return NextResponse.json(apiError('Invalid role'), { status: 400 })
+    }
+
+    // Singleton rules — the resulting (role, department, approved) state must not
+    // create a second Dean for a department or a second PATHFIT / NSTP account.
+    const nextRole = (role ?? target.role) as UserRole
+    const nextDeptId = departmentId !== undefined ? (departmentId || null) : target.departmentId
+    const nextApproved = isApproved !== undefined ? !!isApproved : target.isApproved
+    const nextActive = isActive !== undefined ? !!isActive : target.isActive
+    if (nextApproved && nextActive) {
+      if (nextRole === 'DEAN' && nextDeptId && (await departmentDeanExists(nextDeptId, id))) {
+        return NextResponse.json(
+          apiError('That department already has a Dean — only one Dean account is allowed per department.'),
+          { status: 409 }
+        )
+      }
+      if (isSingletonRole(nextRole) && (await singletonRoleHolderExists(nextRole, id))) {
+        return NextResponse.json(
+          apiError(`A ${ROLE_LABELS[nextRole]} account already exists — only one is allowed.`),
+          { status: 409 }
+        )
+      }
     }
 
     // Prevent self-demotion
@@ -185,11 +188,40 @@ export async function PATCH(
       }
     }
 
+    // ── Audit trail (Dean's System Logs) ───────────────────────────────────
+    const targetName = `${target.firstName} ${target.lastName}`.trim() || target.email || id
+    const auditDept = nextDeptId ?? target.departmentId ?? null
+    const accountMeta = { Account: targetName, Email: target.email ?? "", Role: ROLE_LABELS[nextRole] }
+    if (isApproved === true && !target.isApproved) {
+      await recordAudit({ actor: currentUser as any, action: 'user.approved', entityType: 'user', entityId: id, departmentId: auditDept, summary: `Approved ${targetName} as ${ROLE_LABELS[nextRole]}`, metadata: { ...accountMeta, "Registered on": target.createdAt.toISOString() } })
+    } else if (isActive === false && target.isActive) {
+      await recordAudit({ actor: currentUser as any, action: 'user.deactivated', entityType: 'user', entityId: id, departmentId: auditDept, summary: `Deactivated ${targetName}`, metadata: accountMeta })
+    } else if (isActive === true && !target.isActive) {
+      await recordAudit({ actor: currentUser as any, action: 'user.activated', entityType: 'user', entityId: id, departmentId: auditDept, summary: `Reactivated ${targetName}`, metadata: accountMeta })
+    } else {
+      const changes: string[] = []
+      if (role !== undefined && role !== target.role) changes.push(`role → ${ROLE_LABELS[nextRole]}`)
+      if (departmentId !== undefined) changes.push('department')
+      if (programId !== undefined) changes.push('program')
+      if (clusterId !== undefined) changes.push('cluster')
+      if (changes.length) {
+        await recordAudit({
+          actor: currentUser as any, action: 'user.updated', entityType: 'user', entityId: id, departmentId: auditDept,
+          summary: `Updated ${targetName} (${changes.join(', ')})`,
+          metadata: {
+            ...accountMeta,
+            ...(role !== undefined && role !== target.role ? { "Previous role": ROLE_LABELS[target.role as UserRole] ?? target.role } : {}),
+            Changed: changes.join(", "),
+          },
+        })
+      }
+    }
+
     if (body.isApproved === true) {
       await createNotification({
         userId: user.id,
         title: "Account Approved",
-        message: "Your account has been approved. You can now access the system.",
+        message: "Your account has been approved by your Dean. You can now access the system.",
         type: "user_approved",
         link: "/dashboard",
       })
@@ -222,9 +254,9 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/users/[id] — Permanently remove a login account (Department Chair /
-// Program Chair). SUPER_ADMIN only. Replaces the old "Revoke Approval" action:
-// an account that should not have access is deleted outright rather than left
+// DELETE /api/users/[id] — Permanently remove a login account. The Dean of the
+// account's department only. Replaces the old "Revoke Approval" action: an
+// account that should not have access is deleted outright rather than left
 // around in a revoked state.
 //
 // Removes, in order: the chair/head/faculty rows hanging off the user, the
@@ -236,7 +268,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const currentUser = await requireRole('SUPER_ADMIN')
+    const currentUser = await requireRole('DEAN')
     const { id } = await params
 
     if (id === currentUser.id) {
@@ -250,11 +282,21 @@ export async function DELETE(
         supabaseId: true,
         firstName: true,
         lastName: true,
+        role: true,
+        departmentId: true,
         faculty: { select: { id: true, _count: { select: { scheduleEntries: true, teachingLoads: true } } } },
       },
     })
     if (!target) {
       return NextResponse.json(apiError('User not found'), { status: 404 })
+    }
+
+    const deanDeptId = getUserDepartmentId(currentUser)
+    if (!deanDeptId || target.departmentId !== deanDeptId) {
+      return NextResponse.json(
+        apiError('Forbidden — you can only delete accounts that belong to your own department'),
+        { status: 403 }
+      )
     }
 
     const entryCount = target.faculty?._count.scheduleEntries ?? 0
@@ -291,6 +333,15 @@ export async function DELETE(
         console.error('DELETE /api/users/[id] auth deletion failed:', authError)
       }
     }
+
+    await recordAudit({
+      actor: currentUser as any,
+      action: 'user.deleted',
+      entityType: 'user',
+      entityId: id,
+      departmentId: target.departmentId,
+      summary: `Deleted the ${ROLE_LABELS[target.role as UserRole] ?? target.role} account of ${target.firstName} ${target.lastName}`.trim(),
+    })
 
     return NextResponse.json(apiResponse({ deleted: true }))
   } catch (error: any) {

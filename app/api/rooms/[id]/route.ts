@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, canManageBuilding } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { recordAudit } from "@/lib/audit"
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -90,6 +91,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       },
     })
 
+    await recordAudit({
+      actor: dbUser as any,
+      action: "room.updated",
+      entityType: "room",
+      entityId: id,
+      summary: `Updated room ${room.code}`,
+    })
+
     return NextResponse.json(apiResponse(room))
   } catch (error: any) {
     if (error?.code === "P2025") return NextResponse.json(apiError("Room not found"), { status: 404 })
@@ -121,7 +130,14 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       }
     }
 
-    await db.room.delete({ where: { id } })
+    const removed = await db.room.delete({ where: { id } })
+    await recordAudit({
+      actor: dbUser as any,
+      action: "room.deleted",
+      entityType: "room",
+      entityId: id,
+      summary: `Removed room ${removed.code}`,
+    })
     return NextResponse.json(apiResponse({ deleted: true }))
   } catch (error: any) {
     if (error?.code === "P2025") return NextResponse.json(apiError("Room not found"), { status: 404 })

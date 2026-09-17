@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { isUniversityWideRole } from "@/lib/roles"
+import { recordAudit } from "@/lib/audit"
 
 export async function GET(req: Request) {
   try {
@@ -47,17 +49,18 @@ export async function GET(req: Request) {
       // A chair with no department resolves to no schedules rather than all of
       // them, so a misconfigured account fails closed.
       where.departmentId = departmentId ?? "__none__"
-    } else if (dbUser?.role === "SUPER_ADMIN") {
+    } else if (isUniversityWideRole(dbUser?.role)) {
       // SUPER_ADMIN (Dept Chair): full visibility across ALL colleges and statuses.
       // They must be able to review every Program Chair's schedule to detect and
       // resolve room double-bookings across different programs (compliance requirement).
+      // PATHFIT / NSTP coordinators likewise: their classes go into every college.
       // Optional college filter via topbar switcher; null = all colleges.
       if (collegeIdParam) {
         where.department = { collegeId: collegeIdParam }
       }
     } else {
-      // FACULTY: scope to own department
-      if (departmentId) where.departmentId = departmentId
+      // DEAN (and FACULTY): their own department only — fails closed when unassigned.
+      where.departmentId = departmentId ?? "__none__"
     }
 
     const schedules = await db.schedule.findMany({
@@ -231,7 +234,7 @@ export async function POST(req: Request) {
       )
     }
 
-    const schedule = await db.schedule.create({
+    const createdSchedule = await db.schedule.create({
       data: {
         semesterId: semester.id,
         departmentId,
@@ -243,6 +246,16 @@ export async function POST(req: Request) {
         _count: { select: { entries: true } },
       },
     })
+    await recordAudit({
+      actor: dbUser as any,
+      action: "schedule.created",
+      entityType: "schedule",
+      entityId: createdSchedule.id,
+      departmentId: createdSchedule.departmentId,
+      scheduleId: createdSchedule.id,
+      summary: `Created a ${createdSchedule.semester?.type ?? semesterType} schedule for ${createdSchedule.department?.abbreviation ?? "department"}`,
+    })
+    const schedule = createdSchedule
 
     return NextResponse.json(apiResponse(schedule), { status: 201 })
   } catch (error) {

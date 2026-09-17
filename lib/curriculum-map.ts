@@ -164,6 +164,289 @@ const BSInfoTech: CurriculumEntry[] = [
 ]
 
 // ═══════════════════════════════════════════════════════════════
+// CTE / CEN / CAM / CABHA — generated from prisma/curricula/*.ts (the same data
+// prisma/seed-curriculum-colleges.ts writes), so codes here match the DB rows
+// exactly. CEN and CAM documents cover the SECOND semester only. BCAEd's mid-year
+// AAF01 is not listed (the map has no SUMMER term).
+// ═══════════════════════════════════════════════════════════════
+
+// ── BCAEd (CTE) ────────────────────────────────────────────────────────────
+const BCAEd: CurriculumEntry[] = [
+  ...e(['CAED01','CAED02','GEC01','GEC04','GEC08','GEC10','PED01','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PED04','CAE-ELE01','CAE23','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','CAE03','CAE04','CAE05','CAE06','CAE07','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC12','PED02','PED03','CAE08','CAE09','CAE10','CAE11','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED05','PED06','PED08','PED09','CAE12','CAE13','CAE14','CAE15'], 3, 'FIRST'),
+  ...e(['PED07','PED10','CAE20','CAE22','CAE16','CAE17','CAE18','CAE19'], 3, 'SECOND'),
+  ...e(['CAED21','FS001','FS002','ICL01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BEEd (CTE) ─────────────────────────────────────────────────────────────
+const BEEd: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PED01','ELE16','ELE17','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PED04','PED08','ELE13','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED05','PED06','PED09','ELE11','ELE12','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC14','PED02','PED07','PED10','ELE01','ELE07','ELE14','PATHFit04'], 2, 'SECOND'),
+  ...e(['ELE02','ELE03','ELE05','ELE08','ELE09','ELE15','ELE18'], 3, 'FIRST'),
+  ...e(['PED03','ELE04','ELE06','ELE10','ELC01'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BSEd-Sci (CTE) ─────────────────────────────────────────────────────────
+const BSEd_Sci: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PATHFit01','NSTP1','PED01','CHM01','CHM01L'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PATHFit02','NSTP2','PED04','CHM02','CHM02L'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','CHM03','BIO01','BIO01L','PHY01','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEL07','PED03','PED10','CHM04','CHM04L','PHY02','PHY02L','PHY03','PHY03L','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED08','PED06','PED05','BIO02','BIO02L','SED01','SED02','NSC01','BIO03','BIO03L'], 3, 'FIRST'),
+  ...e(['NSC04','PED07','SED03','PHY04','PHY04L','BIO04','BIO04L','PHY05','NSC02','NSC03'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BSEd-SS (CTE) ──────────────────────────────────────────────────────────
+const BSEd_SS: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PATHFit01','NSTP1','PED01','FSE01','SSE05'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PATHFit02','NSTP2','PED04','SSE06','SSE13'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','PED09','FSE04','SSE11','SSE08','SSE03','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC12','PED03','PED10','SSE09','SSE07','SSE15','SSE12','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED08','PED06','PED05','SSE20','SSE21','SSE14','FSE02'], 3, 'FIRST'),
+  ...e(['SSE23','PED07','SSE25','SSE22','SSE27','SSE24','FSE03'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01','SSE26'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BTLEd-HE (CTE) ─────────────────────────────────────────────────────────
+const BTLEd_HE: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PED01','INA01','ICT01','ICT01L','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PED04','INA02','ICT02','ICT02L','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','PED03','HE001','HE002','AF001','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC13','PED08','PED10','PED05','AF002','HEM01','HEM01L','HEM02','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED06','TEC01','PED09','RES01','HEM03','HEM03L','HEM04','HEM04L','HEM05','HEM05L','HEM06','HEM06L','HEM07','HEM07L'], 3, 'FIRST'),
+  ...e(['PED07','RES02','HEM08','HEM09','HEM10','HEM10L','HEM11','HEM11L','HEM12','HEM12L','ET001'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BSESS (CTE) ────────────────────────────────────────────────────────────
+const BSESS: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','ESS01','ESS02','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','ESS03','ESS04','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','ESS05','ESS06','ESS07','ESS08','ESS09','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEL07','ESS10','ESS11','ESS12','ESS13','ESS14','PATHFit04'], 2, 'SECOND'),
+  ...e(['ESS15','ESS16','ESS17','ESS18','ESS19','ESS20','ESS21'], 3, 'FIRST'),
+  ...e(['ESS22','ESS23','ESS24','ESS25','ESS26','ESS27'], 3, 'SECOND'),
+  ...e(['ESS28'], 4, 'FIRST'),
+  ...e(['ESS29'], 4, 'SECOND'),
+]
+
+// ── BTLEd-IA (CTE) ─────────────────────────────────────────────────────────
+const BTLEd_IA: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PED01','INA01','ICT01','ICT01L','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PED04','INA02','ICT02','ICT02L','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','PED03','HE001','HE002','AF001','ENT01','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC13','PED08','PED10','PED05','AF002','IAM01','IAM01L','IAM02','IAM02L','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED06','TEC01','PED09','RES01','IAM03','IAM03L','IAM04','IAM04L','IAM05','IAM05L','IAM06','IAM06L','IAM07','IAM07L'], 3, 'FIRST'),
+  ...e(['PED07','RES02','IAM08','IAM08L','IAM09','IAM09L','IAM10','IAM10L','IAM11','IAM11L','IAM12','IAM12L','ET001'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BTLEd-ICT (CTE) ────────────────────────────────────────────────────────
+const BTLEd_ICT: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PED01','INA01','ICT01','ICT01L','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PED04','INA02','ICT02','ICT02L','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','PED03','HE001','HE002','ICTM01','ICTM01L','ICTM02','ICTM02L','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC13','PED08','PED10','PED05','AF001','ICTM03','ICTM03L','ICTM04','ICTM04L','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED06','TEC01','ENT01','RES01','ICTM05','ICTM05L','ICTM06','ICTM06L','ICTM07','ICTM07L','AF002','ICTM08','ICTM08L'], 3, 'FIRST'),
+  ...e(['PED07','RES02','ICTM09','ICTM09L','ICTM10','ICTM10L','ICTM11','ICTM11L','ICTM12','ICTM12L','ET001','PED09'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BSEd-Eng (CTE) ─────────────────────────────────────────────────────────
+const BSEd_Eng: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PATHFit01','NSTP1','PED01','LIN01'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PATHFit02','NSTP2','PED04','LIN02'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','PED09','LIN03','ELT01','ELT05','LTE01','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC12','GEC13','PED03','PED10','ELT02','LTE02','LTE03','ELT06','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED08','PED06','PED05','GEC14','LTE04','LTE05','ELT07','ELT03','ELT09'], 3, 'FIRST'),
+  ...e(['ELT11','PED07','LTE06','ELT04','ELT08','LTE07','ELT10','ELT12','ELT13'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BSEd-Fil (CTE) ─────────────────────────────────────────────────────────
+const BSEd_Fil: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PATHFit01','NSTP1','PED01','FIL01','FIL02'], 1, 'FIRST'),
+  ...e(['GEC02','GEC03','GEC05','GEC06','PATHFit02','NSTP2','PED04','PAN01','FIL04'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','PED09','FIL03','FIL05','FIL07','FIL08','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC13','PED03','PED10','FIL12','PAN03','PAN04','EAF01','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED08','PED06','PED05','FIL09','FIL10','FIL11','PAN02'], 3, 'FIRST'),
+  ...e(['FIL06','PED07','FIL13','PAN06','PAN07','PAN05','EAF02'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BSEd-Math (CTE) ────────────────────────────────────────────────────────
+const BSEd_Math: CurriculumEntry[] = [
+  ...e(['GEC01','GEC04','GEC08','GEC10','PATHFit01','NSTP1','PED01','MAT01','MAT12'], 1, 'FIRST'),
+  ...e(['GEC02','GEC05','GEC06','PATHFit02','NSTP2','PED04','MAT08','MAT02','MAT03'], 1, 'SECOND'),
+  ...e(['GEC09','GEC11','PED02','PED09','MAT04b','MAT27','STA04','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEL04','PED03','PED10','STA05','MAT05a','MAT17','PATHFit04'], 2, 'SECOND'),
+  ...e(['PED08','PED06','PED05','MAT06a','MAT18','MAT19'], 3, 'FIRST'),
+  ...e(['GEC03','PED07','MAT13','MAT15','MAT20','MAT116','MAT121'], 3, 'SECOND'),
+  ...e(['FS001','FS002','TCC01','MAT22','MAE01'], 4, 'FIRST'),
+  ...e(['PED11'], 4, 'SECOND'),
+]
+
+// ── BSCE (CEN) ─────────────────────────────────────────────────────────────
+const BSCE: CurriculumEntry[] = [
+  ...e(['MAT05','PHY03','PHY03L','COM01','CVE03','GEC06','GEC03','GEC02','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['MEC02','MEC03','CVE04','MAT08','EEN01a','NSC01','GEC07','GEC11','PATHFit04'], 2, 'SECOND'),
+  ...e(['CVE11','CVE11L','CVE12','CVE12L','CVE13','CVE13L','CVE14','CVE14L','CVE18','CVE18L','CVE16','CVS01'], 3, 'SECOND'),
+  ...e(['CVE21','CVE21L','CVE22','CVE15','CVE19','CVE20','CVE20L'], 4, 'SECOND'),
+]
+
+// ── BSCpE (CEN) ────────────────────────────────────────────────────────────
+const BSCpE: CurriculumEntry[] = [
+  ...e(['GEC02','GEC03','GEC06','GEC11','MAT05','PHY03','PHY03L','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC07','GEC13','MAT08','ECE01','ECE01L','CPE04','CPE05','CPE06','CPE06L','PATHFit04'], 2, 'SECOND'),
+  ...e(['BES01','CPE16','CPE16L','CPE17','CPE17L','CPE18','CPE18L','CPE19','CPE19L','CPE20','CPE21','CPE21L'], 3, 'SECOND'),
+  ...e(['CPE29','CPE30'], 4, 'SECOND'),
+]
+
+// ── BSEE (CEN) ─────────────────────────────────────────────────────────────
+const BSEE: CurriculumEntry[] = [
+  ...e(['GEC02','GEC03','GEC06','MAT05','PHY03','PHY03L','GEC11','CAD01','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC07','MEC03a','GEC13','ECE01a','ECE01aL','EEN02','EEN02L','EEN03','MAT04','EEN05','PATHFit04'], 2, 'SECOND'),
+  ...e(['MCE01a','EEN12','EEN14','EEN115','EEN16','EEN16L','EEN18','EEN19','EEN19L','EEN20','EEN20L'], 3, 'SECOND'),
+  ...e(['EEN27','RES02','EEN26','BES04','EEN17'], 4, 'SECOND'),
+]
+
+// ── BSECE (CEN) ────────────────────────────────────────────────────────────
+const BSECE: CurriculumEntry[] = [
+  ...e(['MAT05','PHY03','PHY03L','ECM01','ECM01L','GEC06','GEC02','COM01','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['ECM02','ECM02L','ECE02','ECE02L','ECE05','ECE05L','ECEE02','ECEE02L','EEN02','EEN02L','PATHFit03'], 2, 'SECOND'),
+  ...e(['ECE10','ECE10L','ECE07','ECE07L','ECE13','ECE04','ECE04L','GEC11','GEC13','BES02a'], 3, 'SECOND'),
+  ...e(['ECE15','ECE16','ECEE04','ECEE04L','GEC01','GEC07'], 4, 'SECOND'),
+]
+
+// ── BSIE (CEN) ─────────────────────────────────────────────────────────────
+const BSIE: CurriculumEntry[] = [
+  ...e(['GEC04','GEC06','GEC11','PHY03','PHY03L','MAT05','IEN01','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['AEC02','BES01','CAD01','IEN05','IEN06','IEN06L','MCE01a','BES05','PATHFit04'], 2, 'SECOND'),
+  ...e(['GEC08','IEN10','IEN11','IEN12','IEN12L','AEC05','BES04','IEE02','IEN13','IEN13L'], 3, 'SECOND'),
+  ...e(['IEN18','IEN18L','IEN16','IEN16L'], 4, 'SECOND'),
+]
+
+// ── BSME (CEN) ─────────────────────────────────────────────────────────────
+const BSME: CurriculumEntry[] = [
+  ...e(['CAD01','GEC04','GEC08','PHY03','PHY03L','MAT05','GEC01','GEC06','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['MAT08','MEC02','BES02a','ECE00','ECE00L','MCE02','MCE04','MAT101','GEC11','COM01','PATHFit04'], 2, 'SECOND'),
+  ...e(['RES01','MCE08','MCE09','MCE10','MCE14','MCE14L','MCE12','MCE12L','MCE11','BES04','MCE16'], 3, 'SECOND'),
+  ...e(['MCE21','MCE23','MCE23L','MCE25','RES02b','MCE26','MCE35'], 4, 'SECOND'),
+]
+
+// ── BSN (CAM) ──────────────────────────────────────────────────────────────
+const BSN: CurriculumEntry[] = [
+  ...e(['NCM01','NCM01L','NCM02','NCM03','NCM03L','NPS03','NPS03L','PATHFit02','GEC02','GEC11','NSTP2'], 1, 'SECOND'),
+  ...e(['NCM08','NCM09','NCM09L','PATHFit04','GEC01','GEC05','GEC07','GEC08'], 2, 'SECOND'),
+  ...e(['NCM14','NCM14L','NCM15','NCM16','NCM16L','NCM17','NCM17L'], 3, 'SECOND'),
+  ...e(['HCN00','HCN00L','NCM21','NCM21L','NCM22','GEC04'], 4, 'SECOND'),
+]
+
+// ── BSMid (CAM) ────────────────────────────────────────────────────────────
+const BSMid: CurriculumEntry[] = [
+  ...e(['GEC05','GEC01','NPS02','NPS02L','MWP00','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEL08','MWC04','MWC04L','MWP01','MWP02','PATHFit04'], 2, 'SECOND'),
+  ...e(['MWP04','MWP05','PHC03','MWC07'], 3, 'SECOND'),
+  ...e(['MWC09','MWC09L','MWP08','MWC10'], 4, 'SECOND'),
+]
+
+// ── BSRT (CAM) ─────────────────────────────────────────────────────────────
+const BSRT: CurriculumEntry[] = [
+  ...e(['MT01','GEC02','GEC08','GEC01','GEC04','GEC09','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['RAD07','RAD08','RAD08L','RAD09','RAD09L','RAD10','RAD11','RAD11L','RAD12','RAD12L','RAD13','GEC11','PATHFit04'], 2, 'SECOND'),
+  ...e(['RAD20','RAD20L','RAD21','RAD22','RAD23','RAD24','RAD25','RAD26','RES02'], 3, 'SECOND'),
+  ...e(['ICRT'], 4, 'SECOND'),
+]
+
+// ── BSA (CABHA) ────────────────────────────────────────────────────────────
+const BSA: CurriculumEntry[] = [
+  ...e(['GEC02','GEC03','GEC05','AEC13','GEC06','AEC22','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC04','GEC10','GEC08','AEC01','AEC14','GEC01','AEC15','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC09','GEC13','AEC26','AEC16','AEC23','AEC02','BME01','AEC04','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC07','GEC11','AEC25','AEC03','AEC17','AEC10','AEC18','AEC12','PATHFit04'], 2, 'SECOND'),
+  ...e(['AEC19','STA02','STA02L','AEC21','AEC21L','PrE01','PrE02','PrE06','PrE07','AEC11'], 3, 'FIRST'),
+  ...e(['ELE02','RES01','IBT01','PrE08','PrE03','PrE04','AEC20','AEC20L','HBO01'], 3, 'SECOND'),
+  ...e(['OJT','RES02'], 4, 'FIRST'),
+  ...e(['BME02','AEC24','ELE03','ELE04','PrE05','PrE05L','INT01','INT02'], 4, 'SECOND'),
+]
+
+// ── BSBA-HRM (CABHA) ───────────────────────────────────────────────────────
+const BSBA_HRM: CurriculumEntry[] = [
+  ...e(['GEC02','GEC03','GEC05','GEC06','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC01','GEC04','GEC08','BAC05','PATHFit02','NSTP2','BAC02'], 1, 'SECOND'),
+  ...e(['GEC07','GEC10','BAC01','HRM01','BAC04','GEC13','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC09','BNA01','BAC03','HRM02','HRM03','GEC11','PATHFit04'], 2, 'SECOND'),
+  ...e(['BME01','IBT01','HRE05','HRM04','HRM05','HRE01','BNA02'], 3, 'FIRST'),
+  ...e(['BME02','HRM06','HRE03','HRE04','HRE02','RES01'], 3, 'SECOND'),
+  ...e(['RES02','HRM07','PHM08','PHM08L'], 4, 'FIRST'),
+  ...e(['OJT'], 4, 'SECOND'),
+]
+
+// ── BSBA-FM (CABHA) ────────────────────────────────────────────────────────
+const BSBA_FM: CurriculumEntry[] = [
+  ...e(['GEC02','GEC03','GEC05','GEC06','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC01','GEC04','GEC08','BAC02','BAC05','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC07','GEC10','BAC01','FNM01','FNM03','GEC13','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC09','BAC03','FNM04','FNM02','BNA01','GEC11','PATHFit04'], 2, 'SECOND'),
+  ...e(['BME01','BAC04','FNM06','FNM05','FME01','FME02','BNA02'], 3, 'FIRST'),
+  ...e(['BME02','FNM07','FME03','FME04','RES01','FME05'], 3, 'SECOND'),
+  ...e(['RES02','IBT01','FME06','FME06L'], 4, 'FIRST'),
+  ...e(['OJT'], 4, 'SECOND'),
+]
+
+// ── BSBA-MM (CABHA) ────────────────────────────────────────────────────────
+const BSBA_MM: CurriculumEntry[] = [
+  ...e(['GEC02','GEC03','GEC05','GEC06','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC01','GEC04','GEC08','BAC05','PATHFit02','NSTP2','BAC02'], 1, 'SECOND'),
+  ...e(['GEC07','GEC10','BAC01','MKM05','MKM02','GEC13','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC09','PATHFit04','BNA01','BAC03','MKM03','MKM04','GEC11'], 2, 'SECOND'),
+  ...e(['BME01','MKM08','MKM01','MKM06','MME01','MME02','BNA02'], 3, 'FIRST'),
+  ...e(['BME02','MKM07','MME03','IBT01','RES01','BAC04'], 3, 'SECOND'),
+  ...e(['RES02','MME05','MME04','MME04L'], 4, 'FIRST'),
+  ...e(['OJT'], 4, 'SECOND'),
+]
+
+// ── BSHM (CABHA) ───────────────────────────────────────────────────────────
+const BSHM: CurriculumEntry[] = [
+  ...e(['GEC02','GEC03','GEC05','GEC06','THC01','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC01','GEC04','GEC07','GEC10','THC02','THC03','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['GEC08','GEC13','BME01a','THC04','HPC01','HPC01L','HPC02','HPC02L','PATHFit03'], 2, 'FIRST'),
+  ...e(['GEC09','GEC11','HPC03','HPC03L','HPC04','HPC04L','HPC05','HME01','HME01L','PATHFit04'], 2, 'SECOND'),
+  ...e(['THC05','THC06','THC07','HPC06','HPC06L','HPC07','HME02','HME03','HME03L'], 3, 'FIRST'),
+  ...e(['BME02a','THC08','THC09','THC10','HPC08','HPC08L','HPC09','HME04'], 3, 'SECOND'),
+  ...e(['RES00','RES00L','HME05'], 4, 'FIRST'),
+  ...e(['OJT'], 4, 'SECOND'),
+]
+
+// ── BPA (CABHA) ────────────────────────────────────────────────────────────
+const BPA: CurriculumEntry[] = [
+  ...e(['GEC02','GEC04','GEC05','GEC06','BPA01','PATHFit01','NSTP1'], 1, 'FIRST'),
+  ...e(['GEC01','GEC03','GEC08','BAC04','GEL04','PATHFit02','NSTP2'], 1, 'SECOND'),
+  ...e(['BPA20','BME01','GEC07','GEL10','PSC01','STA01','GEC09','PATHFit03'], 2, 'FIRST'),
+  ...e(['PAE01','BPA21','BPA22','GEL05','BME02','ACC01','BPA23','PATHFit04'], 2, 'SECOND'),
+  ...e(['BPA30','BPA31','BPA32','BPA33','BPA34','BPA35','PAE02'], 3, 'FIRST'),
+  ...e(['RES01','BPA36','HBO01','BPA37','BPA38','BPA39','PAE03'], 3, 'SECOND'),
+  ...e(['BPM01','PAE04','PAE05','RES02'], 4, 'FIRST'),
+  ...e(['OJT'], 4, 'SECOND'),
+]
+
+// ═══════════════════════════════════════════════════════════════
 // EXPORTS
 // ═══════════════════════════════════════════════════════════════
 
@@ -192,6 +475,36 @@ export const CURRICULUM_MAP: Record<string, CurriculumEntry[]> = {
   "BIT-Mech":   BSIT_Mech,
   "BIT-Print":  BSIT_Print,
   "BSInfoTech": BSInfoTech,
+  // CTE
+  "BCAEd":       BCAEd,
+  "BEEd":        BEEd,
+  "BSEd-Sci":    BSEd_Sci,
+  "BSEd-SS":     BSEd_SS,
+  "BTLEd-HE":    BTLEd_HE,
+  "BSESS":       BSESS,
+  "BTLEd-IA":    BTLEd_IA,
+  "BTLEd-ICT":   BTLEd_ICT,
+  "BSEd-Eng":    BSEd_Eng,
+  "BSEd-Fil":    BSEd_Fil,
+  "BSEd-Math":   BSEd_Math,
+  // CEN
+  "BSCE":        BSCE,
+  "BSCpE":       BSCpE,
+  "BSEE":        BSEE,
+  "BSECE":       BSECE,
+  "BSIE":        BSIE,
+  "BSME":        BSME,
+  // CAM
+  "BSN":         BSN,
+  "BSMid":       BSMid,
+  "BSRT":        BSRT,
+  // CABHA
+  "BSA":         BSA,
+  "BSBA-HRM":    BSBA_HRM,
+  "BSBA-FM":     BSBA_FM,
+  "BSBA-MM":     BSBA_MM,
+  "BSHM":        BSHM,
+  "BPA":         BPA,
 }
 
 export function getCurriculumCodes(

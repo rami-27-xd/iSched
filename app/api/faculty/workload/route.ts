@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
 
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "DEAN"].includes(dbUser.role)) {
       return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
     }
 

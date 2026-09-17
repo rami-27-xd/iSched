@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
 import { getCurrentUser } from "@/lib/auth"
-
-type UserRole = "SUPER_ADMIN" | "ADMIN" | "FACULTY"
+import type { UserRole } from "@/lib/roles"
 
 /**
  * Server-side role guard for pages.

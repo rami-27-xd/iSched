@@ -31,18 +31,20 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { TableSkeleton } from "@/components/shared/loading-skeletons"
+import { ROLE_LABELS, formatRole, isSingletonRole, type UserRole } from "@/lib/roles"
 
 const ROLE_COLORS: Record<string, string> = {
+  DEAN: "bg-purple-100 text-purple-800 border-purple-200",
   SUPER_ADMIN: "bg-amber-100 text-amber-800 border-amber-200",
   ADMIN: "bg-blue-100 text-blue-800 border-blue-200",
+  PATHFIT: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  NSTP: "bg-sky-100 text-sky-800 border-sky-200",
   FACULTY: "bg-green-100 text-green-800 border-green-200",
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  SUPER_ADMIN: "Department Chair",
-  ADMIN: "Program Chair",
-  FACULTY: "Faculty",
-}
+// Roles a Dean may assign from the Change Role dialog (login accounts only —
+// faculty are record-only rows managed on the Faculty page).
+const ASSIGNABLE_ROLES: UserRole[] = ["DEAN", "SUPER_ADMIN", "ADMIN", "PATHFIT", "NSTP"]
 
 interface Department {
   id: string
@@ -112,27 +114,14 @@ export default function UsersPage() {
       return json.data ?? null
     },
   })
-  const isSuperAdmin = currentUser?.role === "SUPER_ADMIN"
-  const isAdmin = currentUser?.role === "ADMIN"
+  const isDean = currentUser?.role === "DEAN"
   const isMobile = useIsMobile()
 
-  // Only login accounts (Department Chair / Program Chair) are listed here, and
-  // approving/role-changing a chair is the Department Chair's call alone. A
-  // Program Chair gets a read-only view; faculty are managed on the Faculty page.
+  // Only login accounts are listed here, and this page is the DEAN's alone:
+  // approving / re-roling / assigning is done strictly for accounts of the
+  // Dean's own department (spec §1). Faculty are managed on the Faculty page.
   const myDeptId = currentUser?.departmentId ?? null
-  const canManageUser = (_u: any) => isSuperAdmin
-
-  // A Program Chairperson may set the program they chair on their OWN row —
-  // otherwise a chair left with "No program assigned" has no way to fix it.
-  const canEditOwnProgram = (u: any) =>
-    isAdmin && u.role === "ADMIN" && u.id === currentUser?.id
-  // The pencil button is self-service only — a Department Chair already has
-  // "Edit Program Chairperson" in the ⋯ menu for every Program Chair row, so a
-  // second entry point there would be redundant.
-  const canEditProgram = (u: any) => canEditOwnProgram(u)
-  // True while a Program Chair is editing their own row — department is fixed,
-  // only the program is theirs to change.
-  const isSelfProgramEdit = !!deptUser && canEditOwnProgram(deptUser)
+  const canManageUser = (u: any) => isDean && (u.department?.id ?? null) === myDeptId
 
   // Fetch programs for the selected department (used when assigning Program Chair)
   const { data: deptPrograms = [] } = useQuery<any[]>({
@@ -234,8 +223,6 @@ export default function UsersPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // Omitted entirely for a self-service program edit — a Program Chair
-          // may not change their own department.
           ...(departmentId !== undefined ? { departmentId } : {}),
           ...(pId !== undefined ? { programId: pId } : {}),
           ...(cId !== undefined ? { clusterId: cId } : {}),
@@ -304,14 +291,14 @@ export default function UsersPage() {
   const pager = usePagination(users)
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
+    <RoleGuard allowedRoles={["DEAN"]}>
     {/* flex/gap instead of space-y: space-y's margin-top can land on the sticky
         bar itself when the pending-approvals banner pushes it out of the
         first-child slot, which throws off the browser's sticky release point
         and shows as a gap/overlap once you scroll. */}
     <div className="flex flex-col gap-6">
       {/* Pending Approvals Banner — SUPER_ADMIN only */}
-      {isSuperAdmin && pendingCount > 0 && approvedFilter !== "false" && (
+      {isDean && pendingCount > 0 && approvedFilter !== "false" && (
         <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
           <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0" />
           <div className="flex-1">
@@ -357,8 +344,9 @@ export default function UsersPage() {
             className="h-9 rounded-lg border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring w-full sm:w-44"
           >
             <option value="all">All Roles</option>
-            <option value="SUPER_ADMIN">Department Chair</option>
-            <option value="ADMIN">Program Chair</option>
+            {ASSIGNABLE_ROLES.map((r) => (
+              <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+            ))}
           </select>
           <select
             value={approvedFilter}
@@ -393,7 +381,7 @@ export default function UsersPage() {
                       <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                         <Badge variant="outline" className={`text-[10px] ${ROLE_COLORS[u.role] ?? ""}`}>
                           <Shield className="mr-1 h-2.5 w-2.5" />
-                          {ROLE_LABELS[u.role] ?? u.role}
+                          {formatRole(u.role)}
                         </Badge>
                         {u.isApproved ? (
                           <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-200">
@@ -417,22 +405,6 @@ export default function UsersPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                    {canEditProgram(u) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 shrink-0"
-                        title="Edit program assignment"
-                        onClick={() => {
-                          setDeptUser(u)
-                          setDeptId(u.department?.id ?? "")
-                          setProgramId(u.programHead?.programId ?? "")
-                          setClusterId(u.clusterId ?? "")
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                    )}
                     {canManageUser(u) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" />}>
@@ -449,7 +421,7 @@ export default function UsersPage() {
                               <CheckCircle2 className="mr-2 h-4 w-4 text-green-600" />Approve User
                             </DropdownMenuItem>
                           )}
-                          {isSuperAdmin && (
+                          {isDean && (
                             <>
                               <DropdownMenuItem onClick={() => { setEditUser(u); setEditRole(u.role) }}>
                                 <UserCog className="mr-2 h-4 w-4" />Change Role
@@ -492,7 +464,7 @@ export default function UsersPage() {
                   <TableHead>Approval</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Registered</TableHead>
-                  {(isSuperAdmin || isAdmin) && <TableHead className="w-10"></TableHead>}
+                  {isDean && <TableHead className="w-10"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -509,7 +481,7 @@ export default function UsersPage() {
                     <TableCell>
                       <Badge variant="outline" className={ROLE_COLORS[u.role] ?? ""}>
                         <Shield className="mr-1 h-3 w-3" />
-                        {ROLE_LABELS[u.role] ?? u.role}
+                        {formatRole(u.role)}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -555,28 +527,9 @@ export default function UsersPage() {
                     <TableCell className="text-sm text-muted-foreground">
                       {new Date(u.createdAt).toLocaleDateString()}
                     </TableCell>
-                    {(isSuperAdmin || isAdmin) && (
+                    {isDean && (
                     <TableCell>
                       <div className="flex items-center gap-1">
-                      {/* Program Chairpersons get a direct Edit button — their
-                          program assignment is the field most often corrected,
-                          so it shouldn't be buried in the overflow menu. */}
-                      {canEditProgram(u) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          title="Edit program assignment"
-                          onClick={() => {
-                            setDeptUser(u)
-                            setDeptId(u.department?.id ?? "")
-                            setProgramId(u.programHead?.programId ?? "")
-                            setClusterId(u.clusterId ?? "")
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                      )}
                       {canManageUser(u) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
@@ -602,7 +555,7 @@ export default function UsersPage() {
                           )}
 
                           {/* Change Role / Change Department — SUPER_ADMIN only */}
-                          {isSuperAdmin && (
+                          {isDean && (
                             <>
                               <DropdownMenuItem
                                 onClick={() => {
@@ -795,14 +748,20 @@ export default function UsersPage() {
                   onChange={(e) => setEditRole(e.target.value)}
                   className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
-                  <option value="SUPER_ADMIN">Department Chair (Super Admin)</option>
-                  <option value="ADMIN">Program Chair (Admin)</option>
-                  <option value="FACULTY">Faculty</option>
+                  {ASSIGNABLE_ROLES.map((r) => (
+                    <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                  ))}
                 </select>
-                {editRole === "SUPER_ADMIN" && (
+                {editRole === "DEAN" && (
                   <p className="text-xs text-amber-600 flex items-center gap-1">
                     <ShieldAlert className="h-3 w-3" />
-                    This grants full system access including user management.
+                    Each department has exactly one Dean — this is refused if the department already has one.
+                  </p>
+                )}
+                {isSingletonRole(editRole) && (
+                  <p className="text-xs text-amber-600 flex items-center gap-1">
+                    <ShieldAlert className="h-3 w-3" />
+                    Only one {ROLE_LABELS[editRole]} account exists system-wide — this is refused if one already does.
                   </p>
                 )}
               </div>
@@ -826,11 +785,7 @@ export default function UsersPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>
-              {isSelfProgramEdit
-                ? "Set the program you chair"
-                : deptUser?.role === "ADMIN"
-                ? "Edit Program Chairperson"
-                : "Change Department"}
+              {deptUser?.role === "ADMIN" ? "Edit Program Chairperson" : "Change Department"}
             </DialogTitle>
           </DialogHeader>
           {deptUser && (
@@ -839,7 +794,7 @@ export default function UsersPage() {
                 <p className="text-sm font-medium">{deptUser.firstName} {deptUser.lastName}</p>
                 <p className="text-xs text-muted-foreground">{deptUser.email}</p>
                 <Badge variant="outline" className={`mt-1 ${ROLE_COLORS[deptUser.role] ?? ""}`}>
-                  {ROLE_LABELS[deptUser.role] ?? deptUser.role}
+                  {formatRole(deptUser.role)}
                 </Badge>
               </div>
               <div className="space-y-2">
@@ -847,19 +802,15 @@ export default function UsersPage() {
                 <select
                   value={deptId}
                   onChange={(e) => { setDeptId(e.target.value); setProgramId(""); setClusterId("") }}
-                  disabled={isSelfProgramEdit}
                   className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="">Not assigned</option>
-                  {(departments as any[]).map((d: any) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
+                  {(departments as any[])
+                    .filter((d: any) => !isDean || d.id === myDeptId)
+                    .map((d: any) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
                 </select>
-                {isSelfProgramEdit && (
-                  <p className="text-xs text-muted-foreground">
-                    Your department is set by the Department Chairperson.
-                  </p>
-                )}
               </div>
 
               {/* Department Head area — only for SUPER_ADMIN assigned to CAS */}
@@ -909,18 +860,12 @@ export default function UsersPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeptUser(null)}>Cancel</Button>
             <Button
-              onClick={() => deptUser && deptMutation.mutate(
-                isSelfProgramEdit
-                  // Self-service: program only. Sending departmentId here would
-                  // be rejected server-side.
-                  ? { id: deptUser.id, programId: programId || "" }
-                  : {
-                      id: deptUser.id,
-                      departmentId: deptId,
-                      ...(deptUser.role === "ADMIN" ? { programId: programId || "" } : {}),
-                      ...(deptUser.role === "SUPER_ADMIN" ? { clusterId: clusterId || "" } : {}),
-                    }
-              )}
+              onClick={() => deptUser && deptMutation.mutate({
+                id: deptUser.id,
+                departmentId: deptId,
+                ...(deptUser.role === "ADMIN" ? { programId: programId || "" } : {}),
+                ...(deptUser.role === "SUPER_ADMIN" ? { clusterId: clusterId || "" } : {}),
+              })}
               disabled={deptMutation.isPending || (
                 deptId === (deptUser?.department?.id ?? "") &&
                 programId === (deptUser?.programHead?.programId ?? "") &&

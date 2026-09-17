@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { recordAudit } from "@/lib/audit"
 
 export async function GET(
   req: Request,
@@ -138,6 +139,7 @@ export async function PATCH(
         where: { id },
         data: { isArchived: true, status: "ARCHIVED" },
       })
+      await recordAudit({ actor: dbUser as any, action: "schedule.archived", entityType: "schedule", entityId: id, departmentId: target.departmentId, scheduleId: id, summary: "Archived the schedule" })
       return NextResponse.json(apiResponse(schedule))
     }
 
@@ -149,6 +151,7 @@ export async function PATCH(
         where: { id },
         data: { isArchived: false, status: "DRAFT" },
       })
+      await recordAudit({ actor: dbUser as any, action: "schedule.unarchived", entityType: "schedule", entityId: id, departmentId: target.departmentId, scheduleId: id, summary: "Restored the schedule from the archive" })
       return NextResponse.json(apiResponse(schedule))
     }
 
@@ -270,6 +273,7 @@ export async function PATCH(
         where: { id },
         data: { status: "DRAFT", publishedAt: null },
       })
+      await recordAudit({ actor: dbUser as any, action: "schedule.unpublished", entityType: "schedule", entityId: id, departmentId: target.departmentId, scheduleId: id, summary: "Unpublished the schedule (back to Draft)" })
       return NextResponse.json(apiResponse(updated))
     }
 
@@ -316,7 +320,8 @@ export async function DELETE(
       }
     }
 
-    await db.schedule.delete({ where: { id } })
+    const removed = await db.schedule.delete({ where: { id }, include: { department: { select: { abbreviation: true } }, semester: { select: { type: true } } } })
+    await recordAudit({ actor: dbUser as any, action: "schedule.deleted", entityType: "schedule", entityId: id, departmentId: removed.departmentId, scheduleId: id, summary: `Deleted the ${removed.semester?.type ?? ""} schedule of ${removed.department?.abbreviation ?? "department"}` })
 
     return NextResponse.json(apiResponse({ deleted: true }))
   } catch (error) {

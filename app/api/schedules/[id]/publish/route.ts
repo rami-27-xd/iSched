@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { detectTermConflicts } from "@/lib/services/term-conflicts"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { notifyAllSuperAdmins, notifyDepartmentChairs } from "@/lib/notifications"
+import { recordAudit } from "@/lib/audit"
 
 export async function POST(
   req: Request,
@@ -193,6 +194,21 @@ export async function POST(
       data: {
         status: "PUBLISHED",
         publishedAt: new Date(),
+      },
+    })
+    await recordAudit({
+      actor: dbUser as any,
+      action: "schedule.published",
+      entityType: "schedule",
+      entityId: id,
+      departmentId: schedule.departmentId,
+      scheduleId: id,
+      summary: `Published the ${schedule.department?.abbreviation ?? ""} schedule (${schedule.entries.length} classes)`,
+      metadata: {
+        From: schedule.status,
+        To: "PUBLISHED",
+        Classes: schedule.entries.length,
+        Term: `${schedule.semester?.type ?? ""} ${schedule.semester?.academicYear?.label ?? ""}`.trim(),
       },
     })
 

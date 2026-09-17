@@ -4,8 +4,7 @@ import { useRouter } from "next/navigation"
 import { useEffect } from "react"
 import { useUserRole } from "@/components/layout/dashboard-shell"
 import { ShieldAlert } from "lucide-react"
-
-type UserRole = "SUPER_ADMIN" | "ADMIN" | "FACULTY"
+import type { UserRole } from "@/lib/roles"
 
 interface RoleGuardProps {
   allowedRoles: UserRole[]

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { isUniversityWideRole } from "@/lib/roles"
 
 export async function GET(req: Request) {
   try {
@@ -15,9 +16,10 @@ export async function GET(req: Request) {
     const programId = searchParams.get("programId")
     const yearLevelId = searchParams.get("yearLevelId")
 
-    // SUPER_ADMIN (Department Chair) can see ALL sections across departments
-    // because they handle GEC subjects that apply to all programs
-    const isSuperAdmin = dbUser?.role === "SUPER_ADMIN"
+    // SUPER_ADMIN (Department Chair) sees ALL sections across departments because
+    // they handle GEC subjects that apply to all programs; the PATHFit / NSTP
+    // coordinators likewise place their classes in every college's sections.
+    const isSuperAdmin = isUniversityWideRole(dbUser?.role)
 
     const sections = await db.section.findMany({
       where: {

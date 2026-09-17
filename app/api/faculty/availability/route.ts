@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { recordAudit } from "@/lib/audit"
 
 /**
  * Write-permission guard for faculty availability, mirroring checkFacultyWriteAccess
@@ -65,9 +66,9 @@ export async function GET(req: Request) {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
 
-    // Same role scoping as the write path: only chairs manage/view availability.
+    // Chairs manage/view availability; the Dean reads their own department's.
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "DEAN"].includes(dbUser.role)) {
       return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
     }
 
@@ -79,8 +80,8 @@ export async function GET(req: Request) {
     if (facultyId) where.facultyId = facultyId
     if (semesterId) where.semesterId = semesterId
 
-    // ADMIN (Program Chair) — scoped to faculty within their own department only
-    if (dbUser.role === "ADMIN") {
+    // ADMIN (Program Chair) / DEAN — scoped to faculty within their own department only
+    if (dbUser.role === "ADMIN" || dbUser.role === "DEAN") {
       const adminDeptId = getUserDepartmentId(dbUser)
       if (!adminDeptId) return NextResponse.json(apiResponse([]))
       where.faculty = { departmentId: adminDeptId }
@@ -126,8 +127,23 @@ export async function POST(req: Request) {
     // timeline blocks this client-side; this is the authoritative check.
     const target = await db.faculty.findUnique({
       where: { id: facultyId },
-      select: { maxHoursPerWeek: true, user: { select: { firstName: true, lastName: true } } },
+      select: { maxHoursPerWeek: true, departmentId: true, user: { select: { firstName: true, lastName: true } } },
     })
+
+    // ── Active schedule required ────────────────────────────────────────────
+    // Availability is entered against a real scheduling run: there must be a
+    // non-archived schedule for this semester in the faculty's department.
+    // Archived schedules are ignored entirely.
+    const activeSchedule = await db.schedule.findFirst({
+      where: { semesterId, isArchived: false, ...(target?.departmentId ? { departmentId: target.departmentId } : {}) },
+      select: { id: true },
+    })
+    if (!activeSchedule) {
+      return NextResponse.json(
+        apiError("No active schedule exists for this semester in this department. Create one in Manage Schedules before setting faculty availability."),
+        { status: 409 }
+      )
+    }
     const toMin = (t: string) => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m }
     const totalMinutes = slots.reduce(
       (sum: number, s: any) => sum + Math.max(0, toMin(s.endTime) - toMin(s.startTime)),
@@ -178,6 +194,28 @@ export async function POST(req: Request) {
       where: { facultyId, semesterId },
       orderBy: [{ day: "asc" }, { startTime: "asc" }],
     })
+
+    const actor = await getCurrentUser()
+    const facultyRow = await db.faculty.findUnique({
+      where: { id: facultyId },
+      select: { departmentId: true, user: { select: { firstName: true, lastName: true } } },
+    })
+    if (actor) {
+      await recordAudit({
+        actor: actor as any,
+        action: "availability.updated",
+        entityType: "availability",
+        entityId: facultyId,
+        departmentId: facultyRow?.departmentId ?? null,
+        summary: `Set availability of ${facultyRow?.user?.firstName ?? ""} ${facultyRow?.user?.lastName ?? ""} (${updated.length} slots)`.trim(),
+        metadata: {
+          Faculty: `${facultyRow?.user?.firstName ?? ""} ${facultyRow?.user?.lastName ?? ""}`.trim(),
+          Slots: updated.length,
+          "Hours per week": (totalMinutes / 60).toFixed(1),
+          "Max hours per week": maxHours,
+        },
+      })
+    }
 
     return NextResponse.json(apiResponse(updated), { status: 201 })
   } catch (error) {

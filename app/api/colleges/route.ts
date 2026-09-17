@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { isUniversityWideRole } from "@/lib/roles"
 
 // GEC/shared education subject prefixes
 const GEC_PREFIXES = ["GEC", "GEL", "PATHFIT", "PATHFit", "NST"]
@@ -15,7 +16,9 @@ export async function GET(req: Request) {
 
     const dbUser = await getCurrentUser()
     const userDeptId = getUserDepartmentId(dbUser)
-    const isSuperAdmin = dbUser?.role === "SUPER_ADMIN"
+    // University-wide roles (Dept Chair, PATHFit / NSTP coordinators) see every
+    // college; everyone else (Program Chair, Dean) sees their own department only.
+    const isSuperAdmin = isUniversityWideRole(dbUser?.role)
 
     // No semester filter — the curriculum map in the frontend handles
     // placing subjects at the correct year/semester per program.

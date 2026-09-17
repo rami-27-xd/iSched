@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { useColleges, useCreateSubject, useUpdateSubject, useDeleteSubject, useCreateSection, useUpdateSection, useDeleteSection } from "@/hooks/use-data"
+import { useSchedules } from "@/hooks/use-schedules"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
@@ -131,6 +132,17 @@ export default function CoursesPage() {
   const [requestOpen, setRequestOpen] = useState(false)
   const [requestReason, setRequestReason] = useState("")
   const [requestSubjectId, setRequestSubjectId] = useState("")
+  const [requestSemesterId, setRequestSemesterId] = useState("")
+  // Terms with a non-archived schedule in this department (API scopes the list).
+  const { data: requestSchedules = [] } = useSchedules(undefined, false)
+  const requestTerms = Array.from(
+    new Map((requestSchedules as any[]).filter((sc) => sc.semester).map((sc) => [sc.semesterId, sc.semester])).entries()
+  ).map(([id, sem]: [string, any]) => ({
+    id,
+    label: `${sem?.type === "FIRST" ? "1st" : sem?.type === "SECOND" ? "2nd" : "Summer"} Semester ${sem?.academicYear?.label ?? ""}`.trim(),
+    isActive: !!sem?.isActive,
+  }))
+  const requestDefaultTermId = requestTerms.find((tm) => tm.isActive)?.id ?? requestTerms[0]?.id ?? ""
 
   // Current user info
   const { data: currentUser } = useQuery({
@@ -157,7 +169,7 @@ export default function CoursesPage() {
 
   // Faculty request mutation
   const sendFacultyRequest = useMutation({
-    mutationFn: async (data: { reason: string; subjectId?: string }) => {
+    mutationFn: async (data: { reason: string; semesterId?: string }) => {
       const res = await fetch("/api/faculty/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -355,7 +367,7 @@ export default function CoursesPage() {
     : colleges
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "DEAN"]}>
     <div className="space-y-6">
       <PageHeader
         action={
@@ -830,6 +842,19 @@ export default function CoursesPage() {
               If you lack faculty to handle a subject, send a request to the Department Chairperson (CAS) for assistance.
             </p>
             <div className="grid gap-2">
+              <Label>Term</Label>
+              <select
+                value={requestSemesterId || requestDefaultTermId}
+                onChange={(e) => setRequestSemesterId(e.target.value)}
+                className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {requestTerms.length === 0 && <option value="">No schedule yet — create one in Manage Schedules</option>}
+                {requestTerms.map((tm) => (
+                  <option key={tm.id} value={tm.id}>{tm.label}{tm.isActive ? " (active)" : ""}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-2">
               <Label>Subject (optional)</Label>
               <Input
                 placeholder="e.g. General Botany"
@@ -850,8 +875,11 @@ export default function CoursesPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setRequestOpen(false)}>Cancel</Button>
             <Button
-              onClick={() => sendFacultyRequest.mutate({ reason: requestReason, subjectId: requestSubjectId || undefined })}
-              disabled={!requestReason || sendFacultyRequest.isPending}
+              onClick={() => sendFacultyRequest.mutate({
+                reason: requestSubjectId.trim() ? `[${requestSubjectId.trim()}] ${requestReason}` : requestReason,
+                semesterId: requestSemesterId || requestDefaultTermId || undefined,
+              })}
+              disabled={!requestReason || sendFacultyRequest.isPending || !(requestSemesterId || requestDefaultTermId)}
             >
               {sendFacultyRequest.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Send Request

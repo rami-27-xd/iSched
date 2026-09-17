@@ -66,6 +66,31 @@ function whereClause(
 }
 
 /**
+ * Is this room's building open to the department (union semantics, engine parity)?
+ *   - a building with NO department links is shared infrastructure — open to all
+ *   - otherwise the building must be linked to the department
+ * Placeholder rooms (TBA / GYM) are always allowed.
+ * The generator's room query uses exactly this rule; the manual Add/Edit paths
+ * and the room picker call this so a room the generator may use can also be
+ * chosen (and re-saved) by hand.
+ */
+export async function roomBuildingOpenToDepartment(
+  roomId: string,
+  departmentId: string | null | undefined
+): Promise<{ ok: boolean; roomCode?: string }> {
+  if (!departmentId) return { ok: true }
+  const room = await db.room.findUnique({
+    where: { id: roomId },
+    select: { code: true, buildingId: true, building: { select: { departments: { select: { departmentId: true } } } } },
+  })
+  if (!room) return { ok: true }
+  if (isPlaceholderRoomCode(room.code)) return { ok: true }
+  const links = room.building?.departments ?? []
+  if (links.length === 0) return { ok: true }
+  return { ok: links.some((l) => l.departmentId === departmentId), roomCode: room.code }
+}
+
+/**
  * Validate a schedule entry against all constraints.
  * Returns null if valid, or an error message string if invalid.
  * Checks existing entries in the same schedule to detect overlaps.
@@ -341,27 +366,18 @@ export async function validateEntry(
   // only ran `if (availability.length > 0)`, so a faculty with zero configured
   // availability could be manually placed at any day/time with no warning.
   if (schedule?.semesterId && !isTbaFaculty) {
-    // Match on the schedule's semester OR the currently-active one. The Faculty
-    // Availability page writes against the ACTIVE semester, which is not
-    // necessarily the semester of the schedule being edited — so a strict match
-    // made freshly-entered availability invisible here and blocked the entry
-    // outright ("no availability set"). The generation route already resolves it
-    // this way (availabilitySemesterIds in generate/route.ts); manual entry now
-    // uses the same rule so both paths agree.
-    const activeSemester = await db.semester.findFirst({
-      where: { isActive: true },
-      select: { id: true },
-    })
-    const semesterIds = [...new Set([schedule.semesterId, activeSemester?.id].filter(Boolean) as string[])]
+    // STRICTLY this schedule's term. Availability is recorded per Academic Year +
+    // Semester (Faculty Availability → Term), and terms never share data: a
+    // 2nd-semester schedule is checked against 2nd-semester availability only.
+    // (This used to fall back to the active semester's rows — the one place
+    // 1st- and 2nd-semester data bled into each other.) The generator applies the
+    // same rule (generate/route.ts), so both paths always agree.
     const availability = await db.facultyAvailability.findMany({
-      where: {
-        facultyId: entry.facultyId,
-        semesterId: { in: semesterIds },
-      },
+      where: { facultyId: entry.facultyId, semesterId: schedule.semesterId },
     })
     if (availability.length === 0) {
       const fname = faculty?.user ? `${faculty.user.firstName} ${faculty.user.lastName}` : "This faculty member"
-      return `${fname} has no availability set for this semester and cannot be scheduled. Add their availability in Faculty Availability first.`
+      return `${fname} has no availability recorded for this term and cannot be scheduled. Open Faculty Availability, choose this term, and mark their hours first.`
     }
     const dayAvailability = availability.filter((a) => a.day === (entry.day as any))
     const entryStart = toMinutes(entry.startTime)
@@ -388,8 +404,10 @@ export async function validateEntry(
     // Shared with the Add/Edit Entry pickers — see lib/specialization-match.ts.
     // Previously this used a stricter exact/substring test than the dropdown, so a
     // faculty member the picker offered could still be refused here on save.
-    if (!specializationsCoverSubject(faculty.specializations, subject.title)) {
-      return `Specialization mismatch: Faculty's specializations (${faculty.specializations.join(", ")}) do not match subject "${subject.code} - ${subject.title}"`
+    // Code-aware (a tag may be "GEC01 - Understanding the Self" or just "GEC01") and
+    // identical to the generator's matcher — there is no GEC exemption on either side.
+    if (!specializationsCoverSubject(faculty.specializations, subject.title, subject.code)) {
+      return `Specialization mismatch: ${faculty.user ? `${faculty.user.firstName} ${faculty.user.lastName}` : "this faculty member"} is not tagged for "${subject.code} - ${subject.title}" (their specializations: ${faculty.specializations.join(", ")}). Add it on the Faculty page first.`
     }
   }
 
@@ -431,9 +449,32 @@ export async function validateEntry(
 
   // 7. Subject-Section alignment — verify the subject belongs to the section's program
   if (subject && section) {
-    // Check year level match
-    if (subject.year && section.yearLevel?.level && subject.year !== section.yearLevel.level) {
-      return `Year mismatch: "${subject.code}" is a Year ${subject.year} subject but ${section.name} is Year ${section.yearLevel.level}. Please select a matching section.`
+    // Year-level match — engine parity. The generator places a subject by the
+    // program's CURRICULUM MAP (a shared subject like GEC11 is Year 2 for one
+    // program and Year 1 for another; a single Subject.year cannot say that), so
+    // the check here consults the same map first and only falls back to the
+    // stored year for unmapped programs or off-curriculum subjects. Without this a
+    // generated GEC class could never be edited by hand ("Year mismatch").
+    const secYear = section.yearLevel?.level
+    const progAbbrForYear = section.yearLevel?.program?.abbreviation
+    if (subject.year && secYear) {
+      let yearOk = subject.year === secYear
+      let mappedYear: number | null = null
+      if (!yearOk && progAbbrForYear && scheduleSemType && hasCurriculumMap(progAbbrForYear)) {
+        const codeLower = (subject.code ?? "").toLowerCase()
+        const inThisYear = getCurriculumCodes(progAbbrForYear, secYear, scheduleSemType).some((c) => c.toLowerCase() === codeLower)
+        if (inThisYear) {
+          yearOk = true
+        } else {
+          for (let y = 1; y <= 5 && mappedYear === null; y++) {
+            if (getCurriculumCodes(progAbbrForYear, y, scheduleSemType).some((c) => c.toLowerCase() === codeLower)) mappedYear = y
+          }
+        }
+      }
+      if (!yearOk) {
+        const shownYear = mappedYear ?? subject.year
+        return `Year mismatch: "${subject.code}" is a Year ${shownYear} subject${mappedYear ? ` for ${progAbbrForYear}` : ""} but ${section.name} is Year ${secYear}. Please select a matching section.`
+      }
     }
 
     // If subject is linked to a specific yearLevel, it must match the section's yearLevel

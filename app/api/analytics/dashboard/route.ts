@@ -28,10 +28,12 @@ export async function GET(_req: Request) {
     // department configured resolves to no schedules rather than all of them,
     // so a misconfigured account fails closed.
     const scheduleWhere: any = { isArchived: false }
-    if (role === "ADMIN") {
+    if (role === "ADMIN" || role === "DEAN") {
+      // Program Chair / Dean: their own department, fail closed when unassigned.
       scheduleWhere.departmentId = departmentId ?? "__none__"
-    } else if (departmentId) {
-      // SUPER_ADMIN / FACULTY: scope to own department
+    } else if (departmentId && role !== "PATHFIT" && role !== "NSTP") {
+      // SUPER_ADMIN / FACULTY: scope to own department. The PATHFit / NSTP
+      // coordinators work across every college, so they see the whole picture.
       scheduleWhere.departmentId = departmentId
     }
 
@@ -46,9 +48,7 @@ export async function GET(_req: Request) {
     //   SUPER_ADMIN — every non-archived schedule; they generate GEC into other
     //                 colleges' schedules, so those failures are theirs to see.
     const workScheduleWhere: any = { isArchived: false }
-    if (role === "ADMIN" && departmentId) {
-      workScheduleWhere.departmentId = departmentId
-    } else if (role === "FACULTY" && departmentId) {
+    if ((role === "ADMIN" || role === "DEAN" || role === "FACULTY") && departmentId) {
       workScheduleWhere.departmentId = departmentId
     }
 

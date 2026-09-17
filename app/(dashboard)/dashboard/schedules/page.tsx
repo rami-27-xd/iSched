@@ -58,6 +58,7 @@ import {
   Search,
   X,
   Workflow,
+  BookOpenCheck,
   Rows3,
   ChevronDown,
   ChevronUp,
@@ -86,6 +87,7 @@ import { useSubjects, useSections, useDepartments } from "@/hooks/use-data"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { useRealtimeSchedules } from "@/hooks/use-realtime"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
+import { isGeUnitRole, geUnitOwnsCode } from "@/lib/roles"
 // Same matcher the server validates with, so the picker never offers a faculty
 // member that saving would then reject. See lib/specialization-match.ts.
 import { facultyMatchesSubject } from "@/lib/specialization-match"
@@ -95,7 +97,7 @@ import { PaginationControls, usePagination } from "@/components/shared/paginatio
 import { WorkflowActions } from "@/components/schedule/workflow-actions"
 
 import { LabRequestsPanel } from "@/components/schedule/lab-requests-panel"
-import { WorkflowGuideDialog } from "@/components/schedule/workflow-guide"
+import Link from "next/link"
 
 // Both of these are heavy and neither is needed for the default List view, so they
 // load on demand instead of shipping in this route's initial JS:
@@ -192,7 +194,6 @@ export default function SchedulesPage() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   // Workflow Guide moved out of the toolbar into the ⋯ overflow menu, so its
   // dialog is opened from here instead of by its own standalone button.
-  const [workflowGuideOpen, setWorkflowGuideOpen] = useState(false)
   const [newSemType, setNewSemType] = useState("")
   const [newSchoolYear, setNewSchoolYear] = useState("")
   // Department the new schedule is for. Dept Chairs pick it (they create the
@@ -289,12 +290,16 @@ export default function SchedulesPage() {
   const userRole = (currentUser?.role ?? "FACULTY") as string
   const isSuperAdmin = userRole === "SUPER_ADMIN"
   const isAdmin = userRole === "ADMIN"
+  // DEAN is read-only: none of the permission flags below ever turn on for them.
+  // PATHFIT / NSTP Directors: their own subject family, in every college.
+  const isGeUnit = isGeUnitRole(userRole)
 
-  // College filter from topbar — SUPER_ADMINs (Dept Chairs) always see ALL schedules
-  // because they inject GEC subjects into every program's schedule after submission.
-  // ADMIN (Program Chair) keeps the college filter.
+  // College filter from topbar — university-wide roles (Dept Chairs, the
+  // PATHFit / NSTP coordinators) see ALL schedules because their subjects go
+  // into every program's schedule. ADMIN (Program Chair) and DEAN keep the
+  // (locked) college filter.
   const { selectedCollegeId } = useCollege()
-  const scheduleCollegeFilter = isSuperAdmin ? undefined : selectedCollegeId
+  const scheduleCollegeFilter = isSuperAdmin || isGeUnit ? undefined : selectedCollegeId
 
   const { data: activeSchedules = [], isLoading: loadingActive } = useSchedules(undefined, false, scheduleCollegeFilter)
   // Archived schedules are behind their own tab, but this fired on every visit to
@@ -335,7 +340,12 @@ export default function SchedulesPage() {
   // "schedulable" widens a CAS Dept Chair's pool from their own cluster to the whole
   // CAS college — the same set auto-generation already draws from, so a faculty
   // member the engine can assign is also one the chair can pick by hand.
-  const { data: facultyList = [], isPending: facultyPending } = useFaculty(undefined, { enabled: entryDataEnabled, scope: "schedulable" })
+  const { data: facultyList = [], isPending: facultyPending } = useFaculty(undefined, {
+    enabled: entryDataEnabled,
+    scope: "schedulable",
+    // Instructors allocated to this program for THIS term are part of the pool.
+    semesterId: selectedSchedule?.semesterId ?? null,
+  })
   const { data: sections = [] } = useSections({ enabled: entryDataEnabled })
   // A picker must never claim "nobody specializes in this" while the pool it would
   // search is still in flight. React Query reports `isPending` until the first
@@ -375,14 +385,19 @@ export default function SchedulesPage() {
       const c = (code ?? "").toUpperCase()
       return c.startsWith("GEC") || c.startsWith("GEL") || c.startsWith("NSTP") || c.startsWith("NST") || c.startsWith("PATHFIT")
     }
+    if (isGeUnit) return pool.filter((s: any) => geUnitOwnsCode(userRole, s.code))
     if (isAdmin) {
       const ownCodes = pool.filter((s: any) => !isGenEdOrManualCode(s.code))
       return adminProgramId ? ownCodes.filter((s: any) => s.programId === adminProgramId) : ownCodes
     }
-    if (!(isSuperAdmin && chairClusterId)) return pool
+    if (!(isSuperAdmin && chairClusterId)) {
+      // Dept Chairs (any cluster) no longer manage PATHFit / NSTP — those belong
+      // to the coordinator accounts.
+      return isSuperAdmin ? pool.filter((s: any) => !geUnitOwnsCode("PATHFIT", s.code) && !geUnitOwnsCode("NSTP", s.code)) : pool
+    }
     return pool.filter((s: any) => {
       const code = (s.code ?? "").toUpperCase()
-      if (code.startsWith("NSTP") || code.startsWith("NST") || code.startsWith("PATHFIT")) return true
+      if (code.startsWith("NSTP") || code.startsWith("NST") || code.startsWith("PATHFIT")) return false
       if (s.programId == null) {
         return chairOwnedGecCodes.some((c) => c.toUpperCase() === code)
       }
@@ -1213,14 +1228,20 @@ export default function SchedulesPage() {
     isAdmin && (currentUser as any)?.programHead?.program?.department?.college?.abbreviation === "CIT"
   const waitingForGec = isAdmin && isOwnSchedule && isDraft && !gecReady
 
-  const canModifyEntries = isSuperAdmin || (isAdmin && isOwnSchedule && isDraft)
+  // The Dean is read-only: every flag below stays false for them. The PATHFit /
+  // NSTP coordinators may place their own classes at any stage (server mirrors
+  // this in entries/route.ts); only the PATHFit coordinator has a Generate run —
+  // NSTP is never auto-generated.
+  const canModifyEntries = isSuperAdmin || isGeUnit || (isAdmin && isOwnSchedule && isDraft)
   // A CIT chair keeps Add Entry during the pre-plot stage (labs only — the
   // server refuses anything else); every other chair waits for GEC.
-  const canAddEntry = isSuperAdmin || (isAdmin && isOwnSchedule && isDraft && (gecReady || chairIsCit))
-  // Generate: the Dept Chair any time; a Program Chair on their own DRAFT once
-  // GEC exists (CIT may run it earlier — it then places labs only).
+  const canAddEntry = isSuperAdmin || isGeUnit || (isAdmin && isOwnSchedule && isDraft && (gecReady || chairIsCit))
+  // Generate: the Dept Chair any time; the PATHFit coordinator any time (their
+  // run places PATHFit only); a Program Chair on their own DRAFT once GEC exists
+  // (CIT may run it earlier — it then places labs only).
   const canGenerate =
     (isSuperAdmin) ||
+    userRole === "PATHFIT" ||
     (isAdmin && isOwnSchedule && isDraft && (gecReady || chairIsCit))
   // SUPER_ADMIN: publish from PENDING_APPROVAL (approve ADMIN submission). Can also directly publish DRAFT.
   // ADMIN: "Notify Faculty" action on an already-PUBLISHED schedule (does not change status)
@@ -1254,6 +1275,10 @@ export default function SchedulesPage() {
   // edit/delete button on it at all.
   const canEditEntry = (entry: any) => {
     // Role + status window (matches the server precisely).
+    if (isGeUnit) {
+      // any status — but ONLY their own subject family
+      return geUnitOwnsCode(userRole, entry.subject?.code)
+    }
     if (isSuperAdmin) {
       // any status — subject ownership decides below
     } else if (isAdmin && isOwnSchedule && isDraft) {
@@ -1273,9 +1298,9 @@ export default function SchedulesPage() {
       return isAdmin && subjProgramId != null && subjProgramId === adminProgramId
     }
 
-    // NSTP/PATHFit — Dept Chairs only (manual scheduling responsibility).
+    // NSTP/PATHFit — the coordinator accounts only (handled above); no chair.
     if (MANUAL_PREFIXES_RE.test(code)) {
-      return isSuperAdmin
+      return false
     }
 
     if (isSuperAdmin) {
@@ -1988,7 +2013,7 @@ export default function SchedulesPage() {
   }
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "DEAN", "PATHFIT", "NSTP"]}>
 
     {/* ── Full-page loading overlay shown while a new schedule is being created ── */}
     {createSchedule.isPending && (
@@ -2034,7 +2059,7 @@ export default function SchedulesPage() {
             {selectedScheduleId && canGenerate && (
               <Button variant="outline" size="sm" onClick={() => setGenerateOpen(true)} className="bg-[#1B4332] text-white hover:bg-[#2D6A4F]">
                 <Cpu className="mr-2 h-4 w-4" />
-                <span>Generate</span>
+                <span>{userRole === "PATHFIT" ? "Generate PATHFit" : "Generate"}</span>
               </Button>
             )}
             {selectedScheduleId && canPublish && (
@@ -2097,9 +2122,9 @@ export default function SchedulesPage() {
                     Export
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={() => setWorkflowGuideOpen(true)}>
-                  <Workflow className="mr-2 h-4 w-4" />
-                  Workflow Guide
+                <DropdownMenuItem render={<Link href="/dashboard/manual#workflow" />}>
+                  <BookOpenCheck className="mr-2 h-4 w-4" />
+                  User Manual
                 </DropdownMenuItem>
 
                 {/* Archive / Unarchive + Delete — Dept Chair on any schedule,
@@ -2204,13 +2229,12 @@ export default function SchedulesPage() {
                 : "Add Entry, Generate and Submit unlock once GEC/GEL has been generated into this schedule (Workflow steps 2–4). Your major subjects are built around that backbone."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setWorkflowGuideOpen(true)}
+          <Link
+            href="/dashboard/manual#workflow"
             className="shrink-0 rounded-md border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
           >
-            View workflow
-          </button>
+            User Manual
+          </Link>
         </div>
       )}
 
@@ -3914,8 +3938,10 @@ export default function SchedulesPage() {
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
                 <p className="text-xs text-amber-800">
-                  {isSuperAdmin
-                    ? "Places PATHFIT first (in the GYM, faculty TBA), then the general education subjects under your area. NSTP is added by hand. Existing entries for these subjects will be replaced."
+                  {userRole === "PATHFIT"
+                    ? "Places a PATHFit class for every section of this department — one continuous block in the GYM, faculty TBA. Existing PATHFit entries in this schedule will be replaced; nothing else is touched."
+                    : isSuperAdmin
+                    ? "Places the general education subjects under your area. PATHFit is generated by the PATHFit Director and NSTP is added by hand by the NSTP Director. Existing entries for your subjects will be replaced."
                     : "Places your program's major subjects. Check that faculty availability and subject data are up to date, then submit the schedule for the Department Chair's review."}
                 </p>
               </div>
@@ -4297,7 +4323,6 @@ export default function SchedulesPage() {
         canExportTerm={isSuperAdmin}
       />
 
-      <WorkflowGuideDialog open={workflowGuideOpen} onOpenChange={setWorkflowGuideOpen} />
 
     </div>
     </RoleGuard>

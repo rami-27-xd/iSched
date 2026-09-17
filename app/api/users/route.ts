@@ -2,16 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getCurrentUser, getUserDepartmentId } from '@/lib/auth'
 import { apiResponse, apiError, handleApiError } from '@/lib/api-helpers'
+import { LOGIN_ROLES } from '@/lib/roles'
 
-// GET /api/users — SUPER_ADMIN sees all; ADMIN sees their department only
+// GET /api/users — the Dean's User Management list: the accounts of their own
+// department. Department / Program Chairpersons may also READ their own
+// department's accounts (the Faculty page's "link an existing account" picker);
+// they cannot manage them — PATCH/DELETE below are Dean-only.
 export async function GET(request: NextRequest) {
   try {
     const dbUser = await getCurrentUser()
-    if (!dbUser || !['SUPER_ADMIN', 'ADMIN'].includes(dbUser.role)) {
+    if (!dbUser || !['DEAN', 'SUPER_ADMIN', 'ADMIN'].includes(dbUser.role)) {
       return NextResponse.json(apiError('Unauthorized'), { status: 403 })
     }
 
-    const isSuperAdmin = dbUser.role === 'SUPER_ADMIN'
     const callerDeptId = getUserDepartmentId(dbUser)
 
     const { searchParams } = new URL(request.url)
@@ -21,10 +24,9 @@ export async function GET(request: NextRequest) {
 
     const where: Record<string, unknown> = {}
 
-    // ADMIN (Program Chair): scope to their department only
-    if (!isSuperAdmin && callerDeptId) {
-      where.departmentId = callerDeptId
-    }
+    // Everyone is scoped to their own department. An account with no
+    // department resolves to nothing rather than everything (fails closed).
+    where.departmentId = callerDeptId ?? '__none__'
 
     if (search) {
       where.OR = [
@@ -40,7 +42,7 @@ export async function GET(request: NextRequest) {
     if (roleFilter && roleFilter !== 'all' && roleFilter !== 'FACULTY') {
       where.role = roleFilter
     } else {
-      where.role = { in: ['SUPER_ADMIN', 'ADMIN'] }
+      where.role = { in: LOGIN_ROLES }
     }
 
     if (approvedFilter === 'true') {

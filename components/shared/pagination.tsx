@@ -47,7 +47,7 @@ interface PaginationControlsProps {
   total?: number
   from?: number
   to?: number
-  /** Noun for the summary, e.g. "faculty" → "1–10 of 42 faculty". */
+  /** Noun for the summary, e.g. "faculty" → "1–10 out of 42 faculty". */
   label?: string
   className?: string
   /** Compact variant for narrow columns (schedule list, nested tables). */
@@ -94,7 +94,7 @@ export function PaginationControls({
     >
       {total !== undefined && from !== undefined && to !== undefined ? (
         <p className={cn("text-muted-foreground", size === "sm" ? "text-[11px]" : "text-xs")}>
-          {from}–{to} of {total}{label ? ` ${label}` : ""}
+          {from}–{to} out of {total}{label ? ` ${label}` : ""}
         </p>
       ) : <span />}
       <div className="flex items-center gap-1">

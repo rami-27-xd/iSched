@@ -2,11 +2,12 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
-import { validateEntry, validateEntryCapacity, stripConflictMarker } from "@/lib/services/entry-validation"
-import { isPlaceholderRoomCode } from "@/lib/sentinels"
+import { validateEntry, validateEntryCapacity, stripConflictMarker, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
 import { scheduleHasGec, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
+import { isGeUnitRole } from "@/lib/roles"
+import { recordAudit } from "@/lib/audit"
 
 export async function POST(
   req: Request,
@@ -32,9 +33,14 @@ export async function POST(
     //   DRAFT            — initial data entry before Program Chairs submit
     //   PENDING_APPROVAL — adding GEC/PATHFIT on top of Program Chairs' submitted entries
     //   PUBLISHED        — adding GEC/PATHFIT after the schedule is already live
+    // PATHFIT / NSTP coordinators: same window as the Dept Chair — their classes sit on
+    //   top of every department's schedule, whatever stage it is at (subject
+    //   ownership below restricts them to their own codes).
     // ADMIN (Program Chair): can add entries on DRAFT only (their window is before submission).
+    // DEAN: never — read-only.
+    const anyStage = ["DRAFT", "PENDING_APPROVAL", "PUBLISHED"].includes(schedule.status as string)
     const canAdd =
-      (dbUser.role === "SUPER_ADMIN" && ["DRAFT", "PENDING_APPROVAL", "PUBLISHED"].includes(schedule.status as string)) ||
+      ((dbUser.role === "SUPER_ADMIN" || isGeUnitRole(dbUser.role)) && anyStage) ||
       (dbUser.role === "ADMIN" && schedule.status === "DRAFT")
 
     if (!canAdd) {
@@ -83,34 +89,15 @@ export async function POST(
     }
 
     // ── Building restriction check ─────────────────────────────────────────
-    // Verify the chosen room is in a building assigned to the schedule's department.
+    // Same rule as the generator's room pool: the room's building is either
+    // shared (no department links) or linked to this schedule's department.
     if (body.roomId && schedule.departmentId) {
-      const room = await db.room.findUnique({
-        where: { id: body.roomId },
-        select: { buildingId: true, name: true, code: true },
-      })
-      // Placeholder rooms — "TBA" (manual resolution) and "GYM" (PATHFIT) —
-      // live in their own dedicated buildings, mapped to no department, so they
-      // would fail this check for every department. Exempt them explicitly
-      // rather than mapping those buildings to every department (which would
-      // need updating again each time a new department is added).
-      if (room && !isPlaceholderRoomCode(room.code)) {
-        const mapping = await db.departmentBuilding.findFirst({
-          where: {
-            departmentId: schedule.departmentId,
-            buildingId: room.buildingId,
-          },
-        })
-        // Only enforce if the department has any building mappings
-        const deptHasMappings = await db.departmentBuilding.count({
-          where: { departmentId: schedule.departmentId },
-        })
-        if (deptHasMappings > 0 && !mapping) {
-          return NextResponse.json(
-            apiError(`Room "${room.code}" is in a building not assigned to this department. Choose a room from an approved building.`),
-            { status: 409 }
-          )
-        }
+      const access = await roomBuildingOpenToDepartment(body.roomId, schedule.departmentId)
+      if (!access.ok) {
+        return NextResponse.json(
+          apiError(`Room "${access.roomCode}" is in a building reserved for other departments. Choose a room from a shared building or one assigned to this department.`),
+          { status: 409 }
+        )
       }
     }
 
@@ -212,6 +199,26 @@ export async function POST(
     if (body.facultyId) {
       await syncFacultySpecializations(body.facultyId).catch(() => {})
     }
+
+    await recordAudit({
+      actor: dbUser as any,
+      action: "entry.created",
+      entityType: "entry",
+      entityId: entry.id,
+      departmentId: schedule.departmentId,
+      scheduleId: id,
+      summary: `Added ${entry.subject?.code ?? "class"} for ${entry.section?.name ?? "section"} — ${days.join("/")} ${body.startTime}–${body.endTime}${entry.room ? ` in ${entry.room.code}` : ""}`,
+      metadata: {
+        Subject: `${entry.subject?.code ?? ""} — ${entry.subject?.title ?? ""}`.trim(),
+        Section: entry.section?.name ?? "",
+        Faculty: entry.facultyName ?? (entry.faculty?.user ? `${entry.faculty.user.firstName} ${entry.faculty.user.lastName}` : ""),
+        Room: entry.room ? `${entry.room.code}${entry.room.building ? ` (${entry.room.building.name})` : ""}` : "",
+        Days: days.join(", "),
+        Time: `${body.startTime}–${body.endTime}`,
+        ...(body.set ? { Set: body.set } : {}),
+        ...(body.force ? { "Capacity warning overridden": "yes" } : {}),
+      },
+    })
 
     return NextResponse.json(
       apiResponse(days.length > 1 ? createdEntries : entry),
