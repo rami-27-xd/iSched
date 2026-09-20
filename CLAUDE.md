@@ -324,11 +324,14 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   (range + duration label). A "Saving availability…" overlay covers the timeline from mouse-up until the save AND the
   refetch finish (`savingFacultyId`); new drags are ignored meanwhile. The "Schedule" summary below is an aligned
   day | ranges | hours grid (no pipe-delimited text). Legend shows Available / Unavailable only.
-- CIT test data: every CIT faculty has program-matched specializations, Mon–Fri availability, and building access to
-  CIT/ICT/HPB (`FacultyBuildingAvailability`) — except exactly one (Efren Zulueta, BSInfoTech) who has no
-  specializations. Run `prisma/seed-cit-specs-availability.ts` then `prisma/seed-cit-one-unassigned.ts`, in that
-  order (both re-runnable; `UNASSIGNED="Last, First"` to pick another). Each targets whatever `DATABASE_URL` is
-  set — point it at the Supabase session-pooler URL to seed production.
+- **CIT faculty = the real roster (2026-09-21)**, 23 people across 9 shops, from `prisma/seed-cit-faculty.ts`
+  (shop → program map inside: CPT→BIT-Comp, IT→BSInfoTech, AT→BIT-Auto, ELX→BIT-Eltx, ELT→BIT-Elec, IDT→BIT-ID,
+  GT→BIT-Garm, FT→BIT-Culi, MT→BIT-Mech; BIT-Print has nobody on the list). Each shop's "PC" is the existing ADMIN
+  account heading that program, RENAMED to the real Program Chairperson (email/login unchanged) and given the faculty
+  record; everyone else is a record-only stub. The script wipes every other CIT faculty first (refuses if any has
+  schedule entries; `--dry-run` previews). Then run `prisma/seed-cit-specs-availability.ts` for program-matched
+  specializations + Mon–Fri availability (AY 2026-2027). `seed-cit-one-unassigned.ts` is obsolete. Each script
+  targets whatever `DATABASE_URL` is set — point it at the Supabase session-pooler URL to do the same on production.
 - Nav links swap their icon for a spinner while a navigation is pending (`LinkPendingIcon`).
 
 ### 7. Personal teaching schedule (chairs only)

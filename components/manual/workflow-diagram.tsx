@@ -13,17 +13,32 @@ import type { FlowEdge, FlowKind, FlowNode } from "@/lib/manual-workflows"
 
 const COL_W = 300     // lane pitch
 const NODE_W = 264
-const ROW_H = 132     // row pitch
+const ROW_GAP = 30    // vertical space between rows (room for arrows + labels)
 const PAD_X = 16
 const PAD_Y = 12
 const LOOP_GUTTER = 22 // how far right of the last lane a back-edge travels
+const TEXT_W = NODE_W - 24 // inner width available to text
 
-const HEIGHT: Record<FlowKind, number> = {
-  start: 56,
-  end: 56,
-  step: 104,
-  decision: 88,
-  wait: 96,
+// Text metrics used to size a node from its content so nothing is ever
+// clipped or floated off-centre: average glyph width ≈ 0.52 × font size.
+const TITLE_PX = 12.5
+const DETAIL_PX = 10.5
+const WHERE_PX = 9.5
+const LINE = 1.25
+function lines(text: string | undefined, px: number, extraChars = 0): number {
+  if (!text) return 0
+  const perLine = Math.max(8, Math.floor(TEXT_W / (px * 0.52)))
+  return Math.max(1, Math.ceil((text.length + extraChars) / perLine))
+}
+function nodeHeight(n: FlowNode): number {
+  const pill = n.kind === "start" || n.kind === "end"
+  const badge = n.enforced ? 10 : n.kind === "wait" ? 13 : 0
+  const h =
+    16 + // padding
+    lines(n.title, TITLE_PX, badge) * TITLE_PX * LINE +
+    (n.detail ? 3 + lines(n.detail, DETAIL_PX) * DETAIL_PX * LINE : 0) +
+    (n.where ? 4 + lines(n.where, WHERE_PX) * WHERE_PX * LINE : 0)
+  return Math.max(pill ? 48 : 60, Math.ceil(h))
 }
 
 const STYLE: Record<FlowKind, { fill: string; stroke: string; text: string; dash?: string; radius: number }> = {
@@ -39,13 +54,25 @@ export function WorkflowDiagram({ nodes, edges, title }: { nodes: FlowNode[]; ed
   const maxCol = Math.max(...nodes.map((n) => n.col))
   const maxRow = Math.max(...nodes.map((n) => n.row))
   const width = PAD_X * 2 + maxCol * COL_W + NODE_W + LOOP_GUTTER + 8
-  const height = PAD_Y * 2 + maxRow * ROW_H + HEIGHT.step
+
+  // Each row is as tall as its tallest node; rows stack with a fixed gap, so a
+  // node with a long description simply gets a taller box (and its row) instead
+  // of overflowing a fixed-height one.
+  const heights = new Map(nodes.map((n) => [n.id, nodeHeight(n)]))
+  const rowHeight: number[] = Array.from({ length: maxRow + 1 }, (_, r) =>
+    Math.max(48, ...nodes.filter((n) => n.row === r).map((n) => heights.get(n.id)!))
+  )
+  const rowTop: number[] = []
+  let cursor = PAD_Y
+  for (let r = 0; r <= maxRow; r++) { rowTop[r] = cursor; cursor += rowHeight[r] + ROW_GAP }
+  const height = cursor - ROW_GAP + PAD_Y
 
   const box = (n: FlowNode) => {
-    const h = HEIGHT[n.kind]
+    const h = heights.get(n.id)!
     const x = PAD_X + n.col * COL_W
-    // Centre every node vertically within its row so lanes line up.
-    const y = PAD_Y + n.row * ROW_H + (HEIGHT.step - h) / 2
+    // Centre every node vertically within its row so side-lane nodes line up
+    // with the main-lane step they belong to.
+    const y = rowTop[n.row] + (rowHeight[n.row] - h) / 2
     return { x, y, w: NODE_W, h, cx: x + NODE_W / 2, cy: y + h / 2 }
   }
 
@@ -110,8 +137,8 @@ export function WorkflowDiagram({ nodes, edges, title }: { nodes: FlowNode[]; ed
               <path d={p.d} fill="none" stroke="#6B7280" strokeWidth={1.6} markerEnd="url(#wf-arrow)" strokeDasharray={p.loop ? "4 3" : undefined} />
               {p.label && (
                 <>
-                  <rect x={p.lx - 2} y={p.ly - 9} width={p.label.length * 6.2 + 8} height={14} rx={3} fill="#ffffff" />
-                  <text x={p.lx + 2} y={p.ly + 1.5} fontSize={10} fill="#4B5563" fontWeight={600}>
+                  <rect x={p.lx - 3} y={p.ly - 8} width={p.label.length * 5.8 + 8} height={14} rx={3} fill="#ffffff" stroke="#E5E7EB" />
+                  <text x={p.lx + 1} y={p.ly + 2.5} fontSize={10} fill="#4B5563" fontWeight={600} dominantBaseline="middle" alignmentBaseline="middle">
                     {p.label}
                   </text>
                 </>
@@ -138,16 +165,17 @@ export function WorkflowDiagram({ nodes, edges, title }: { nodes: FlowNode[]; ed
                     height: "100%",
                     display: "flex",
                     flexDirection: "column",
-                    justifyContent: "center",
+                    justifyContent: pill ? "center" : "flex-start",
                     alignItems: pill ? "center" : "flex-start",
                     textAlign: pill ? "center" : "left",
                     color: s.text,
                     fontFamily: "inherit",
-                    lineHeight: 1.25,
-                    overflow: "hidden",
+                    lineHeight: LINE,
+                    wordBreak: "normal",
+                    overflowWrap: "anywhere",
                   }}
                 >
-                  <div style={{ fontSize: 12.5, fontWeight: 700, display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <div style={{ fontSize: TITLE_PX, fontWeight: 700, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <span>{n.title}</span>
                     {n.enforced && (
                       <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 999, background: "#FEE2E2", color: "#991B1B", border: "1px solid #FECACA", whiteSpace: "nowrap" }}>
@@ -160,9 +188,9 @@ export function WorkflowDiagram({ nodes, edges, title }: { nodes: FlowNode[]; ed
                       </span>
                     )}
                   </div>
-                  {n.detail && <div style={{ fontSize: 10.5, marginTop: 3, opacity: 0.85 }}>{n.detail}</div>}
+                  {n.detail && <div style={{ fontSize: DETAIL_PX, marginTop: 3, opacity: 0.85 }}>{n.detail}</div>}
                   {n.where && (
-                    <div style={{ fontSize: 9.5, marginTop: 4, fontWeight: 600, opacity: 0.75 }}>
+                    <div style={{ fontSize: WHERE_PX, marginTop: 4, fontWeight: 600, opacity: 0.75 }}>
                       {n.href ? <Link href={n.href} style={{ textDecoration: "underline", textUnderlineOffset: 2 }}>{n.where}</Link> : n.where}
                     </div>
                   )}
