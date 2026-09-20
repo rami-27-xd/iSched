@@ -44,8 +44,9 @@ export default function SettingsPage() {
   const isSuperAdmin = currentUser?.role === "SUPER_ADMIN"
   const { data: departments = [] } = useDepartments()
 
-  // CAS clusters a Department Chair can head (Social Sciences / Languages,
-  // Literature, and Humanities / Mathematics and Natural Sciences).
+  // CAS department head areas a Department Chairperson can head (Social
+  // Sciences / Languages, Literature, and Humanities / Mathematics and Natural
+  // Sciences). Stored as FacultyCluster rows.
   const { data: clusters = [] } = useQuery({
     queryKey: ["clusters"],
     queryFn: async () => {
@@ -202,7 +203,7 @@ export default function SettingsPage() {
 
                 {isSuperAdmin && (
                   <div className="grid gap-2">
-                    <Label>Cluster You Head</Label>
+                    <Label>Department Head Area</Label>
                     <select
                       value={selectedClusterId}
                       onChange={(e) => setSelectedClusterId(e.target.value)}
@@ -214,7 +215,7 @@ export default function SettingsPage() {
                       ))}
                     </select>
                     <p className="text-xs text-muted-foreground">
-                      The CAS cluster you head — Social Sciences; Languages, Literature, and Humanities; or Mathematics and Natural Sciences. This scopes the GEC/GEL subjects you manage.
+                      The CAS area you head as department head — Social Sciences; Languages, Literature, and Humanities; or Mathematics and Natural Sciences. This scopes the GEC/GEL subjects you manage.
                     </p>
                   </div>
                 )}

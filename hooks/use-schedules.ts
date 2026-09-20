@@ -316,6 +316,9 @@ export function useCreateEntry() {
         facultyName?: string | null  // free-text name override
         roomId: string
         sectionId: string
+        // `sectionIds` (plural) merges two or more sections into ONE NSTP class
+        // (one row per section sharing a mergeGroupId). NSTP only.
+        sectionIds?: string[]
         // `days` (plural) creates one entry per day sharing a groupId — the
         // MWF/TTh/custom day-pattern picker in the Add Entry dialog. `day`
         // (singular) still works for a single-session entry.

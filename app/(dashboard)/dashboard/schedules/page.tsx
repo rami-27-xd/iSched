@@ -88,12 +88,16 @@ import { useSubjects, useSections, useDepartments } from "@/hooks/use-data"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { useRealtimeSchedules } from "@/hooks/use-realtime"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
-import { isGeUnitRole, geUnitOwnsCode } from "@/lib/roles"
+import { isGeUnitRole, geUnitOwnsCode, isNstpCode } from "@/lib/roles"
 // Same matcher the server validates with, so the picker never offers a faculty
 // member that saving would then reject. See lib/specialization-match.ts.
 import { facultyMatchesSubject } from "@/lib/specialization-match"
 import { GYM_ROOM_CODE, PATHFIT_FACULTY_LABEL, isPathfitCode, isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
 import { roomTypeAllowedForSubject } from "@/lib/room-type-rules"
+// Per-day session cap (GEC/GEL 1h / 1h 30min) — same rule the server and the
+// generator enforce, so the End Time picker never offers a length the save
+// would reject. See lib/session-rules.ts.
+import { resolveMaxMinutesPerDay, formatMinutes } from "@/lib/session-rules"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { WorkflowActions } from "@/components/schedule/workflow-actions"
 
@@ -235,6 +239,13 @@ export default function SchedulesPage() {
   const [splitLabSets, setSplitLabSets] = useState(false)
   const [setAEntry, setSetAEntry] = useState({ roomId: "", day: "", startTime: "", endTime: "" })
   const [setBEntry, setSetBEntry] = useState({ roomId: "", day: "", startTime: "", endTime: "" })
+  // Merged NSTP class — extra sections that take this class together with the
+  // primary Section above (same faculty, room, day and time). Sent to the POST
+  // route as `sectionIds`; every row shares a mergeGroupId server-side.
+  const [mergeSectionIds, setMergeSectionIds] = useState<string[]>([])
+  // Edit dialog: the full section list of a merged NSTP class (add / remove).
+  const [editMergeSectionIds, setEditMergeSectionIds] = useState<string[]>([])
+  const [editMergeAddId, setEditMergeAddId] = useState("")
   // Controls the faculty autocomplete dropdown visibility
   const [facultySearch, setFacultySearch] = useState("")
   const [facultyDropdownOpen, setFacultyDropdownOpen] = useState(false)
@@ -747,6 +758,31 @@ export default function SchedulesPage() {
     return result
   }, [sections, entryForm.subjectId, selectedSubjectForEntry, sectionSearch, scheduleDeptId, scheduleSemesterType, isAdmin, adminProgramId])
 
+  // Sections an NSTP class can be merged with: the schedule's department, minus
+  // the primary section and any section that already has this subject.
+  // Same-year sections of the same program come first (the usual merge).
+  const mergeCandidateSections = useMemo(() => {
+    if (!entryForm.sectionId || !selectedSubjectForEntry || !isNstpCode(selectedSubjectForEntry.code)) return []
+    const code = (selectedSubjectForEntry.code ?? "").toLowerCase()
+    const already = new Set(
+      (selectedSchedule?.entries ?? [])
+        .filter((e: any) => (e.subject?.code ?? "").toLowerCase() === code)
+        .map((e: any) => e.sectionId ?? e.section?.id)
+    )
+    const primary = selectedSectionForEntry
+    const pool = (sections as any[]).filter((s: any) =>
+      s.id !== entryForm.sectionId &&
+      !already.has(s.id) &&
+      (!scheduleDeptId || s.yearLevel?.program?.departmentId === scheduleDeptId)
+    )
+    const rank = (s: any) => {
+      const sameProgram = (s.yearLevel?.programId ?? s.yearLevel?.program?.id) === (primary?.yearLevel?.programId ?? primary?.yearLevel?.program?.id)
+      const sameYear = s.yearLevel?.level === primary?.yearLevel?.level
+      return (sameProgram && sameYear ? 0 : sameYear ? 1 : sameProgram ? 2 : 3)
+    }
+    return pool.sort((a: any, b: any) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+  }, [entryForm.sectionId, selectedSubjectForEntry, selectedSectionForEntry, sections, selectedSchedule?.entries, scheduleDeptId])
+
   // Filter days by faculty availability — only show days where faculty has availability set.
   // Saturday is excluded unless the subject is NSTP or the section belongs to CAM.
   const availableDays = useMemo(() => {
@@ -1174,12 +1210,15 @@ export default function SchedulesPage() {
     const nextOccupied = availableTimeOptions
       .filter((t) => toMinsHelper(t) > startMins && allOccupied.has(t))
       .sort((a, b) => toMinsHelper(a) - toMinsHelper(b))[0]
-    const maxEnd = nextOccupied ? toMinsHelper(nextOccupied) : Infinity
+    const nextOccupiedEnd = nextOccupied ? toMinsHelper(nextOccupied) : Infinity
+    // Per-day cap (GEC/GEL): the session may not run longer than the subject's limit.
+    const cap = selectedSubjectForEntry ? resolveMaxMinutesPerDay(selectedSubjectForEntry) : null
+    const maxEnd = Math.min(nextOccupiedEnd, cap !== null ? startMins + cap : Infinity)
 
     return availableTimeOptions
       .filter((t) => toMinsHelper(t) > startMins && toMinsHelper(t) <= maxEnd)
       .map((t) => ({ time: t, available: true }))
-  }, [entryForm.startTime, availableTimeOptions, occupiedSlots])
+  }, [entryForm.startTime, availableTimeOptions, occupiedSlots, selectedSubjectForEntry])
 
   const isDraft = selectedSchedule?.status === "DRAFT"
   const isPendingApproval = selectedSchedule?.status === "PENDING_APPROVAL"
@@ -1260,9 +1299,9 @@ export default function SchedulesPage() {
       toast.success(
         vars.action === "finalize"
           ? data.allFinalized
-            ? "Finalized — all three clusters are now done. Program Chairs are unlocked."
-            : "Your cluster's GEC/GEL is finalized for this schedule."
-          : "Reopened — your cluster's GEC/GEL is editable again."
+            ? "Finalized — all three department heads are now done. Program Chairpersons are unlocked."
+            : "Your GEC/GEL is finalized for this schedule."
+          : "Reopened — your GEC/GEL is editable again."
       )
     },
     onError: (err: Error) => toast.error(err.message),
@@ -1362,10 +1401,69 @@ export default function SchedulesPage() {
   }
 
   // Apply entry filters (shared across list + calendar views)
+  // Sections an NSTP class being edited can still merge with: the schedule's
+  // department, minus those already in the class and those that already have
+  // this subject elsewhere in the schedule.
+  const editMergeCandidates = useMemo(() => {
+    if (!isNstpCode(editSelectedSubject?.code)) return []
+    const code = (editSelectedSubject?.code ?? "").toLowerCase()
+    const editing = entries.find((e: any) => e.id === editEntryId)
+    const already = new Set(
+      entries
+        .filter((e: any) => (e.subject?.code ?? "").toLowerCase() === code && !(editing?.mergeGroupId && e.mergeGroupId === editing.mergeGroupId) && e.id !== editEntryId)
+        .map((e: any) => e.sectionId ?? e.section?.id)
+    )
+    return (sections as any[])
+      .filter((s: any) =>
+        !editMergeSectionIds.includes(s.id) &&
+        !already.has(s.id) &&
+        (!scheduleDeptId || s.yearLevel?.program?.departmentId === scheduleDeptId)
+      )
+      .sort((a: any, b: any) => a.name.localeCompare(b.name))
+  }, [editSelectedSubject, entries, editEntryId, sections, editMergeSectionIds, scheduleDeptId])
+
+  // A merged NSTP class is stored as one row per (section, day) sharing a
+  // mergeGroupId. For display, the rows of one session collapse into a single
+  // line carrying every section (`__mergedSections`) and every row id
+  // (`__mergedIds`, for conflict highlighting). Raw `entries` stays as-is for
+  // the conflict checks and the edit/delete lookups.
+  const collapsedEntries = useMemo(() => {
+    const out: any[] = []
+    const byKey = new Map<string, any>()
+    for (const e of entries) {
+      if (!e.mergeGroupId) { out.push(e); continue }
+      const key = `${e.mergeGroupId}|${e.day}|${e.startTime}|${e.endTime}`
+      const sec = { id: e.sectionId ?? e.section?.id, name: e.section?.name ?? "" }
+      const existing = byKey.get(key)
+      if (existing) {
+        existing.__mergedSections.push(sec)
+        existing.__mergedIds.push(e.id)
+        continue
+      }
+      const row = { ...e, __mergedSections: [sec], __mergedIds: [e.id] }
+      byKey.set(key, row)
+      out.push(row)
+    }
+    for (const row of byKey.values()) {
+      row.__mergedSections.sort((a: any, b: any) => a.name.localeCompare(b.name))
+    }
+    return out
+  }, [entries])
+
+  // Section names shown for a (possibly merged) display row.
+  const entrySectionLabel = (e: any): string =>
+    e.__mergedSections?.length > 1
+      ? e.__mergedSections.map((x: any) => x.name).join(" + ")
+      : (e.section?.name ?? "")
+
   const filteredEntries = useMemo(() => {
-    let result = entries
+    let result = collapsedEntries
     if (calFilterFaculty) result = result.filter((e: any) => (e.facultyId === calFilterFaculty || e.faculty?.id === calFilterFaculty))
-    if (calFilterSection) result = result.filter((e: any) => (e.sectionId === calFilterSection || e.section?.id === calFilterSection))
+    if (calFilterSection) result = result.filter((e: any) =>
+      e.__mergedSections
+        ? e.__mergedSections.some((x: any) => x.id === calFilterSection)
+        : (e.sectionId === calFilterSection || e.section?.id === calFilterSection)
+    )
     if (calFilterRoom) result = result.filter((e: any) => (e.roomId === calFilterRoom || e.room?.id === calFilterRoom))
     if (entrySearch.trim()) {
       const q = entrySearch.toLowerCase().trim()
@@ -1374,12 +1472,12 @@ export default function SchedulesPage() {
         const title = (e.subject?.title ?? "").toLowerCase()
         const faculty = `${e.faculty?.user?.firstName ?? ""} ${e.faculty?.user?.lastName ?? ""}`.toLowerCase()
         const room = (e.room?.code ?? "").toLowerCase()
-        const section = (e.section?.name ?? "").toLowerCase()
+        const section = entrySectionLabel(e).toLowerCase()
         return code.includes(q) || title.includes(q) || faculty.includes(q) || room.includes(q) || section.includes(q)
       })
     }
     return result
-  }, [entries, calFilterFaculty, calFilterSection, calFilterRoom, entrySearch])
+  }, [collapsedEntries, calFilterFaculty, calFilterSection, calFilterRoom, entrySearch])
 
   // Unresolved ConflictLog rows for the selected schedule — drives the Calendar's
   // hasConflict highlighting and the Conflicts banner (all types, including
@@ -1406,13 +1504,13 @@ export default function SchedulesPage() {
     // Free-text override first ("TBA" on PATHFIT rows), then the linked record.
     facultyName: e.facultyName || (e.faculty?.user ? `${e.faculty.user.firstName} ${e.faculty.user.lastName}` : ""),
     roomCode: e.room?.code ?? "",
-    sectionName: e.section?.name ?? "",
+    sectionName: entrySectionLabel(e),
     day: e.day,
     startTime: e.startTime,
     endTime: e.endTime,
     type: (e.subject?.type ?? "LECTURE") as "LECTURE" | "LABORATORY",
     set: e.set ?? null,
-    hasConflict: unresolvedConflicts.some((c: any) => c.entityIds?.includes(e.id)),
+    hasConflict: unresolvedConflicts.some((c: any) => (e.__mergedIds ?? [e.id]).some((id: string) => c.entityIds?.includes(id))),
   })), [filteredEntries, unresolvedConflicts])
 
   // Multi-day (MWF/TTh) auto-generated entries share a groupId. Each session
@@ -1429,8 +1527,10 @@ export default function SchedulesPage() {
     }
     const info = new Map<string, { size: number; label: string }>()
     for (const [key, members] of byKey) {
-      const sorted = [...members].sort((a, b) => DAYS.indexOf(a.day) - DAYS.indexOf(b.day))
-      info.set(key, { size: sorted.length, label: sorted.map((m) => DAY_LABELS[m.day] ?? m.day).join("/") })
+      // Distinct days — a merged class contributes one display row per day
+      // already, but guard anyway so the label never reads "Sat/Sat".
+      const days = [...new Set(members.map((m) => m.day))].sort((a, b) => DAYS.indexOf(a) - DAYS.indexOf(b))
+      info.set(key, { size: days.length, label: days.map((d) => DAY_LABELS[d] ?? d).join("/") })
     }
     return info
   }, [filteredEntries])
@@ -1707,18 +1807,24 @@ export default function SchedulesPage() {
     }
 
     try {
+      const mergedIds = mergeSectionIds.length > 0 ? [sectionId, ...mergeSectionIds.filter((x) => x !== sectionId)] : undefined
       await createEntry.mutateAsync({
         scheduleId: selectedScheduleId,
         entry: {
           ...entryForm,
           day: patternDays[0],
           days: patternDays.length > 1 ? patternDays : undefined,
+          sectionIds: mergedIds,
           facultyName: entryForm.facultyName?.trim() || null,
         },
       })
       setAddEntryOpen(false)
       resetEntryForm()
-      toast.success(patternDays.length > 1 ? `Entry added on ${patternDays.length} days` : "Entry added")
+      toast.success(
+        mergedIds
+          ? `Merged class added for ${mergedIds.length} sections${patternDays.length > 1 ? ` on ${patternDays.length} days` : ""}`
+          : patternDays.length > 1 ? `Entry added on ${patternDays.length} days` : "Entry added"
+      )
     } catch (err: any) {
       toast.error(err.message)
     }
@@ -1823,6 +1929,7 @@ export default function SchedulesPage() {
     setSplitLabSets(false)
     setSetAEntry({ roomId: "", day: "", startTime: "", endTime: "" })
     setSetBEntry({ roomId: "", day: "", startTime: "", endTime: "" })
+    setMergeSectionIds([])
     setEntryMissing([])
   }
 
@@ -1840,6 +1947,13 @@ export default function SchedulesPage() {
       endTime: entry.endTime ?? "",
       set: (entry.set ?? "") as "" | "A" | "B",
     })
+    // Merged NSTP class: every section in the group (any day) — the list the
+    // NSTP Director edits below. A plain NSTP class starts with its one section.
+    const groupSections = entry.mergeGroupId
+      ? [...new Set(entries.filter((e: any) => e.mergeGroupId === entry.mergeGroupId).map((e: any) => e.sectionId ?? e.section?.id))]
+      : [entry.sectionId ?? entry.section?.id]
+    setEditMergeSectionIds(groupSections.filter(Boolean) as string[])
+    setEditMergeAddId("")
     setEditSectionSearch("")
     setEditMissing([])
     setEditEntryOpen(true)
@@ -1886,7 +2000,13 @@ export default function SchedulesPage() {
     // ── Constraint-based validation on edit ──
     const toMins = (t: string) => parseInt(t.split(":")[0]) * 60 + parseInt(t.split(":")[1])
     const overlap = (s1: string, e1: string, s2: string, e2: string) => toMins(s1) < toMins(e2) && toMins(s2) < toMins(e1)
-    const otherEntries = entries.filter((e: any) => e.id !== editEntryId && e.day === day)
+    // Sibling rows of a merged NSTP class (same mergeGroupId) are the SAME class
+    // — they share the faculty, room and time by design — so they are not
+    // "other" entries for the faculty/room checks below (server does the same).
+    const editingMergeGroupId = entries.find((e: any) => e.id === editEntryId)?.mergeGroupId ?? null
+    const otherEntries = entries.filter((e: any) =>
+      e.id !== editEntryId && e.day === day && !(editingMergeGroupId && e.mergeGroupId === editingMergeGroupId)
+    )
     // "TBA" placeholder — exempt from the checks that exist to protect a real,
     // scarce resource (mirrors entry-validation.ts and Add Entry's handleAddEntry).
     const isTbaFacultyEdit = isTbaFacultyEmployeeId(selectedFacForEdit?.employeeId)
@@ -1944,17 +2064,23 @@ export default function SchedulesPage() {
     }
 
     try {
+      const editingEntry = entries.find((e: any) => e.id === editEntryId)
+      const nstpMergeEdit = isNstpCode(editSelectedSubject?.code) && (editingEntry?.mergeGroupId || editMergeSectionIds.length > 1)
       const result = await updateEntry.mutateAsync({
         scheduleId: selectedScheduleId,
         entryId: editEntryId,
-        changes: editEntryForm,
+        // A merged NSTP class keeps its sections through the section LIST —
+        // the single sectionId field is what the primary row already has.
+        changes: nstpMergeEdit
+          ? { ...editEntryForm, sectionId: undefined, sectionIds: editMergeSectionIds }
+          : editEntryForm,
       })
       setEditEntryOpen(false)
       setEditEntryId(null)
       if (result.warning) {
         toast.warning(`Saved with conflict: ${result.warning}`, { duration: 6000 })
       } else {
-        toast.success("Entry updated")
+        toast.success(nstpMergeEdit && editMergeSectionIds.length > 1 ? `Merged class updated (${editMergeSectionIds.length} sections)` : "Entry updated")
       }
     } catch (err: any) {
       // Detect conflict errors — offer soft-validation override instead of hard-blocking
@@ -2265,8 +2391,8 @@ export default function SchedulesPage() {
             <p className="font-medium">Waiting for GEC/GEL to be finalized</p>
             <p className="mt-0.5 text-amber-700">
               {chairIsCit
-                ? "Step 1: you can pre-plot your laboratory subjects now. Lecture and other major subjects, Generate for the full load, and Submit unlock once all three CAS cluster chairpersons have finalized GEC/GEL."
-                : "Add Entry, Generate and Submit unlock once all three CAS cluster chairpersons have finalized GEC/GEL for this schedule. Your major subjects are built around that backbone."}
+                ? "Step 1: you can pre-plot your laboratory subjects now. Lecture and other major subjects, Generate for the full load, and Submit unlock once all three CAS department heads have finalized GEC/GEL."
+                : "Add Entry, Generate and Submit unlock once all three CAS department heads have finalized GEC/GEL for this schedule. Your major subjects are built around that backbone."}
             </p>
             {gecClusters.length > 0 && (
               <ul className="mt-2 space-y-0.5">
@@ -2303,7 +2429,7 @@ export default function SchedulesPage() {
       {selectedScheduleId && isSuperAdmin && (
         <div className="flex flex-col gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex-1 min-w-0">
-            <p className="font-medium">GEC/GEL finalization</p>
+            <p className="font-medium">GEC/GEL finalization <span className="font-normal text-muted-foreground">— by department head</span></p>
             <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
               {gecClusters.map((c) => (
                 <li key={c.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -2331,11 +2457,11 @@ export default function SchedulesPage() {
               }
             >
               {gecFinalizeMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {myClusterStatus?.finalized ? "Reopen my cluster" : "Finalize my cluster"}
+              {myClusterStatus?.finalized ? "Reopen my GEC/GEL" : "Finalize my GEC/GEL"}
             </Button>
           ) : (
             <p className="text-xs text-muted-foreground">
-              You have no cluster assigned — ask another Dept Chairperson to finalize on their own cluster&apos;s behalf.
+              You have no department head area assigned — set it under Settings, or ask another Department Chairperson to finalize on their area&apos;s behalf.
             </p>
           )}
         </div>
@@ -2843,7 +2969,12 @@ export default function SchedulesPage() {
                                                   "—"}
                                               </span>
                                               <span className="font-mono">{entry.room?.code}</span>
-                                              <span>{entry.section?.name}</span>
+                                              <span>{entrySectionLabel(entry)}</span>
+                                              {entry.__mergedSections?.length > 1 && (
+                                                <span className="inline-flex items-center rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-800" title="One class held for several sections together">
+                                                  Merged · {entry.__mergedSections.length}
+                                                </span>
+                                              )}
                                             </div>
                                           </div>
                                         </div>
@@ -2964,7 +3095,14 @@ export default function SchedulesPage() {
                                     "—"}
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{entry.room?.code}</td>
-                                <td className="whitespace-nowrap px-3 py-2">{entry.section?.name}</td>
+                                <td className="whitespace-nowrap px-3 py-2">
+                                  {entrySectionLabel(entry)}
+                                  {entry.__mergedSections?.length > 1 && (
+                                    <span className="ml-1.5 inline-flex items-center rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-800" title="One class held for several sections together">
+                                      Merged
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2">
                                   {canEditEntry(entry) && (
                                     <div className="flex items-center justify-end gap-0.5">
@@ -3365,6 +3503,57 @@ export default function SchedulesPage() {
                 )}
               </div>
             )}
+            {/* Merged NSTP sections — an NSTP class routinely combines two or
+                more sections into one class (same faculty, room, day and time).
+                Pick the extra sections here; each gets its own row sharing a
+                mergeGroupId, and the views show them as one line. NSTP only. */}
+            {entryForm.sectionId && selectedSubjectForEntry && isNstpCode(selectedSubjectForEntry.code) && (
+              <div className="grid gap-2 rounded-lg border border-input bg-muted/30 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-sm font-medium">
+                    <Users className="h-4 w-4 text-[#1B4332]" />
+                    Merge with other sections
+                    <span className="text-[10px] font-normal text-muted-foreground">(optional)</span>
+                  </span>
+                  {mergeSectionIds.length > 0 && (
+                    <button type="button" onClick={() => setMergeSectionIds([])} className="text-[10px] text-muted-foreground underline underline-offset-2">
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                  {mergeCandidateSections.length === 0 ? (
+                    <p className="text-[10px] text-muted-foreground">No other sections available in this department.</p>
+                  ) : mergeCandidateSections.map((s: any) => {
+                    const checked = mergeSectionIds.includes(s.id)
+                    return (
+                      <label
+                        key={s.id}
+                        className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+                          checked ? "bg-[#1B4332]/10 border-[#1B4332] text-[#1B4332]" : "border-input text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setMergeSectionIds((prev) => checked ? prev.filter((x) => x !== s.id) : [...prev, s.id])}
+                          className="rounded border-input"
+                        />
+                        {s.name}
+                        {s.yearLevel?.program?.abbreviation && (
+                          <span className="text-[10px] font-normal text-muted-foreground">({s.yearLevel.program.abbreviation} Y{s.yearLevel?.level})</span>
+                        )}
+                      </label>
+                    )
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {mergeSectionIds.length > 0
+                    ? `One class for ${mergeSectionIds.length + 1} sections — ${[selectedSectionForEntry?.name, ...mergeSectionIds.map((id) => sections.find((x: any) => x.id === id)?.name)].filter(Boolean).join(" + ")}. Each section's timetable is checked; the shared room and faculty count once.`
+                    : "Sections that take this NSTP class together, in the same room at the same time."}
+                </p>
+              </div>
+            )}
             {/* Faculty (text autocomplete) & Room (department-restricted). Room drops
                 out of this row in split mode — it moves into the Set A/Set B cards
                 below instead, since each set can use a different room. */}
@@ -3666,7 +3855,8 @@ export default function SchedulesPage() {
             {(
               (entryForm.facultyId && entryForm.day && availableTimeOptions.length < TIME_OPTIONS.length) ||
               (entryForm.day && (occupiedSlots.faculty.length > 0 || occupiedSlots.room.length > 0 || occupiedSlots.section.length > 0)) ||
-              (entryForm.startTime && constraintFilteredEndTimes.length > 0)
+              (entryForm.startTime && constraintFilteredEndTimes.length > 0) ||
+              (entryForm.startTime && selectedSubjectForEntry && resolveMaxMinutesPerDay(selectedSubjectForEntry) !== null)
             ) && (
               <div className="-mt-2 space-y-0.5">
                 {entryForm.facultyId && entryForm.day && availableTimeOptions.length < TIME_OPTIONS.length && (
@@ -3677,6 +3867,11 @@ export default function SchedulesPage() {
                 )}
                 {entryForm.startTime && constraintFilteredEndTimes.length > 0 && (
                   <p className="text-[10px] text-muted-foreground">Showing valid end times (no conflicts)</p>
+                )}
+                {entryForm.startTime && selectedSubjectForEntry && resolveMaxMinutesPerDay(selectedSubjectForEntry) !== null && (
+                  <p className="text-[10px] text-sky-700">
+                    {selectedSubjectForEntry.code} is limited to {formatMinutes(resolveMaxMinutesPerDay(selectedSubjectForEntry)!)} per day — use MWF / TTh to spread the hours.
+                  </p>
                 )}
               </div>
             )}
@@ -3831,6 +4026,58 @@ export default function SchedulesPage() {
 
             {/* Row 2: Section | Room */}
             <div className="grid grid-cols-2 gap-4">
+              {isNstpCode(editSelectedSubject?.code) ? (
+                /* NSTP: the class may cover several sections (merged). Chips for
+                   the current list, a picker to add one; removing the last-but-one
+                   turns it back into an ordinary single-section class. */
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-foreground/80 uppercase tracking-wide">
+                    Sections {editMergeSectionIds.length > 1 && <span className="ml-1 rounded bg-[#1B4332]/10 px-1.5 py-0.5 text-[9px] font-semibold normal-case tracking-normal text-[#1B4332]">Merged · {editMergeSectionIds.length}</span>}
+                  </Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {editMergeSectionIds.map((sid) => {
+                      const sec = sections.find((x: any) => x.id === sid)
+                      return (
+                        <span key={sid} className="inline-flex items-center gap-1 rounded-md bg-[#1B4332]/10 px-2 py-1 text-xs font-medium text-[#1B4332]">
+                          {sec?.name ?? "Section"}
+                          {editMergeSectionIds.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setEditMergeSectionIds((prev) => prev.filter((x) => x !== sid))}
+                              className="rounded p-0.5 hover:bg-[#1B4332]/20"
+                              title="Remove this section from the class"
+                              aria-label={`Remove ${sec?.name ?? "section"}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </span>
+                      )
+                    })}
+                  </div>
+                  <select
+                    value={editMergeAddId}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v) setEditMergeSectionIds((prev) => prev.includes(v) ? prev : [...prev, v])
+                      setEditMergeAddId("")
+                    }}
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">+ Merge another section…</option>
+                    {editMergeCandidates.map((s: any) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}{s.yearLevel?.program?.abbreviation ? ` (${s.yearLevel.program.abbreviation} Y${s.yearLevel?.level})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-muted-foreground">
+                    {editMergeSectionIds.length > 1
+                      ? "One NSTP class for all of these sections — same faculty, room and time. Changes below apply to every section."
+                      : "Add sections to merge them into this NSTP class."}
+                  </p>
+                </div>
+              ) : (
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-foreground/80 uppercase tracking-wide">Section</Label>
                 <div className="relative" ref={editSectionComboRef}>
@@ -3880,6 +4127,7 @@ export default function SchedulesPage() {
                   <p className="text-[10px] text-muted-foreground">Year {editSelectedSubject.year} sections</p>
                 )}
               </div>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-foreground/80 uppercase tracking-wide">Room</Label>
                 <select
@@ -3965,10 +4213,21 @@ export default function SchedulesPage() {
                   className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   <option value="">— Select time —</option>
-                  {editAvailableTimeOptions.filter((t) => !editEntryForm.startTime || t > editEntryForm.startTime).map((t) => (
+                  {editAvailableTimeOptions.filter((t) => {
+                    if (!editEntryForm.startTime) return true
+                    if (t <= editEntryForm.startTime) return false
+                    const cap = editSelectedSubject ? resolveMaxMinutesPerDay(editSelectedSubject) : null
+                    if (cap === null) return true
+                    return toMinsHelper(t) - toMinsHelper(editEntryForm.startTime) <= cap
+                  }).map((t) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
+                {editEntryForm.startTime && editSelectedSubject && resolveMaxMinutesPerDay(editSelectedSubject) !== null && (
+                  <p className="text-[10px] text-sky-700">
+                    Limited to {formatMinutes(resolveMaxMinutesPerDay(editSelectedSubject)!)} per day.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -4343,13 +4602,19 @@ export default function SchedulesPage() {
             if (!entryToDelete) return null
             // Multi-day (MWF/TTh) entries share a groupId — the DELETE route removes
             // every sibling row in one call, so warn the chair all sessions go together.
-            const groupSiblings = entryToDelete.groupId
-              ? entries.filter((e: any) => e.groupId === entryToDelete.groupId)
-              : [entryToDelete]
+            const groupSiblings = entryToDelete.mergeGroupId
+              ? entries.filter((e: any) => e.mergeGroupId === entryToDelete.mergeGroupId)
+              : entryToDelete.groupId
+                ? entries.filter((e: any) => e.groupId === entryToDelete.groupId)
+                : [entryToDelete]
             const isGrouped = groupSiblings.length > 1
-            const groupDayLabel = [...groupSiblings]
-              .sort((a: any, b: any) => DAYS.indexOf(a.day) - DAYS.indexOf(b.day))
-              .map((e: any) => DAY_LABELS[e.day] ?? e.day)
+            const mergedNames = entryToDelete.mergeGroupId
+              ? [...new Set(groupSiblings.map((e: any) => e.section?.name).filter(Boolean))] as string[]
+              : []
+            // Distinct days — a merged class has one row per section per day.
+            const groupDayLabel = [...new Set(groupSiblings.map((e: any) => e.day as string))]
+              .sort((a, b) => DAYS.indexOf(a) - DAYS.indexOf(b))
+              .map((d) => DAY_LABELS[d] ?? d)
               .join("/")
             return (
               <div className="space-y-4 py-1">
@@ -4358,7 +4623,7 @@ export default function SchedulesPage() {
                     {entryToDelete.subject?.code} — {entryToDelete.subject?.title}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    {entryToDelete.section?.name}
+                    {mergedNames.length > 1 ? mergedNames.join(" + ") : entryToDelete.section?.name}
                     {entryToDelete.faculty?.user && ` · ${entryToDelete.faculty.user.firstName} ${entryToDelete.faculty.user.lastName}`}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -4372,7 +4637,9 @@ export default function SchedulesPage() {
                 <div className="flex items-start gap-2.5 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5">
                   <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-red-600" />
                   <p className="text-xs text-red-700">
-                    {isGrouped ? (
+                    {mergedNames.length > 1 ? (
+                      <>Deletes this <strong>merged NSTP class for all {mergedNames.length} sections</strong> ({mergedNames.join(", ")}{groupSiblings.length > mergedNames.length ? `, ${groupDayLabel}` : ""}). To drop one section only, edit the class instead. This action <strong>cannot be undone</strong>.</>
+                    ) : isGrouped ? (
                       <>Deletes <strong>all {groupSiblings.length} sessions</strong> ({groupDayLabel}) for this class — they were generated together and move together. This action <strong>cannot be undone</strong>.</>
                     ) : (
                       <>This action <strong>cannot be undone</strong>.</>

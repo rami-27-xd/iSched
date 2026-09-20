@@ -25,6 +25,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { describeRequiredRoomTypes } from "@/lib/room-type-rules"
+import { isGecCode, resolveMaxMinutesPerDay, formatMinutes, SESSION_CAP_OPTIONS, DEFAULT_GEC_MAX_MINUTES_PER_DAY } from "@/lib/session-rules"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 import { CardListSkeleton } from "@/components/shared/loading-skeletons"
 
@@ -36,7 +37,9 @@ const TYPE_COLORS: Record<string, string> = {
 // roomType "" = automatic (labs → lab rooms, computer-based labs → Computer
 // Laboratory, lectures → lecture rooms — see lib/room-type-rules.ts); any other
 // value pins the subject to that one room type.
-const INITIAL_SUBJECT = { code: "", title: "", units: "3", type: "", departmentId: "", yearLevelId: "", semester: "FIRST", year: "1", roomType: "" }
+// maxMinutesPerDay "" = the default rule (GEC/GEL 1h 30min per day, others
+// uncapped — lib/session-rules.ts); "60" / "90" pins a GEC/GEL subject's cap.
+const INITIAL_SUBJECT = { code: "", title: "", units: "3", type: "", departmentId: "", yearLevelId: "", semester: "FIRST", year: "1", roomType: "", maxMinutesPerDay: "" }
 const INITIAL_SECTION = { name: "", yearLevelId: "", capacity: "40" }
 
 function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester }: {
@@ -77,7 +80,17 @@ function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester
                   {s.type}
                 </span>
               </td>
-              <td className="px-3 py-1.5 text-xs">{s.units}</td>
+              <td className="px-3 py-1.5 text-xs">
+                {s.units}
+                {resolveMaxMinutesPerDay(s) !== null && (
+                  <span
+                    className="ml-1.5 inline-flex rounded-full bg-sky-50 px-1.5 py-0 text-[9px] font-medium text-sky-700 border border-sky-200"
+                    title="Longest session this subject may hold on one day"
+                  >
+                    max {formatMinutes(resolveMaxMinutesPerDay(s)!)}/day
+                  </span>
+                )}
+              </td>
               <td className="px-3 py-1.5">
                 <div className="flex items-center gap-1">
                   <button onClick={() => onEdit(s)} className="p-1 rounded hover:bg-muted">
@@ -219,6 +232,7 @@ export default function CoursesPage() {
       semester: s.semester ?? "FIRST",
       year: String(s.year ?? 1),
       roomType: s.requiredRoomType?.[0] ?? "",
+      maxMinutesPerDay: s.maxMinutesPerDay ? String(s.maxMinutesPerDay) : "",
     })
     setSubjectOpen(true)
   }
@@ -293,14 +307,16 @@ export default function CoursesPage() {
           semester: subjectForm.semester,
           year: subjectForm.year,
           requiredRoomType: subjectForm.roomType ? [subjectForm.roomType] : [],
+          maxMinutesPerDay: subjectForm.maxMinutesPerDay ? Number(subjectForm.maxMinutesPerDay) : null,
         })
       } else {
-        const { roomType, ...rest } = subjectForm
+        const { roomType, maxMinutesPerDay, ...rest } = subjectForm
         const payload = {
           ...rest,
           hoursPerWeek: subjectForm.units,
           yearLevelId: resolvedYearLevelId || null,
           requiredRoomType: roomType ? [roomType] : [],
+          maxMinutesPerDay: maxMinutesPerDay ? Number(maxMinutesPerDay) : null,
         }
         await createSubject.mutateAsync(payload)
         if (subjectForm.semester && subjectForm.semester !== semesterFilter) {
@@ -705,6 +721,30 @@ export default function CoursesPage() {
                   : `Automatic: ${describeRequiredRoomTypes({ code: subjectForm.code, title: subjectForm.title, type: subjectForm.type || "LECTURE", requiredRoomType: [] })}.`}
               </p>
             </div>
+            {/* Per-day limit — GEC/GEL only. A 3-unit GEC then meets 1h×3 (MWF /
+                TThS) or 1.5h×2 (TTh / MW / …) and is never one 3-hour block; both
+                the generator and Add/Edit Entry enforce it. */}
+            {isGecCode(subjectForm.code) && (
+              <div className="grid gap-2">
+                <Label>Longest session per day</Label>
+                <Select
+                  value={subjectForm.maxMinutesPerDay || String(DEFAULT_GEC_MAX_MINUTES_PER_DAY)}
+                  onValueChange={(v) => setSubjectForm(f => ({ ...f, maxMinutesPerDay: v ?? "" }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {SESSION_CAP_OPTIONS.map((o) => (
+                      <SelectItem key={o.minutes} value={String(o.minutes)}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  GEC/GEL classes are spread across the week — {subjectForm.units || 3} hour{Number(subjectForm.units || 3) === 1 ? "" : "s"} a week at most{" "}
+                  {formatMinutes(Number(subjectForm.maxMinutesPerDay || DEFAULT_GEC_MAX_MINUTES_PER_DAY))} a day
+                  {Number(subjectForm.maxMinutesPerDay || DEFAULT_GEC_MAX_MINUTES_PER_DAY) === 60 ? " (three 1-hour meetings, e.g. MWF)" : " (e.g. TTh 1.5 h each, or MWF 1 h each)"}. Never a single 3-hour block.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Semester</Label>

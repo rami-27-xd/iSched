@@ -45,8 +45,10 @@ export interface SidebarProps {
 
 // Who sees which page (lib/roles.ts has the role descriptions):
 //   DEAN            — read-only on every data page + User Management (Dean only) + System Logs
-//   SUPER_ADMIN     — Department Chair: everything scheduling-related
-//   ADMIN           — Program Chair: everything scheduling-related (own program)
+//   SUPER_ADMIN     — Department Chairperson: everything scheduling-related; System Logs
+//                     (activity, schedules, classes, subject summary, room occupancy) across every department
+//   ADMIN           — Program Chairperson: everything scheduling-related (own program);
+//                     System Logs for their department
 //   PATHFIT / NSTP  — Manage Schedules only (their own subject family)
 const navItems: NavItem[] = [
   { title: 'Dashboard',            href: '/dashboard',              icon: LayoutDashboard, roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP', 'FACULTY'] },
@@ -56,7 +58,7 @@ const navItems: NavItem[] = [
   { title: 'Departments',          href: '/dashboard/subjects',     icon: BookOpen,        roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
   { title: 'Buildings',            href: '/dashboard/rooms',        icon: Building2,       roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
   { title: 'User Management',      href: '/dashboard/users',        icon: Users,           roles: ['DEAN'] },
-  { title: 'System Logs',          href: '/dashboard/logs',         icon: ScrollText,      roles: ['DEAN'] },
+  { title: 'System Logs',          href: '/dashboard/logs',         icon: ScrollText,      roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
   { title: 'User Manual',          href: '/dashboard/manual',       icon: BookOpenCheck,   roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'] },
 ]
 

@@ -98,10 +98,15 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { code, title, units, hoursPerWeek, type, departmentId, yearLevelId, requiredRoomType, semester, year } = body
+    const { code, title, units, hoursPerWeek, type, departmentId, yearLevelId, requiredRoomType, semester, year, maxMinutesPerDay } = body
 
     if (!code || !title || !units || !type || !departmentId) {
       return NextResponse.json(apiError("Missing required fields"), { status: 400 })
+    }
+    // Per-day session cap (lib/session-rules.ts): 60 or 90 minutes, or null for
+    // the default rule (GEC/GEL 90 min, others uncapped).
+    if (maxMinutesPerDay !== undefined && maxMinutesPerDay !== null && maxMinutesPerDay !== "" && ![60, 90].includes(Number(maxMinutesPerDay))) {
+      return NextResponse.json(apiError("Per-day limit must be 1 hour (60) or 1 hour 30 minutes (90)"), { status: 400 })
     }
 
     const subject = await db.subject.create({
@@ -116,6 +121,7 @@ export async function POST(req: Request) {
         requiredRoomType: requiredRoomType ?? [],
         semester: semester || "FIRST",
         year: year ? Number(year) : 1,
+        maxMinutesPerDay: maxMinutesPerDay ? Number(maxMinutesPerDay) : null,
       },
       include: {
         department: { select: { id: true } },

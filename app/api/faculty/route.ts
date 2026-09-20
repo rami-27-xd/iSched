@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { notifyAllSuperAdmins } from "@/lib/notifications"
 import { recordAudit } from "@/lib/audit"
+import { isFacultyType, maxUnitsForType, DEFAULT_HOURS_BY_TYPE } from "@/lib/faculty-types"
 
 export async function GET(req: Request) {
   try {
@@ -121,11 +122,17 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { userId, firstName, lastName, email, employeeId: providedEmployeeId, departmentId, specializations, sectionCounts, maxUnitsPerWeek, maxHoursPerWeek, hoursPerWeek } = body
+    const { userId, firstName, lastName, email, employeeId: providedEmployeeId, departmentId, specializations, sectionCounts, employmentType: rawType, maxHoursPerWeek, hoursPerWeek } = body
 
     if (maxHoursPerWeek !== undefined && !(Number(maxHoursPerWeek) >= 1 && Number(maxHoursPerWeek) <= 60)) {
       return NextResponse.json(apiError("Max hours per week must be between 1 and 60"), { status: 400 })
     }
+    // Employment type decides the unit cap (Regular 21 / COSI 40); the cap is
+    // derived here, never taken from the client.
+    if (rawType !== undefined && !isFacultyType(rawType)) {
+      return NextResponse.json(apiError("Employment type must be REGULAR or COSI"), { status: 400 })
+    }
+    const employmentType = isFacultyType(rawType) ? rawType : "REGULAR"
 
     if (!departmentId) {
       return NextResponse.json(apiError("Department is required"), { status: 400 })
@@ -232,8 +239,11 @@ export async function POST(req: Request) {
         ...(creatorClusterId ? { clusterId: creatorClusterId } : {}),
         specializations: specializations ?? [],
         sectionCounts: sectionCounts ?? {},
-        maxUnitsPerWeek: maxUnitsPerWeek ?? 21,
-        ...(maxHoursPerWeek !== undefined ? { maxHoursPerWeek: Number(maxHoursPerWeek) } : {}),
+        employmentType,
+        maxUnitsPerWeek: maxUnitsForType(employmentType),
+        // Hours: what the form sent, else the type's default (a COSI at 40 units
+        // needs more than the 30-hour default a regular faculty member gets).
+        maxHoursPerWeek: maxHoursPerWeek !== undefined ? Number(maxHoursPerWeek) : DEFAULT_HOURS_BY_TYPE[employmentType],
         hoursPerWeek: hoursPerWeek ?? 0,
       },
       include: { user: true, department: true },

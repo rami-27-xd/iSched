@@ -828,7 +828,7 @@ export default function UsersPage() {
                     ))}
                   </select>
                   {casClusters.length === 0 && (
-                    <p className="text-xs text-muted-foreground">No areas configured for CAS yet.</p>
+                    <p className="text-xs text-muted-foreground">No department head areas configured for CAS yet.</p>
                   )}
                 </div>
               )}

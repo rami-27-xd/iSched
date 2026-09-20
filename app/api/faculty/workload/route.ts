@@ -49,17 +49,23 @@ export async function GET(req: Request) {
         schedule: { semesterId, isArchived: false },
         ...facultyScope,
       },
-      select: { facultyId: true, subjectId: true, sectionId: true, set: true, startTime: true, endTime: true },
+      select: { facultyId: true, subjectId: true, sectionId: true, set: true, day: true, startTime: true, endTime: true, mergeGroupId: true },
     })
 
     const out: Record<string, { scheduledMinutes: number; entryCount: number; classCount: number }> = {}
     const classKeys = new Map<string, Set<string>>()
+    // A merged NSTP class is one row per section but ONE block of teaching —
+    // count each (merge group, day, time) once.
+    const countedMergedBlocks = new Set<string>()
     for (const e of entries) {
       const row = (out[e.facultyId] ??= { scheduledMinutes: 0, entryCount: 0, classCount: 0 })
+      const mergedKey = e.mergeGroupId ? `${e.mergeGroupId}|${e.day}|${e.startTime}|${e.endTime}` : null
+      if (mergedKey && countedMergedBlocks.has(mergedKey)) continue
+      if (mergedKey) countedMergedBlocks.add(mergedKey)
       row.scheduledMinutes += Math.max(0, toMinutes(e.endTime) - toMinutes(e.startTime))
       row.entryCount += 1
       const keys = classKeys.get(e.facultyId) ?? new Set<string>()
-      keys.add(`${e.subjectId}__${e.sectionId}__${e.set ?? ""}`)
+      keys.add(e.mergeGroupId ? `merged__${e.mergeGroupId}` : `${e.subjectId}__${e.sectionId}__${e.set ?? ""}`)
       classKeys.set(e.facultyId, keys)
     }
     for (const [fid, keys] of classKeys) out[fid].classCount = keys.size

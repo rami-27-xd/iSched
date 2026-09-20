@@ -6,7 +6,7 @@ import { validateEntry, validateEntryCapacity, stripConflictMarker, roomBuilding
 import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
-import { isGeUnitRole } from "@/lib/roles"
+import { isGeUnitRole, isNstpCode } from "@/lib/roles"
 import { recordAudit } from "@/lib/audit"
 
 export async function POST(
@@ -114,22 +114,53 @@ export async function POST(
       return NextResponse.json(apiError("Select at least one day"), { status: 400 })
     }
 
+    // ── Merged NSTP sections ──────────────────────────────────────────────
+    // `sectionIds` (plural) holds one NSTP class for two or more sections at
+    // once — the same faculty, room, day(s) and time, stored as one row per
+    // (section, day) sharing a mergeGroupId. Only NSTP may be merged (an NSTP
+    // class routinely combines sections); every other subject keeps one
+    // section per class. `sectionId` (singular) is the ordinary path.
+    const rawSectionIds: string[] = Array.isArray(body.sectionIds) && body.sectionIds.length > 0
+      ? body.sectionIds
+      : (body.sectionId ? [body.sectionId] : [])
+    const sectionIds = [...new Set(rawSectionIds.filter((x: unknown): x is string => typeof x === "string" && !!x))]
+    if (sectionIds.length === 0) {
+      return NextResponse.json(apiError("Select a section"), { status: 400 })
+    }
+    const isMerged = sectionIds.length > 1
+    if (isMerged) {
+      const subj = await db.subject.findUnique({ where: { id: body.subjectId }, select: { code: true } })
+      if (!isNstpCode(subj?.code)) {
+        return NextResponse.json(
+          apiError("Only NSTP classes can be merged across sections — every other subject is scheduled one section at a time."),
+          { status: 400 }
+        )
+      }
+    }
+    const mergeGroupId = isMerged ? crypto.randomUUID() : null
+
     // ── Validate scheduling constraints (conflicts) — every day must pass. ──
     // All-or-nothing: if any day in the pattern conflicts, none are created,
-    // so a chair never ends up with a class half-placed across the week.
+    // so a chair never ends up with a class half-placed across the week. For a
+    // merged class every section is checked too (each section's own timetable
+    // must be free) — the sibling rows share the merge group, so they are not
+    // a faculty/room clash with each other.
     for (const day of days) {
-      const validationError = await validateEntry(id, {
-        subjectId: body.subjectId,
-        facultyId: body.facultyId,
-        roomId: body.roomId,
-        sectionId: body.sectionId,
-        day,
-        startTime: body.startTime,
-        endTime: body.endTime,
-        set: body.set ?? null,
-      })
-      if (validationError) {
-        return NextResponse.json(apiError(stripConflictMarker(validationError)), { status: 409 })
+      for (const sectionId of sectionIds) {
+        const validationError = await validateEntry(id, {
+          subjectId: body.subjectId,
+          facultyId: body.facultyId,
+          roomId: body.roomId,
+          sectionId,
+          day,
+          startTime: body.startTime,
+          endTime: body.endTime,
+          set: body.set ?? null,
+          mergeGroupId,
+        })
+        if (validationError) {
+          return NextResponse.json(apiError(stripConflictMarker(validationError)), { status: 409 })
+        }
       }
     }
 
@@ -137,6 +168,8 @@ export async function POST(
     // maxWeeklyUnits / maxDailyLoad / no back-to-back labs. These are judgment
     // calls rather than correctness errors, so a chair can proceed deliberately
     // with `force: true`; the response still reports what was overridden.
+    // A merged class is ONE teaching block however many sections sit in it, so
+    // the check runs once per day, for the first section.
     let capacityWarning: string | null = null
     if (!body.force) {
       for (const day of days) {
@@ -144,11 +177,12 @@ export async function POST(
           subjectId: body.subjectId,
           facultyId: body.facultyId,
           roomId: body.roomId,
-          sectionId: body.sectionId,
+          sectionId: sectionIds[0],
           day,
           startTime: body.startTime,
           endTime: body.endTime,
           set: body.set ?? null,
+          mergeGroupId,
         })
         if (capacityWarning) {
           return NextResponse.json(
@@ -160,39 +194,45 @@ export async function POST(
     }
 
     // ── Persist ────────────────────────────────────────────────────────────
+    // One row per (day × section). Multi-day rows share a groupId; merged
+    // sections share a mergeGroupId (both, for a merged multi-day class).
     const groupId = days.length > 1 ? crypto.randomUUID() : null
     const createdEntries = await db.$transaction(
-      days.map((day) =>
-        db.scheduleEntry.create({
-          data: {
-            scheduleId: id,
-            subjectId: body.subjectId,
-            facultyId: body.facultyId,
-            // Store the free-text faculty name override when provided
-            facultyName: body.facultyName?.trim() || null,
-            roomId: body.roomId,
-            sectionId: body.sectionId,
-            day: day as any, // DayOfWeek — days[] is validated against the same enum values as the single-day `day` field
-            startTime: body.startTime,
-            endTime: body.endTime,
-            set: body.set ?? null,
-            groupId,
-            createdBy: dbUser.id,
-          },
-          include: {
-            subject: true,
-            faculty: { include: { user: true } },
-            room: { include: { building: true } },
-            section: true,
-          },
-        })
+      days.flatMap((day) =>
+        sectionIds.map((sectionId) =>
+          db.scheduleEntry.create({
+            data: {
+              scheduleId: id,
+              subjectId: body.subjectId,
+              facultyId: body.facultyId,
+              // Store the free-text faculty name override when provided
+              facultyName: body.facultyName?.trim() || null,
+              roomId: body.roomId,
+              sectionId,
+              day: day as any, // DayOfWeek — days[] is validated against the same enum values as the single-day `day` field
+              startTime: body.startTime,
+              endTime: body.endTime,
+              set: body.set ?? null,
+              groupId,
+              mergeGroupId,
+              createdBy: dbUser.id,
+            },
+            include: {
+              subject: true,
+              faculty: { include: { user: true } },
+              room: { include: { building: true } },
+              section: true,
+            },
+          })
+        )
       )
     )
     const entry = createdEntries[0]
+    const sectionNames = [...new Set(createdEntries.map((e) => e.section?.name).filter(Boolean))] as string[]
 
     // Auto-clear any unassigned queue entry for this subject+section pair
     await db.unassignedEntry.deleteMany({
-      where: { scheduleId: id, subjectId: body.subjectId, sectionId: body.sectionId },
+      where: { scheduleId: id, subjectId: body.subjectId, sectionId: { in: sectionIds } },
     })
 
     // Keep faculty specializations in sync with their actual assignments
@@ -208,10 +248,11 @@ export async function POST(
       entityId: entry.id,
       departmentId: schedule.departmentId,
       scheduleId: id,
-      summary: `Added ${entry.subject?.code ?? "class"} for ${entry.section?.name ?? "section"} — ${days.join("/")} ${body.startTime}–${body.endTime}${entry.room ? ` in ${entry.room.code}` : ""}`,
+      summary: `Added ${entry.subject?.code ?? "class"} for ${sectionNames.join(" + ") || entry.section?.name || "section"}${isMerged ? " (merged)" : ""} — ${days.join("/")} ${body.startTime}–${body.endTime}${entry.room ? ` in ${entry.room.code}` : ""}`,
       metadata: {
         Subject: `${entry.subject?.code ?? ""} — ${entry.subject?.title ?? ""}`.trim(),
-        Section: entry.section?.name ?? "",
+        Section: sectionNames.join(", ") || (entry.section?.name ?? ""),
+        ...(isMerged ? { "Merged sections": String(sectionIds.length) } : {}),
         Faculty: entry.facultyName ?? (entry.faculty?.user ? `${entry.faculty.user.firstName} ${entry.faculty.user.lastName}` : ""),
         Room: entry.room ? `${entry.room.code}${entry.room.building ? ` (${entry.room.building.name})` : ""}` : "",
         Days: days.join(", "),
@@ -222,7 +263,7 @@ export async function POST(
     })
 
     return NextResponse.json(
-      apiResponse(days.length > 1 ? createdEntries : entry),
+      apiResponse(createdEntries.length > 1 ? createdEntries : entry),
       { status: 201 }
     )
   } catch (error) {

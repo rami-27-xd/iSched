@@ -47,6 +47,7 @@ export async function GET(
             startTime: true,
             endTime: true,
             set: true,
+            mergeGroupId: true,
             facultyName: true,
             subject: { select: { code: true, title: true, units: true, hoursPerWeek: true, type: true } },
             faculty: { select: { id: true, user: { select: { firstName: true, lastName: true } } } },
@@ -92,6 +93,7 @@ export async function GET(
       startTime: e.startTime,
       endTime: e.endTime,
       set: e.set ?? null,
+      mergeGroupId: e.mergeGroupId ?? null,
     }))
 
     return NextResponse.json(

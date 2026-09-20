@@ -16,7 +16,7 @@ export async function PATCH(req: Request, { params }: Params) {
 
     const dbUser = await getCurrentUser()
     if (!dbUser || dbUser.role !== "SUPER_ADMIN") {
-      return NextResponse.json(apiError("Only Department Chairs can modify clusters"), { status: 403 })
+      return NextResponse.json(apiError("Only Department Chairpersons can modify department head areas"), { status: 403 })
     }
 
     const { id } = await params
@@ -72,7 +72,7 @@ export async function PATCH(req: Request, { params }: Params) {
     return NextResponse.json(apiResponse(updated))
   } catch (error: any) {
     if (error.code === "P2002") {
-      return NextResponse.json(apiError("A cluster with this name already exists"), { status: 409 })
+      return NextResponse.json(apiError("A department head area with this name already exists"), { status: 409 })
     }
     console.error("PATCH /api/clusters/[id] error:", error)
     return NextResponse.json(apiError("Internal server error"), { status: 500 })
@@ -86,7 +86,7 @@ export async function DELETE(req: Request, { params }: Params) {
 
     const dbUser = await getCurrentUser()
     if (!dbUser || dbUser.role !== "SUPER_ADMIN") {
-      return NextResponse.json(apiError("Only Department Chairs can delete clusters"), { status: 403 })
+      return NextResponse.json(apiError("Only Department Chairpersons can delete department head areas"), { status: 403 })
     }
 
     const { id } = await params

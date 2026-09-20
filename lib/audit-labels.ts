@@ -52,7 +52,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   "schedule.reset": "Schedule reset to draft",
   "schedule.published": "Schedule published",
   "schedule.unpublished": "Schedule unpublished",
-  "schedule.gecClusterFinalized": "GEC/GEL finalized (one cluster)",
+  "schedule.gecClusterFinalized": "GEC/GEL finalized (one department head)",
   "schedule.gecFullyFinalized": "GEC/GEL fully finalized",
   "schedule.gecReopened": "GEC/GEL reopened",
   "entry.created": "Class added",

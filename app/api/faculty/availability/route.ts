@@ -3,6 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
+import { departmentHasScheduleForTerm } from "@/lib/services/term-scope"
 
 /**
  * Write-permission guard for faculty availability, mirroring checkFacultyWriteAccess
@@ -50,7 +51,7 @@ async function checkFacultyWriteAccess(facultyId: string): Promise<{ error: Next
     if (chairClusterId && target.clusterId && target.clusterId !== chairClusterId) {
       return {
         error: NextResponse.json(
-          apiError("Forbidden — this faculty member belongs to a different cluster"),
+          apiError("Forbidden — this faculty member belongs to a different department head area"),
           { status: 403 }
         ),
       }
@@ -132,13 +133,10 @@ export async function POST(req: Request) {
 
     // ── Active schedule required ────────────────────────────────────────────
     // Availability is entered against a real scheduling run: there must be a
-    // non-archived schedule for this semester in the faculty's department.
-    // Archived schedules are ignored entirely.
-    const activeSchedule = await db.schedule.findFirst({
-      where: { semesterId, isArchived: false, ...(target?.departmentId ? { departmentId: target.departmentId } : {}) },
-      select: { id: true },
-    })
-    if (!activeSchedule) {
+    // non-archived schedule for this semester that this faculty's department
+    // takes part in — its own, or for CAS faculty any department's (they are
+    // scheduled into every college's GEC/GEL). Archived schedules never count.
+    if (!(await departmentHasScheduleForTerm(target?.departmentId, semesterId))) {
       return NextResponse.json(
         apiError("No active schedule exists for this semester in this department. Create one in Manage Schedules before setting faculty availability."),
         { status: 409 }

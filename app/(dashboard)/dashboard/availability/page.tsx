@@ -13,9 +13,10 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import Link from "next/link"
-import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search, CalendarDays, Building2 } from "lucide-react"
+import { Loader2, Plus, MoreHorizontal, Pencil, UserMinus, Search, CalendarDays } from "lucide-react"
 import { toast } from "sonner"
-import { useFacultyList, useCreateFaculty, useUpdateFaculty, useBuildings } from "@/hooks/use-data"
+import { useFacultyList, useCreateFaculty, useUpdateFaculty } from "@/hooks/use-data"
+import { FACULTY_TYPES, FACULTY_TYPE_LABELS, MAX_UNITS_BY_TYPE, DEFAULT_HOURS_BY_TYPE, formatFacultyType, type FacultyType } from "@/lib/faculty-types"
 import { useSchedules } from "@/hooks/use-schedules"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { PageHeader } from "@/components/shared/page-header"
@@ -129,10 +130,6 @@ function FacultyCard({
   onEdit,
   onDeactivate,
   readOnly = false,
-  buildings,
-  buildingIds,
-  onSaveBuildings,
-  isSavingBuildings,
 }: {
   faculty: any
   availabilityMap: Map<string, Set<string>>
@@ -145,12 +142,6 @@ function FacultyCard({
   onDeactivate?: (faculty: any) => void
   /** Dean: the timeline, presets and max-hours box are displayed but cannot be changed. */
   readOnly?: boolean
-  /** Buildings this department may use — the choices for per-term building access. */
-  buildings: { id: string; name: string; code: string }[]
-  /** Buildings this faculty may teach in THIS term (empty = no restriction). */
-  buildingIds: Set<string>
-  onSaveBuildings: (facultyId: string, buildingIds: string[]) => void
-  isSavingBuildings: boolean
 }) {
   const [activeDay, setActiveDay] = useState<string>("MONDAY")
   const dragRef = useRef<{ dragging: boolean; startIdx: number; endIdx: number; mode: "add" | "remove" } | null>(null)
@@ -446,11 +437,12 @@ function FacultyCard({
       >
         <div className="min-w-0">
           <h3 className="font-semibold text-base truncate">{fullName}</h3>
-          {department && (
-            <p className="text-xs mt-0.5 truncate" style={{ color: BRAND_GOLD }}>
-              {department}
-            </p>
-          )}
+          <p className="text-xs mt-0.5 truncate" style={{ color: BRAND_GOLD }}>
+            {department ? `${department} · ` : ""}
+            <span title={`${formatFacultyType(faculty.employmentType)} — max ${faculty.maxUnitsPerWeek ?? 21} units / week`}>
+              {formatFacultyType(faculty.employmentType)} · {faculty.maxUnitsPerWeek ?? 21}u max
+            </span>
+          </p>
         </div>
         {/* Max hours / week — caps the hours marked below and the classes the
             scheduler may assign. Saves on blur / Enter. */}
@@ -514,44 +506,6 @@ function FacultyCard({
       <CardContent className="p-4">
         <div className="grid gap-4">
           <div className="min-w-0 space-y-3">
-            {/* Building access for this term — which buildings this faculty may be
-                scheduled in. No selection = any building. A hard constraint for the
-                generator and for manual entry, per term like the hours below. */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                <Building2 className="h-3.5 w-3.5" /> Buildings
-                {isSavingBuildings && <Loader2 className="h-3 w-3 animate-spin" />}
-              </span>
-              {buildings.length === 0 ? (
-                <span className="text-xs text-muted-foreground">No buildings assigned to this department</span>
-              ) : (
-                buildings.map((b) => {
-                  const on = buildingIds.has(b.id)
-                  return (
-                    <button
-                      key={b.id}
-                      type="button"
-                      disabled={readOnly || isSavingBuildings}
-                      title={b.name}
-                      onClick={() => {
-                        const next = new Set(buildingIds)
-                        if (on) next.delete(b.id); else next.add(b.id)
-                        onSaveBuildings(faculty.id, [...next])
-                      }}
-                      className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:cursor-default disabled:opacity-70 ${
-                        on ? "border-[#1B4332] bg-[#1B4332] text-white" : "border-input bg-background text-muted-foreground hover:bg-muted"
-                      }`}
-                    >
-                      {b.code}
-                    </button>
-                  )
-                })
-              )}
-              {buildings.length > 0 && buildingIds.size === 0 && (
-                <span className="text-[11px] text-muted-foreground">— any building</span>
-              )}
-            </div>
-
             {/* Day tabs */}
             <div className="flex gap-1 flex-wrap">
               {DAYS.map((day) => {
@@ -853,18 +807,27 @@ export default function AvailabilityPage() {
   const updateFaculty = useUpdateFaculty()
 
   // ── Term ──
-  // Availability and building access are recorded per Academic Year + Semester.
-  // The chair picks WHICH term they are entering — the choices are the terms that
-  // have a non-archived schedule in their department (archived terms never
-  // count), defaulting to the active semester when it has one, else the most
-  // recently created schedule's term. Generation and manual entry then read
-  // strictly that term's rows — never another semester's.
+  // Availability is recorded per Academic Year + Semester. The chair picks WHICH
+  // term they are entering — the choices are the 1st and 2nd semesters that have
+  // a non-archived schedule their faculty take part in (archived terms never
+  // count; Summer is never offered here), defaulting to the active semester when
+  // it has one, else the most recently created schedule's term. Generation and
+  // manual entry then read strictly that term's rows — never another semester's.
+  //
+  // For a Program Chairperson that is their own department's schedule. For a
+  // Department Chairperson (CAS) it is ANY department's schedule: CAS faculty
+  // teach GEC/GEL in every college's timetable, and CAS rarely has a schedule
+  // of its own — restricting to it hid every term (and every availability row
+  // generation had already used) behind "No active schedule".
   const { data: deptSchedules = [], isLoading: loadingSchedules } = useSchedules(undefined, false)
+  const isGeneralEducationChair = currentUser?.role === "SUPER_ADMIN"
   const terms = useMemo(() => {
     const byTerm = new Map<string, any>()
     for (const sc of deptSchedules as any[]) {
       if (!sc.semester || sc.isArchived || sc.status === "ARCHIVED") continue
-      if (userDeptId && (sc.departmentId ?? sc.department?.id) !== userDeptId) continue
+      // 1st and 2nd semester only — availability is not kept for Summer.
+      if (sc.semester.type !== "FIRST" && sc.semester.type !== "SECOND") continue
+      if (!isGeneralEducationChair && userDeptId && (sc.departmentId ?? sc.department?.id) !== userDeptId) continue
       if (!byTerm.has(sc.semesterId)) byTerm.set(sc.semesterId, sc.semester)
     }
     return [...byTerm.entries()]
@@ -875,7 +838,7 @@ export default function AvailabilityPage() {
         const order = { FIRST: 0, SECOND: 1, SUMMER: 2 } as Record<string, number>
         return (order[b.sem.type] ?? 0) - (order[a.sem.type] ?? 0)
       })
-  }, [deptSchedules, userDeptId])
+  }, [deptSchedules, userDeptId, isGeneralEducationChair])
   const [selectedTermId, setSelectedTermId] = useState("")
   const activeSemester = useMemo(() => {
     const chosen = terms.find((t) => t.id === selectedTermId)
@@ -887,57 +850,6 @@ export default function AvailabilityPage() {
   // non-archived schedule in this department by construction.
   const hasActiveSchedule = !!activeSemesterId
   const loadingSemesters = loadingSchedules
-
-  // ── Buildings this department may use (per-term building access choices) ──
-  const { data: allBuildings = [] } = useBuildings()
-  const deptBuildings = useMemo(
-    () =>
-      (allBuildings as any[])
-        .filter((b) => {
-          const links: any[] = b.departments ?? []
-          return links.length === 0 || links.some((l) => (l.departmentId ?? l.department?.id) === userDeptId)
-        })
-        .filter((b) => !["TBA", "GYM"].includes(b.code))
-        .map((b) => ({ id: b.id, name: b.name, code: b.code })),
-    [allBuildings, userDeptId]
-  )
-  const { data: buildingRows = [] } = useQuery({
-    queryKey: ["faculty-building-availability", activeSemesterId],
-    queryFn: async () => {
-      const res = await fetch(`/api/faculty/building-availability?semesterId=${activeSemesterId}`)
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? "Failed to fetch building access")
-      return (json.data ?? []) as { facultyId: string; buildingId: string }[]
-    },
-    enabled: !!activeSemesterId,
-  })
-  const buildingMap = useMemo(() => {
-    const m = new Map<string, Set<string>>()
-    for (const r of buildingRows) {
-      if (!m.has(r.facultyId)) m.set(r.facultyId, new Set())
-      m.get(r.facultyId)!.add(r.buildingId)
-    }
-    return m
-  }, [buildingRows])
-  const [savingBuildingsFor, setSavingBuildingsFor] = useState<string | null>(null)
-  async function handleSaveBuildings(facultyId: string, buildingIds: string[]) {
-    if (!activeSemesterId) return
-    setSavingBuildingsFor(facultyId)
-    try {
-      const res = await fetch("/api/faculty/building-availability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ facultyId, semesterId: activeSemesterId, buildingIds }),
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? "Failed to save building access")
-      await queryClient.invalidateQueries({ queryKey: ["faculty-building-availability", activeSemesterId] })
-    } catch (err: any) {
-      toast.error(err.message)
-    } finally {
-      setSavingBuildingsFor(null)
-    }
-  }
 
   const semesterLabel = useCallback((s: any) => {
     const type =
@@ -952,14 +864,16 @@ export default function AvailabilityPage() {
 
   // Add faculty dialog
   const [addOpen, setAddOpen] = useState(false)
-  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21 as number | string, maxHoursPerWeek: 30 as number | string })
+  // Regular (21 units) / COSI (40 units): the unit cap follows the type; hours
+  // start at the type's default and stay editable.
+  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", employeeId: "", employmentType: "REGULAR" as FacultyType, maxHoursPerWeek: 30 as number | string })
 
   // Edit faculty dialog
   const [editOpen, setEditOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
   // Faculty pending deactivation — drives the confirm dialog below.
   const [deactivateTarget, setDeactivateTarget] = useState<any>(null)
-  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", maxUnitsPerWeek: 21 as number | string, maxHoursPerWeek: 30 as number | string })
+  const [editForm, setEditForm] = useState({ firstName: "", lastName: "", employmentType: "REGULAR" as FacultyType, maxHoursPerWeek: 30 as number | string })
 
   // ── Faculty availability data ──
   const { data: allAvailability = [], isLoading: loadingAvailability } = useQuery({
@@ -1061,7 +975,7 @@ export default function AvailabilityPage() {
 
   // ── Add faculty handler ──
   async function handleAddFaculty() {
-    const { firstName, lastName, employeeId, maxUnitsPerWeek, maxHoursPerWeek } = addForm
+    const { firstName, lastName, employeeId, employmentType, maxHoursPerWeek } = addForm
     if (!firstName.trim()) return toast.error("First name is required")
     if (!lastName.trim()) return toast.error("Last name is required")
 
@@ -1074,11 +988,11 @@ export default function AvailabilityPage() {
         lastName: lastName.trim(),
         ...(employeeId.trim() ? { employeeId: employeeId.trim() } : {}),
         departmentId,
-        maxUnitsPerWeek: Number(maxUnitsPerWeek) || 21,
+        employmentType,
         maxHoursPerWeek: Number(maxHoursPerWeek) || 30,
       })
       setAddOpen(false)
-      setAddForm({ firstName: "", lastName: "", employeeId: "", maxUnitsPerWeek: 21, maxHoursPerWeek: 30 })
+      setAddForm({ firstName: "", lastName: "", employeeId: "", employmentType: "REGULAR", maxHoursPerWeek: 30 })
     } catch (err: any) {
       toast.error(err.message)
     }
@@ -1090,7 +1004,7 @@ export default function AvailabilityPage() {
     setEditForm({
       firstName: f.user?.firstName ?? "",
       lastName: f.user?.lastName ?? "",
-      maxUnitsPerWeek: f.maxUnitsPerWeek ?? 21,
+      employmentType: (f.employmentType ?? "REGULAR") as FacultyType,
       maxHoursPerWeek: f.maxHoursPerWeek ?? 30,
     })
     setEditOpen(true)
@@ -1106,7 +1020,7 @@ export default function AvailabilityPage() {
         id: editTarget.id,
         firstName: editForm.firstName.trim(),
         lastName: editForm.lastName.trim(),
-        maxUnitsPerWeek: Number(editForm.maxUnitsPerWeek) || 21,
+        employmentType: editForm.employmentType,
         maxHoursPerWeek: Number(editForm.maxHoursPerWeek) || 30,
       })
       setEditOpen(false)
@@ -1221,9 +1135,12 @@ export default function AvailabilityPage() {
       {/* No term to work on — availability is not computed or shown */}
       {!isLoading && !hasActiveSchedule && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
-          <p className="font-semibold">No active schedule for your department.</p>
+          <p className="font-semibold">
+            {isGeneralEducationChair ? "No active schedule in any department yet." : "No active schedule for your department."}
+          </p>
           <p className="mt-1">
-            Faculty availability is recorded per term, against that term&apos;s schedule. Create a schedule for the
+            Faculty availability is recorded per term, against that term&apos;s schedule
+            {isGeneralEducationChair ? " — for CAS faculty, any department's schedule for the term counts" : ""}. Create a schedule for the
             term in{" "}
             <Link href="/dashboard/schedules" className="font-medium underline underline-offset-2">Manage Schedules</Link>
             {" "}first — archived schedules do not count.
@@ -1263,10 +1180,6 @@ export default function AvailabilityPage() {
                   onEdit={isDean ? undefined : openEdit}
                   onDeactivate={isDean ? undefined : setDeactivateTarget}
                   readOnly={isDean}
-                  buildings={deptBuildings}
-                  buildingIds={buildingMap.get(f.id) ?? new Set<string>()}
-                  onSaveBuildings={handleSaveBuildings}
-                  isSavingBuildings={savingBuildingsFor === f.id}
                 />
               ))}
             </div>
@@ -1323,14 +1236,20 @@ export default function AvailabilityPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
-                <Label>Max Units / Week</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  value={addForm.maxUnitsPerWeek}
-                  onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
-                />
+                <Label>Employment type</Label>
+                <select
+                  value={addForm.employmentType}
+                  onChange={(e) => {
+                    const t = e.target.value as FacultyType
+                    // Switching type also resets the hours cap to that type's default.
+                    setAddForm(f => ({ ...f, employmentType: t, maxHoursPerWeek: DEFAULT_HOURS_BY_TYPE[t] }))
+                  }}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  {FACULTY_TYPES.map((t) => (
+                    <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]} — max {MAX_UNITS_BY_TYPE[t]}u</option>
+                  ))}
+                </select>
               </div>
               <div className="grid gap-2">
                 <Label>Max Hours / Week</Label>
@@ -1379,14 +1298,19 @@ export default function AvailabilityPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
-                <Label>Max Units / Week</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  value={editForm.maxUnitsPerWeek}
-                  onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
-                />
+                <Label>Employment type</Label>
+                <select
+                  value={editForm.employmentType}
+                  onChange={(e) => {
+                    const t = e.target.value as FacultyType
+                    setEditForm(f => ({ ...f, employmentType: t, maxHoursPerWeek: DEFAULT_HOURS_BY_TYPE[t] }))
+                  }}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  {FACULTY_TYPES.map((t) => (
+                    <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]} — max {MAX_UNITS_BY_TYPE[t]}u</option>
+                  ))}
+                </select>
               </div>
               <div className="grid gap-2">
                 <Label>Max Hours / Week</Label>

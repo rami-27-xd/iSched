@@ -77,6 +77,7 @@ export async function GET(
             startTime: true,
             endTime: true,
             set: true,
+            mergeGroupId: true,
             facultyName: true,
             subject: { select: { code: true, title: true, units: true, hoursPerWeek: true, type: true } },
             faculty: { select: { id: true, user: { select: { firstName: true, lastName: true } } } },
@@ -115,6 +116,7 @@ export async function GET(
         startTime: e.startTime,
         endTime: e.endTime,
         set: e.set ?? null,
+        mergeGroupId: e.mergeGroupId ?? null,
         // Term-wide only: which department's schedule this entry came from, so the
         // chair can see at a glance that a lecturer's load spans several.
         departmentAbbr: s.department?.abbreviation ?? "",

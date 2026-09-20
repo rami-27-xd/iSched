@@ -37,7 +37,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const { id } = await params
     const body = await req.json()
-    const { code, title, units, hoursPerWeek, type, departmentId, yearLevelId, requiredRoomType, semester, year } = body
+    const { code, title, units, hoursPerWeek, type, departmentId, yearLevelId, requiredRoomType, semester, year, maxMinutesPerDay } = body
+
+    // Per-day session cap (lib/session-rules.ts): 60 or 90 minutes, or null to
+    // fall back to the default rule (GEC/GEL 90 min, others uncapped).
+    if (maxMinutesPerDay !== undefined && maxMinutesPerDay !== null && ![60, 90].includes(Number(maxMinutesPerDay))) {
+      return NextResponse.json(apiError("Per-day limit must be 1 hour (60) or 1 hour 30 minutes (90)"), { status: 400 })
+    }
 
     // An emptied Units field arrives as "", which Number() turns into 0 — that used
     // to save a 0-unit subject without complaint. The create route already rejects a
@@ -61,6 +67,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ...(requiredRoomType !== undefined ? { requiredRoomType } : {}),
         ...(semester !== undefined ? { semester } : {}),
         ...(year !== undefined ? { year: Number(year) } : {}),
+        ...(maxMinutesPerDay !== undefined ? { maxMinutesPerDay: maxMinutesPerDay === null || maxMinutesPerDay === "" ? null : Number(maxMinutesPerDay) } : {}),
       },
       include: { department: true, yearLevel: true },
     })

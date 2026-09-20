@@ -31,6 +31,8 @@ export interface ExportEntry {
   endTime: string
   /** null = lecture; "A" / "B" = laboratory split group. */
   set: string | null
+  /** Merged NSTP class — rows of several sections that meet as ONE class. */
+  mergeGroupId?: string | null
 }
 
 export interface ExportHeader {
@@ -350,9 +352,11 @@ export function computeTeachingLoad(entries: ExportEntry[]): {
 } {
   // One row per (subject × SECTION). Grouping by program+year (the old key) merged two
   // sections of the same year into a single row, undercounting both units and hours.
+  // A merged NSTP class (several sections in one room at one time) is ONE row
+  // and ONE set of contact hours, however many sections sit in it.
   const rowMap = new Map<string, ExportEntry[]>()
   for (const e of entries) {
-    const key = `${e.subjectCode}|${e.sectionId}`
+    const key = e.mergeGroupId ? `${e.subjectCode}|merged:${e.mergeGroupId}` : `${e.subjectCode}|${e.sectionId}`
     if (!rowMap.has(key)) rowMap.set(key, [])
     rowMap.get(key)!.push(e)
   }
@@ -361,9 +365,17 @@ export function computeTeachingLoad(entries: ExportEntry[]): {
   const preparations = new Set<string>()
   const rows = [...rowMap.values()]
     .sort((a, b) => a[0].subjectCode.localeCompare(b[0].subjectCode) || a[0].sectionName.localeCompare(b[0].sectionName))
-    .map((subEntries) => {
-      const first = subEntries[0]
+    .map((allSubEntries) => {
+      const first = allSubEntries[0]
       preparations.add(first.subjectCode)
+      // Merged sections: one session row per (day, time, set) — the faculty
+      // teaches it once, so its hours and day/time lines are listed once.
+      const mergedSections = first.mergeGroupId
+        ? [...new Set(allSubEntries.map((e) => e.sectionName))].sort()
+        : []
+      const subEntries = first.mergeGroupId
+        ? [...new Map(allSubEntries.map((e) => [`${e.day}|${e.startTime}|${e.endTime}|${e.set ?? ""}`, e])).values()]
+        : allSubEntries
       // Contact hours = the ACTUAL total scheduled time for this subject-section across
       // every session (all days, and both lab sets A+B) — accurate and consistent with
       // the grand total, rather than a single nominal Subject.hoursPerWeek value.
@@ -376,7 +388,9 @@ export function computeTeachingLoad(entries: ExportEntry[]): {
         title: first.subjectTitle,
         units: first.units,
         contactHours: Math.round(rowHours * 10) / 10,
-        courseYear: `${first.programAbbr} ${yearLabel} Yr`,
+        courseYear: mergedSections.length > 1
+          ? `${first.programAbbr} ${yearLabel} Yr (${mergedSections.join(" + ")})`
+          : `${first.programAbbr} ${yearLabel} Yr`,
         lines: clusterSessions(subEntries),
       }
     })

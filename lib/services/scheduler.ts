@@ -33,6 +33,11 @@ interface SubjectInput {
   //   []             → subject is not needed for any section in this run; skip silently.
   // Used for GEC subjects whose year/semester placement varies per program.
   allowedSectionIds?: string[] | null
+  // Longest single session (minutes) allowed on one day — Hard Constraint.
+  // Day patterns whose per-day session exceeds this are never offered, so a
+  // 3-hour GEC with a 90-minute cap meets 1h×3 or 1.5h×2, never as one 3-hour
+  // block (lib/session-rules.ts resolves the value; null/undefined = no cap).
+  maxMinutesPerDay?: number | null
   // Placeholder assignment (PATHFIT): the subject is always taught by this
   // faculty in this room — both are shared placeholders (TBA / GYM), so no
   // faculty-availability, specialization, room-type or double-booking check
@@ -158,7 +163,9 @@ export interface ScheduleConstraints {
   noSectionOverlap: boolean
   respectFacultyAvail: boolean
   respectRoomType: boolean
-  // Hard Constraint: faculty cannot be assigned to a building not in their allowedBuildingIds.
+  // Faculty may teach in any building — off since 2026-09-19 (the per-faculty
+  // building access list was removed from the app). Kept so the check can be
+  // switched back on without touching the search.
   enforceBuildingAvailability: boolean
   // Hard Constraint: subjects with requiredLabSpecialization can only use matching rooms.
   enforceLabSpecialization: boolean
@@ -174,10 +181,12 @@ const DEFAULT_CONSTRAINTS: ScheduleConstraints = {
   noSectionOverlap: true,
   respectFacultyAvail: true,
   respectRoomType: true,
-  enforceBuildingAvailability: true,
+  enforceBuildingAvailability: false,
   enforceLabSpecialization: true,
   maxDailyLoad: 10,
-  maxWeeklyUnits: 30,
+  // Engine-wide ceiling = the highest cap any employment type allows (COSI 40);
+  // each faculty member's own cap (Regular 21 / COSI 40) is what actually binds.
+  maxWeeklyUnits: 40,
   noBackToBackLab: true,
   preferMorningSlots: false,
 }
@@ -327,6 +336,10 @@ export class SchedulingEngine {
         if (a.set) this.addSlots(this.sectionSlots, a.sectionId, ses.day, ses.start, ses.end)
       }
     }
+    // A merged NSTP class is stored as one row per section with the same
+    // faculty, day and time — the faculty teaches it ONCE, so count its
+    // minutes once, not once per section row.
+    const countedFacultyBlocks = new Set<string>()
     for (const entry of this.lockedEntries) {
       const startMin = this.toMinutes(entry.startTime)
       const endMin   = this.toMinutes(entry.endTime)
@@ -339,6 +352,9 @@ export class SchedulingEngine {
       if (entry.set) {
         this.addSlots(this.sectionSlots, entry.sectionId, entry.day, startMin, endMin)
       }
+      const blockKey = `${entry.facultyId}|${entry.day}|${startMin}|${endMin}`
+      if (countedFacultyBlocks.has(blockKey)) continue
+      countedFacultyBlocks.add(blockKey)
       const dailyKey = `${entry.facultyId}|${entry.day}`
       this.facultyDailyMinutes.set(
         dailyKey,
@@ -938,11 +954,15 @@ export class SchedulingEngine {
   private getSessionDayGroups(subject: SubjectInput): { days: DayOfWeek[]; minutesEach: number }[] {
     const allDays: DayOfWeek[] = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY']
     const h = Math.max(1, subject.hoursPerWeek ?? 1)
+    // Per-day cap (GEC/GEL: 60 or 90 minutes). Patterns longer than this per
+    // session are dropped below — including the single-block fallback.
+    const cap = subject.maxMinutesPerDay && subject.maxMinutesPerDay > 0 ? subject.maxMinutesPerDay : null
 
     if (subject.type === 'LABORATORY') {
       // Labs: single continuous block on any one day (never split)
       const mins = Math.max(60, h * 60)
-      return allDays.map(d => ({ days: [d], minutesEach: mins }))
+      const labPatterns = allDays.map(d => ({ days: [d], minutesEach: mins }))
+      return cap ? labPatterns.filter(p => p.minutesEach <= cap) : labPatterns
     }
 
     // Multi-day distribution patterns (preferred: spreads the teaching load)
@@ -958,7 +978,12 @@ export class SchedulingEngine {
     const singleSessionPatterns = allDays.map(d => ({ days: [d] as DayOfWeek[], minutesEach: totalMins }))
 
     // Return distributed first (preferred), single-session last (fallback)
-    return [...distributedPatterns, ...singleSessionPatterns]
+    const patterns = [...distributedPatterns, ...singleSessionPatterns]
+    if (!cap) return patterns
+    // With a cap the single-block fallback is (for a 3-hour GEC) exactly what
+    // must never happen, so it drops out here along with any distributed
+    // pattern whose per-day session is too long (1.5h×2 under a 60-minute cap).
+    return patterns.filter(p => p.minutesEach <= cap)
   }
 
   // Returns all start-minute values where faculty has an availability window covering
@@ -1068,6 +1093,16 @@ export class SchedulingEngine {
     // (e.g. a 3h lecture can be split 1h×3 or 1.5h×2, so minimum is 60 min)
     const patterns = this.getSessionDayGroups(subject)
     const sessionMinutes = patterns.reduce((min, p) => Math.min(min, p.minutesEach), Infinity)
+
+    // A per-day cap so short that no day pattern can carry the weekly hours
+    // (e.g. a 4-hour subject capped at 60 minutes per day) — nothing else in
+    // this diagnosis applies, so say exactly that.
+    if (patterns.length === 0 && subject.maxMinutesPerDay) {
+      reasons.push(
+        `"${subject.code}" needs ${subject.hoursPerWeek} hour(s) a week but is limited to ${subject.maxMinutesPerDay} minutes per day, and no day pattern can spread it that thinly — raise its per-day limit on the Subjects page`
+      )
+      return reasons
+    }
 
     const facultyWithAvailability = this.faculty.filter(f => f.availability.length > 0)
     if (facultyWithAvailability.length === 0) {

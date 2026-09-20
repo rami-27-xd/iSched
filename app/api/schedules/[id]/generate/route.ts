@@ -10,6 +10,7 @@ import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { detectCrossScheduleConflicts, type CrossScheduleEntry } from "@/lib/services/cross-schedule-conflicts"
 import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
 import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
+import { resolveMaxMinutesPerDay } from "@/lib/session-rules"
 import { isGecFinalized, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { runPathfitGeneration } from "@/lib/services/pathfit-generation"
 import { recordAudit } from "@/lib/audit"
@@ -223,7 +224,7 @@ export async function POST(
         return NextResponse.json(
           {
             success: false,
-            error: "GEC/GEL has not been finalized by all three cluster chairpersons yet",
+            error: "GEC/GEL has not been finalized by all three department heads yet",
             details: [GEC_FIRST_MESSAGE],
           },
           { status: 409 }
@@ -285,7 +286,7 @@ export async function POST(
             ...notAutoExcluded,
           }
 
-    // Faculty availability and building access are recorded PER TERM (Academic
+    // Faculty availability is recorded PER TERM (Academic
     // Year + Semester) and terms never share data: this run reads STRICTLY the
     // rows for this schedule's own semester. (An older fallback to the active
     // semester's rows was the one place 1st- and 2nd-semester data bled together;
@@ -296,7 +297,7 @@ export async function POST(
     // Chairperson (approved faculty requests). A Program Chairperson's pool is
     // their own program first; a shortage is answered by a request, and the
     // allocated faculty then joins the pool — still bound by specialization,
-    // availability and building access like everyone else.
+    // availability like everyone else.
     const allocatedFacultyIds: string[] = isAdmin && programId
       ? (
           await db.facultyRequest.findMany({
@@ -334,12 +335,6 @@ export async function POST(
           user: true,
           // Time availability: STRICTLY this schedule's term.
           availability: { where: { semesterId: schedule.semesterId } },
-          // Building availability: STRICT to the schedule's own semester — no
-          // cross-semester fallback. Which buildings a faculty may teach in is a
-          // per-term decision, so a 2nd-semester schedule must be built against
-          // 2nd-semester building access and never silently inherit the 1st
-          // semester's rows.
-          buildingAvailability: { where: { semesterId: schedule.semesterId } },
         },
       }),
       db.room.findMany({
@@ -456,6 +451,9 @@ export async function POST(
       // lab rooms; computer-based labs need a COMPUTER_LAB; lectures need
       // lecture rooms) — see lib/room-type-rules.ts. Hard constraint in the engine.
       requiredRoomType: resolveRequiredRoomTypes(s) as string[],
+      // Per-day session cap (GEC/GEL default 1h 30min, or the value set on the
+      // Subjects page). Hard constraint: the engine never offers a longer session.
+      maxMinutesPerDay: resolveMaxMinutesPerDay(s),
       units: s.units,
       departmentCode: s.department?.abbreviation,
       year: s.year ?? 1,
@@ -479,11 +477,9 @@ export async function POST(
           startTime: a.startTime,
           endTime: a.endTime,
         })),
-        // Distinct building IDs this faculty may teach in THIS semester. Rows were
-        // filtered to schedule.semesterId at query time — no cross-semester
-        // fallback, so 2nd-semester generation strictly honors 2nd-semester
-        // building access.
-        allowedBuildingIds: f.buildingAvailability.map((b: any) => b.buildingId),
+        // Faculty may teach in any building (building access was dropped on
+        // 2026-09-19) — an empty list means no restriction in the engine.
+        allowedBuildingIds: [],
       }
     })
 

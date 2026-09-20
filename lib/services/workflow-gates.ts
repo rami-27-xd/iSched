@@ -37,9 +37,10 @@ export interface GecFinalizationStatus {
 }
 
 /**
- * Per-cluster finalization status for a schedule. `allFinalized` is the actual
- * gate value; the rest is for the UI ("2 of 3 clusters finalized — waiting on
- * Mathematics and Natural Sciences").
+ * Per-department-head finalization status for a schedule. `allFinalized` is the
+ * actual gate value; the rest is for the UI ("2 of 3 department heads finalized
+ * — waiting on Mathematics and Natural Sciences"). (A "department head area" is
+ * a FacultyCluster row — the UI never says "cluster".)
  */
 export async function getGecFinalizationStatus(scheduleId: string): Promise<GecFinalizationStatus> {
   const [totalClusters, rows] = await Promise.all([
@@ -77,4 +78,4 @@ export async function reopenGecIfStale(scheduleId: string, subjectCode: string |
 }
 
 export const GEC_FIRST_MESSAGE =
-  "The three CAS cluster chairpersons have not all finalized the GEC/GEL schedule for this term yet. Program Chairs add their major subjects only after every cluster has finalized."
+  "The three CAS department heads have not all finalized the GEC/GEL schedule for this term yet. Program Chairpersons add their major subjects only after every department head has finalized."

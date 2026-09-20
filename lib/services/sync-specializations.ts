@@ -30,8 +30,10 @@ export async function syncFacultySpecializations(facultyId: string): Promise<voi
     where: { facultyId, schedule: { isArchived: false } },
     select: {
       sectionId: true,
+      day: true,
       startTime: true,
       endTime: true,
+      mergeGroupId: true,
       subject: { select: { title: true } },
     },
   })
@@ -39,11 +41,18 @@ export async function syncFacultySpecializations(facultyId: string): Promise<voi
   // subject title → Set of distinct sectionIds
   const map = new Map<string, Set<string>>()
   let totalMinutes = 0
+  // A merged NSTP class is one row per section but ONE block of teaching time.
+  const countedMergedBlocks = new Set<string>()
   for (const e of entries) {
     const title = e.subject?.title
     if (title) {
       if (!map.has(title)) map.set(title, new Set())
       map.get(title)!.add(e.sectionId)
+    }
+    if (e.mergeGroupId) {
+      const key = `${e.mergeGroupId}|${e.day}|${e.startTime}|${e.endTime}`
+      if (countedMergedBlocks.has(key)) continue
+      countedMergedBlocks.add(key)
     }
     const [sh, sm] = e.startTime.split(":").map(Number)
     const [eh, em] = e.endTime.split(":").map(Number)

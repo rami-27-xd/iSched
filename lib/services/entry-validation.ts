@@ -6,6 +6,8 @@ import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 import { specializationsCoverSubject } from "@/lib/specialization-match"
 import { isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
 import { describeRequiredRoomTypes, roomTypeAllowedForSubject } from "@/lib/room-type-rules"
+import { resolveMaxMinutesPerDay, formatMinutes } from "@/lib/session-rules"
+import { MAX_UNITS_ANY_TYPE, formatFacultyType } from "@/lib/faculty-types"
 
 interface EntryData {
   subjectId: string
@@ -16,6 +18,16 @@ interface EntryData {
   startTime: string
   endTime: string
   set?: string | null
+  // Merged NSTP class this row belongs to (see ScheduleEntry.mergeGroupId).
+  // Sibling rows of the same merge group are the SAME class held for several
+  // sections at once, so they never count as a faculty/room double-booking.
+  mergeGroupId?: string | null
+}
+
+/** Normalises the exclude argument (one id, or every row of a group). */
+function excludeIds(exclude?: string | string[]): string[] {
+  if (!exclude) return []
+  return Array.isArray(exclude) ? exclude.filter(Boolean) : [exclude]
 }
 
 function toMinutes(time: string): number {
@@ -98,12 +110,15 @@ export async function roomBuildingOpenToDepartment(
 export async function validateEntry(
   scheduleId: string,
   entry: EntryData,
-  excludeEntryId?: string // exclude this entry from overlap checks (for PATCH)
+  // Exclude these rows from overlap checks — the row being PATCHed, or every
+  // row of the multi-day / merged group it belongs to.
+  excludeEntryId?: string | string[]
 ): Promise<string | null> {
   // 6. Time validation (check first — no DB needed)
   if (toMinutes(entry.startTime) >= toMinutes(entry.endTime)) {
     return "Start time must be before end time"
   }
+  const excluded = excludeIds(excludeEntryId)
 
   // Step 1: Fetch the schedule to get semesterId (needed for cross-schedule checks)
   // and its semester type (needed for the 1st/2nd-semester guard below).
@@ -118,7 +133,7 @@ export async function validateEntry(
     db.scheduleEntry.findMany({
       where: {
         scheduleId,
-        ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
+        ...(excluded.length ? { id: { notIn: excluded } } : {}),
       },
       select: {
         scheduleId: true,
@@ -129,6 +144,7 @@ export async function validateEntry(
         startTime: true,
         endTime: true,
         set: true,
+        mergeGroupId: true,
         subject: { select: { code: true, type: true } },
         faculty: { select: { user: { select: { firstName: true, lastName: true } } } },
         room: { select: { code: true } },
@@ -143,7 +159,7 @@ export async function validateEntry(
           where: {
             scheduleId: { not: scheduleId },
             schedule: { semesterId: schedule.semesterId, isArchived: false },
-            ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
+            ...(excluded.length ? { id: { notIn: excluded } } : {}),
           },
           select: {
             scheduleId: true,
@@ -154,6 +170,7 @@ export async function validateEntry(
             startTime: true,
             endTime: true,
             set: true,
+            mergeGroupId: true,
             subject: { select: { code: true, type: true } },
             faculty: { select: { user: { select: { firstName: true, lastName: true } } } },
             room: { select: { code: true } },
@@ -162,10 +179,8 @@ export async function validateEntry(
           },
         })
       : Promise.resolve([]),
-    // Faculty — active status, specializations, per-week cap, and the buildings
-    // they're available to teach in (engine parity: enforceBuildingAvailability).
-    // Building availability is scoped to THIS schedule's semester — same rule the
-    // generator uses, so a manual entry can't lean on another semester's rows.
+    // Faculty — active status, specializations and per-week cap. (Faculty may
+    // teach in any building — the per-term building access list was removed.)
     db.faculty.findUnique({
       where: { id: entry.facultyId },
       select: {
@@ -173,10 +188,6 @@ export async function validateEntry(
         specializations: true,
         isActive: true,
         maxUnitsPerWeek: true,
-        buildingAvailability: {
-          where: schedule?.semesterId ? { semesterId: schedule.semesterId } : undefined,
-          select: { buildingId: true },
-        },
         user: { select: { firstName: true, lastName: true, isActive: true } },
       },
     }),
@@ -187,6 +198,7 @@ export async function validateEntry(
       select: {
         title: true, code: true, year: true, yearLevelId: true, departmentId: true, semester: true,
         requiredRoomType: true, requiredLabSpecialization: true, units: true, type: true,
+        maxMinutesPerDay: true,
       },
     }),
     // Section info (include yearLevel + college for alignment and Saturday checks)
@@ -242,6 +254,20 @@ export async function validateEntry(
   // semester/year alignment) still apply as normal.
   const isTbaFaculty = isTbaFacultyEmployeeId(faculty?.employeeId)
   const isTbaRoom = isPlaceholderRoomCode(roomAccess?.code)
+  // Rows of the same merged NSTP class — the same class, not a double-booking.
+  const sameMergedClass = (e: { mergeGroupId?: string | null }) =>
+    !!entry.mergeGroupId && e.mergeGroupId === entry.mergeGroupId
+
+  // 0a. Per-day session length (GEC/GEL: 1 hour or 1 hour 30 minutes, set on the
+  // Subjects page; lib/session-rules.ts). The generator never offers a longer
+  // session, and neither may a hand-placed one — not even with Save Anyway.
+  if (subject) {
+    const cap = resolveMaxMinutesPerDay(subject)
+    const sessionMinutes = toMinutes(entry.endTime) - toMinutes(entry.startTime)
+    if (cap !== null && sessionMinutes > cap) {
+      return `${HARD_CONFLICT_PREFIX}${subject.code} may run for at most ${formatMinutes(cap)} per day — this session is ${formatMinutes(sessionMinutes)} (${entry.startTime}–${entry.endTime}). Split it across more days, or change the subject's per-day limit on the Subjects page.`
+    }
+  }
 
   // 0. Inactive faculty check — either Faculty.isActive or User.isActive must be true
   if (faculty && (faculty.isActive === false || faculty.user?.isActive === false)) {
@@ -273,11 +299,10 @@ export async function validateEntry(
     }
   }
 
-  // ── Engine-parity hard constraints (0d–0f) ────────────────────────────────
+  // ── Engine-parity hard constraints (0d–0e) ────────────────────────────────
   // These mirror the backtracking engine's hard constraints so a chair cannot
   // place manually what auto-generation would refuse to place. See
-  // lib/services/scheduler.ts — checkLabSpecialization / roomTypeCompatible /
-  // checkBuildingAvailability.
+  // lib/services/scheduler.ts — checkLabSpecialization / roomTypeCompatible.
 
   // 0d. Lab specialization — a subject requiring a specialized lab may only use
   // a room whose labSpecialization matches exactly.
@@ -302,17 +327,6 @@ export async function validateEntry(
     }
   }
 
-  // 0f. Faculty building availability — when a faculty member has recorded which
-  // buildings they can teach in, the room must be in one of them. No rows = no
-  // restriction (same legacy fallback the engine uses).
-  if (faculty && roomAccess && !isTbaFaculty && !isTbaRoom && (faculty as any).buildingAvailability?.length > 0) {
-    const allowedBuildingIds = (faculty as any).buildingAvailability.map((b: any) => b.buildingId)
-    if (!allowedBuildingIds.includes(roomAccess.buildingId)) {
-      const fname = faculty.user ? `${faculty.user.firstName} ${faculty.user.lastName}` : "This faculty member"
-      return `${fname} is not available to teach in the building that ${roomAccess.code} belongs to. Check their building availability.`
-    }
-  }
-
   // 1. Faculty overlap — same faculty, same day, overlapping times (checked
   // globally across all schedules). Exempt for TBA: it's a placeholder, not a
   // real person who can only be in one place — many different unresolved
@@ -321,6 +335,7 @@ export async function validateEntry(
     (e) =>
       e.facultyId === entry.facultyId &&
       e.day === entry.day &&
+      !sameMergedClass(e) &&
       timesOverlap(e.startTime, e.endTime, entry.startTime, entry.endTime)
   )
   if (facultyConflict) {
@@ -337,6 +352,7 @@ export async function validateEntry(
     (e) =>
       e.roomId === entry.roomId &&
       e.day === entry.day &&
+      !sameMergedClass(e) &&
       timesOverlap(e.startTime, e.endTime, entry.startTime, entry.endTime)
   )
   if (roomConflict) {
@@ -515,20 +531,21 @@ export async function validateEntry(
 export async function validateEntryCapacity(
   scheduleId: string,
   entry: EntryData,
-  excludeEntryId?: string
+  excludeEntryId?: string | string[]
 ): Promise<string | null> {
   const MAX_DAILY_HOURS = 10   // engine DEFAULT_CONSTRAINTS.maxDailyLoad
-  const GLOBAL_MAX_WEEKLY_UNITS = 30 // engine DEFAULT_CONSTRAINTS.maxWeeklyUnits
+  const GLOBAL_MAX_WEEKLY_UNITS = MAX_UNITS_ANY_TYPE // engine DEFAULT_CONSTRAINTS.maxWeeklyUnits (COSI 40)
+  const excluded = excludeIds(excludeEntryId)
 
   const schedule = await db.schedule.findUnique({
     where: { id: scheduleId },
     select: { semesterId: true },
   })
 
-  const [faculty, subject, facultyEntries] = await Promise.all([
+  const [faculty, subject, rawFacultyEntries] = await Promise.all([
     db.faculty.findUnique({
       where: { id: entry.facultyId },
-      select: { employeeId: true, maxUnitsPerWeek: true, maxHoursPerWeek: true, user: { select: { firstName: true, lastName: true } } },
+      select: { employeeId: true, employmentType: true, maxUnitsPerWeek: true, maxHoursPerWeek: true, user: { select: { firstName: true, lastName: true } } },
     }),
     db.subject.findUnique({
       where: { id: entry.subjectId },
@@ -541,16 +558,31 @@ export async function validateEntryCapacity(
           where: {
             facultyId: entry.facultyId,
             schedule: { semesterId: schedule.semesterId, isArchived: false },
-            ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
+            ...(excluded.length ? { id: { notIn: excluded } } : {}),
           },
           select: {
-            subjectId: true, sectionId: true, set: true,
+            id: true, subjectId: true, sectionId: true, set: true, mergeGroupId: true,
             day: true, startTime: true, endTime: true,
             subject: { select: { units: true, type: true } },
           },
         })
       : Promise.resolve([]),
   ])
+
+  // A merged NSTP class is one row per section but ONE teaching block for the
+  // faculty — keep a single row per (merge group, day, time) so its minutes and
+  // units are counted once. The row being added is part of that same block
+  // when it shares the merge group and time, so it adds nothing either.
+  const seenBlocks = new Set<string>()
+  const facultyEntries = rawFacultyEntries.filter((e) => {
+    if (!e.mergeGroupId) return true
+    const key = `${e.mergeGroupId}|${e.day}|${e.startTime}|${e.endTime}`
+    if (seenBlocks.has(key)) return false
+    seenBlocks.add(key)
+    return true
+  })
+  const entryIsCountedBlock =
+    !!entry.mergeGroupId && seenBlocks.has(`${entry.mergeGroupId}|${entry.day}|${entry.startTime}|${entry.endTime}`)
 
   // The "TBA" sentinel has no capacity to protect — it's a placeholder, not a
   // real teaching load. Skip weekly units / daily load / back-to-back entirely.
@@ -564,31 +596,35 @@ export async function validateEntryCapacity(
   // Count units once per ASSIGNMENT, not per row: a multi-day (MWF) class is
   // three ScheduleEntry rows sharing one subject+section+set, but a single
   // N-unit teaching assignment. Counting rows would triple-count it.
+  // A merged class is one assignment however many sections sit in it.
+  const assignmentKey = (e: { subjectId: string; sectionId: string; set?: string | null; mergeGroupId?: string | null }) =>
+    e.mergeGroupId ? `merged__${e.mergeGroupId}` : `${e.subjectId}__${e.sectionId}__${e.set ?? ""}`
   const assignmentUnits = new Map<string, number>()
   for (const e of facultyEntries) {
-    assignmentUnits.set(`${e.subjectId}__${e.sectionId}__${e.set ?? ""}`, e.subject?.units ?? 0)
+    assignmentUnits.set(assignmentKey(e), e.subject?.units ?? 0)
   }
   const currentUnits = [...assignmentUnits.values()].reduce((a, b) => a + b, 0)
 
   // The per-faculty cap the chair sets on the Faculty page, bounded by the
   // engine's global ceiling.
   const effectiveMax = Math.min(faculty?.maxUnitsPerWeek ?? GLOBAL_MAX_WEEKLY_UNITS, GLOBAL_MAX_WEEKLY_UNITS)
-  const thisKey = `${entry.subjectId}__${entry.sectionId}__${entry.set ?? ""}`
+  const thisKey = assignmentKey(entry)
   // Adding another session to an assignment already counted adds no new units.
   const addedUnits = assignmentUnits.has(thisKey) ? 0 : (subject?.units ?? 0)
 
   if (currentUnits + addedUnits > effectiveMax) {
-    return `${fname} would be at ${currentUnits + addedUnits} units this week, over their ${effectiveMax}-unit limit.`
+    return `${fname} would be at ${currentUnits + addedUnits} units this week, over the ${effectiveMax}-unit limit for ${formatFacultyType(faculty?.employmentType)} faculty.`
   }
 
   // ── Weekly hours (Faculty.maxHoursPerWeek) ──────────────────────────────
   // Every session counts — an MWF class is three sessions of contact hours.
   const entryStart = toMinutes(entry.startTime)
   const entryEnd = toMinutes(entry.endTime)
+  const entryMinutes = entryIsCountedBlock ? 0 : entryEnd - entryStart
   const maxHours = faculty?.maxHoursPerWeek ?? 0
   if (maxHours > 0) {
     const weeklyMinutes = facultyEntries.reduce((sum, e) => sum + (toMinutes(e.endTime) - toMinutes(e.startTime)), 0)
-    const projected = weeklyMinutes + (entryEnd - entryStart)
+    const projected = weeklyMinutes + entryMinutes
     if (projected > maxHours * 60) {
       return `${fname} would be at ${(projected / 60).toFixed(1)} hours this week, over their ${maxHours}-hour limit.`
     }
@@ -598,7 +634,7 @@ export async function validateEntryCapacity(
   const sameDayMinutes = facultyEntries
     .filter((e) => e.day === entry.day)
     .reduce((sum, e) => sum + (toMinutes(e.endTime) - toMinutes(e.startTime)), 0)
-  const totalDailyMinutes = sameDayMinutes + (entryEnd - entryStart)
+  const totalDailyMinutes = sameDayMinutes + entryMinutes
   if (totalDailyMinutes / 60 > MAX_DAILY_HOURS) {
     const hrs = (totalDailyMinutes / 60).toFixed(1)
     return `${fname} would teach ${hrs} hours on ${entry.day}, over the ${MAX_DAILY_HOURS}-hour daily limit.`

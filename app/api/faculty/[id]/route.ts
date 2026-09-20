@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
+import { isFacultyType, maxUnitsForType, DEFAULT_HOURS_BY_TYPE } from "@/lib/faculty-types"
 import { recordAudit } from "@/lib/audit"
 import { createAdminClient } from "@/lib/supabase/admin"
 
@@ -57,7 +58,7 @@ async function checkFacultyWriteAccess(facultyId: string): Promise<
     if (chairClusterId && target.clusterId !== chairClusterId) {
       return {
         error: NextResponse.json(
-          apiError("Forbidden — this faculty member is not in your cluster"),
+          apiError("Forbidden — this faculty member is not in your department head area"),
           { status: 403 }
         ),
       }
@@ -101,11 +102,24 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (access.error) return access.error
 
     const body = await req.json()
-    const { employeeId, departmentId, clusterId, specializations, sectionCounts, maxUnitsPerWeek, maxHoursPerWeek, hoursPerWeek, isActive, firstName, lastName, email } = body
+    const { employeeId, departmentId, clusterId, specializations, sectionCounts, employmentType, maxHoursPerWeek, hoursPerWeek, isActive, firstName, lastName, email } = body
 
     if (maxHoursPerWeek !== undefined && !(Number(maxHoursPerWeek) >= 1 && Number(maxHoursPerWeek) <= 60)) {
       return NextResponse.json(apiError("Max hours per week must be between 1 and 60"), { status: 400 })
     }
+    if (employmentType !== undefined && !isFacultyType(employmentType)) {
+      return NextResponse.json(apiError("Employment type must be REGULAR or COSI"), { status: 400 })
+    }
+    // Changing the type re-derives the unit cap (Regular 21 / COSI 40). When
+    // the hours cap is not sent alongside and the current one is below the new
+    // type's default, lift it to the default — a COSI at 40 units cannot be
+    // held to 30 contact hours.
+    const current = employmentType !== undefined
+      ? await db.faculty.findUnique({ where: { id }, select: { maxHoursPerWeek: true, employmentType: true } })
+      : null
+    const liftHours =
+      employmentType !== undefined && maxHoursPerWeek === undefined && current && current.employmentType !== employmentType &&
+      current.maxHoursPerWeek < DEFAULT_HOURS_BY_TYPE[employmentType as "REGULAR" | "COSI"]
 
     // ADMIN cannot move faculty into another department
     if (access.dbUser.role === "ADMIN" && departmentId !== undefined) {
@@ -122,7 +136,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     // faculty are never CAS, so clusters don't apply to them.
     if (clusterId !== undefined && access.dbUser.role !== "SUPER_ADMIN") {
       return NextResponse.json(
-        apiError("Forbidden — only a Department Chairperson can assign a faculty's cluster"),
+        apiError("Forbidden — only a Department Chairperson can assign a faculty's department head area"),
         { status: 403 }
       )
     }
@@ -135,8 +149,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ...(clusterId !== undefined ? { clusterId: clusterId || null } : {}),
         ...(specializations !== undefined ? { specializations } : {}),
         ...(sectionCounts !== undefined ? { sectionCounts } : {}),
-        ...(maxUnitsPerWeek !== undefined ? { maxUnitsPerWeek: Number(maxUnitsPerWeek) } : {}),
-        ...(maxHoursPerWeek !== undefined ? { maxHoursPerWeek: Number(maxHoursPerWeek) } : {}),
+        ...(employmentType !== undefined ? { employmentType, maxUnitsPerWeek: maxUnitsForType(employmentType) } : {}),
+        ...(maxHoursPerWeek !== undefined
+          ? { maxHoursPerWeek: Number(maxHoursPerWeek) }
+          : liftHours ? { maxHoursPerWeek: DEFAULT_HOURS_BY_TYPE[employmentType as "REGULAR" | "COSI"] } : {}),
         ...(hoursPerWeek !== undefined ? { hoursPerWeek: Number(hoursPerWeek) } : {}),
         ...(isActive !== undefined ? { isActive } : {}),
       },

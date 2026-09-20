@@ -346,6 +346,15 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           .isched-calendar-wrap .fc-timegrid-slot {
             height: 2.8em;
           }
+          /* Half-hour rows carry their own label now; keep the :30 labels a
+             touch lighter so the full hours still anchor the eye. */
+          .isched-calendar-wrap .fc-timegrid-slot-minor .fc-timegrid-slot-label-cushion {
+            color: #9ca3af;
+            font-weight: 400;
+          }
+          .isched-calendar-wrap .fc-timegrid-slot-minor {
+            border-top-style: dotted;
+          }
           .isched-calendar-wrap .fc-timegrid-slot-lane {
             background: transparent;
           }
@@ -456,7 +465,9 @@ export function ScheduleCalendar({ entries, onEntryClick, onEditEntry, onDeleteE
           slotMinTime="07:00:00"
           slotMaxTime="21:00:00"
           slotDuration="00:30:00"
-          slotLabelInterval="01:00:00"
+          /* A label on every half-hour row (07:00, 07:30, …) so a class that
+             starts or ends on the half hour can be read straight off the axis. */
+          slotLabelInterval="00:30:00"
           slotLabelFormat={{
             hour: "numeric",
             minute: "2-digit",

@@ -8,30 +8,40 @@ import { formatRole } from "@/lib/roles"
 const PAGE_SIZE = 20
 const EXPORT_LIMIT = 5000
 
-// GET /api/audit-logs?page=&action=&search=&from=&to=&role=[&format=csv]
-// Dean only (RBAC spec §1 — "System Logs"). Returns the actions taken within the
-// Dean's department: rows whose subject department is theirs OR whose actor
-// belongs to their department, newest first. Each row is enriched with the
-// schedule it concerns (term · department · status) so the log reads on its own.
+// GET /api/audit-logs?page=&action=&search=&from=&to=&role=[&departmentId=][&format=csv]
+// "System Logs" — who sees what:
+//   DEAN / ADMIN (Program Chairperson) — the actions taken within THEIR
+//     department: rows whose subject department is theirs OR whose actor belongs
+//     to it (so a CAS chair injecting GEC into CIT shows up for CIT too).
+//   SUPER_ADMIN (Department Chairperson) — their work spans every college, so
+//     they see every department's log; `departmentId` narrows it to one.
+// Rows are newest first, each enriched with the schedule it concerns
+// (term · department · status) so the log reads on its own.
 //
 //   from / to  — inclusive calendar dates (YYYY-MM-DD) in the server's timezone
 //   role       — actor role (SUPER_ADMIN, ADMIN, …)
 //   format=csv — the whole filtered log (up to EXPORT_LIMIT rows) as a download
+const LOG_ROLES = ["DEAN", "SUPER_ADMIN", "ADMIN"]
+
 export async function GET(req: Request) {
   try {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
 
     const dbUser = await getCurrentUser()
-    if (!dbUser || dbUser.role !== "DEAN") {
-      return NextResponse.json(apiError("Only the Dean can view system logs"), { status: 403 })
+    if (!dbUser || !LOG_ROLES.includes(dbUser.role)) {
+      return NextResponse.json(apiError("Only the Dean, Department Chairpersons and Program Chairpersons can view system logs"), { status: 403 })
     }
-    const deptId = getUserDepartmentId(dbUser)
-    if (!deptId) {
+    const { searchParams } = new URL(req.url)
+    const isUniversityWide = dbUser.role === "SUPER_ADMIN"
+    const ownDeptId = getUserDepartmentId(dbUser)
+    // Department scope: own department for the Dean / Program Chairperson; the
+    // optional filter (or nothing = everything) for a Department Chairperson.
+    const deptId = isUniversityWide ? (searchParams.get("departmentId") || null) : ownDeptId
+    if (!isUniversityWide && !deptId) {
       return NextResponse.json(apiResponse({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE }))
     }
 
-    const { searchParams } = new URL(req.url)
     const page = Math.max(1, Number(searchParams.get("page") ?? 1) || 1)
     const action = searchParams.get("action") ?? ""
     const search = (searchParams.get("search") ?? "").trim()
@@ -40,9 +50,9 @@ export async function GET(req: Request) {
     const to = searchParams.get("to")
     const wantCsv = searchParams.get("format") === "csv"
 
-    const where: any = {
-      OR: [{ departmentId: deptId }, { actorDepartmentId: deptId }],
-    }
+    const where: any = deptId
+      ? { OR: [{ departmentId: deptId }, { actorDepartmentId: deptId }] }
+      : {}
     const and: any[] = []
     if (action && action !== "all") {
       // "schedule" matches every schedule.* action; "entry.created" matches exactly.

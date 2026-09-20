@@ -188,7 +188,7 @@ export async function PATCH(req: Request) {
     // Approving means ALLOCATING an instructor: from now on that faculty member is
     // part of the requesting program's candidate pool for the request's term (the
     // generator and the Add/Edit picker both read approved requests). They are
-    // still bound by specialization, availability and building access.
+    // still bound by specialization and availability.
     let allocatedName: string | null = null
     if (action === "approve") {
       if (!facultyId) {

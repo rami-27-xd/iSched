@@ -47,6 +47,10 @@ export async function GET(
             startTime: true,
             endTime: true,
             set: true,
+            // Multi-day (MWF/TTh) siblings share groupId; merged NSTP sections
+            // share mergeGroupId — the views collapse both into one line.
+            groupId: true,
+            mergeGroupId: true,
             createdBy: true,
             subjectId: true,
             facultyId: true,

@@ -23,6 +23,15 @@ enum SubjectType {
   LABORATORY
 }
 
+// Employment type of a faculty member — decides the weekly unit cap
+// (lib/faculty-types.ts): REGULAR carries at most 21 units, COSI (Contract of
+// Service Instructor) at most 40. Faculty.maxUnitsPerWeek is always derived
+// from it on write; it is stored so the engine/validators need no lookup.
+enum FacultyType {
+  REGULAR
+  COSI
+}
+
 enum RoomType {
   LECTURE_ROOM
   LABORATORY
@@ -246,6 +255,9 @@ model Faculty {
   employeeId      String                       @unique
   specializations String[]
   sectionCounts   Json?                        @default("{}") // { "Subject Title": numberOfSections }
+  // REGULAR (21 units/week) or COSI (40 units/week) — see FacultyType.
+  employmentType  FacultyType                  @default(REGULAR)
+  // Derived from employmentType (21 / 40) — never set independently.
   maxUnitsPerWeek Int                          @default(21)
   // Maximum weekly workload in contact HOURS (units above are credit units).
   // Caps both the availability a chair may mark for this faculty and the hours
@@ -415,6 +427,12 @@ model Subject {
   // When set, the backtracking engine will only match rooms whose
   // labSpecialization equals this value (Hard Constraint).
   requiredLabSpecialization LabSpecialization?
+  // Longest single session (minutes) this subject may hold on one day. Null =
+  // the default rule in lib/session-rules.ts (GEC/GEL: 90 minutes, i.e. a 3-hour
+  // subject meets 1h×3 or 1.5h×2 and is never a 3-hour block; other subjects:
+  // no cap). The Department Chairperson can set 60 or 90 per GEC/GEL subject.
+  // Hard constraint for both the engine and manual entry.
+  maxMinutesPerDay         Int?
   createdAt                DateTime           @default(now())
 
   department      Department      @relation(fields: [departmentId], references: [id])
@@ -485,6 +503,13 @@ model ScheduleEntry {
   // assignment, so PATCH/DELETE can treat them as one logical entry. Null
   // for single-session or manually-added entries.
   groupId      String?
+  // Merged NSTP class: two or more sections taught together as ONE class (same
+  // subject, faculty, room, day and time). One row per (section, day), all
+  // sharing this id. Rows of one merge group are exempt from faculty/room
+  // double-booking checks against each other (they ARE the same class), the
+  // views collapse them into a single line, and edit/delete act on the whole
+  // group. Only the NSTP Director creates these (POST /entries `sectionIds`).
+  mergeGroupId String?
   createdBy    String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -500,6 +525,7 @@ model ScheduleEntry {
   @@index([roomId, day])
   @@index([sectionId, day])
   @@index([groupId])
+  @@index([mergeGroupId])
 }
 
 model UnassignedEntry {

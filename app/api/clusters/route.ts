@@ -45,14 +45,14 @@ export async function POST(req: Request) {
 
     const dbUser = await getCurrentUser()
     if (!dbUser || dbUser.role !== "SUPER_ADMIN") {
-      return NextResponse.json(apiError("Only Department Chairs can create clusters"), { status: 403 })
+      return NextResponse.json(apiError("Only Department Chairpersons can create department head areas"), { status: 403 })
     }
 
     const body = await req.json()
     const { name, description, collegeId } = body
 
     if (!name?.trim()) {
-      return NextResponse.json(apiError("Cluster name is required"), { status: 400 })
+      return NextResponse.json(apiError("Department head area name is required"), { status: 400 })
     }
 
     const cluster = await db.facultyCluster.create({
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
     return NextResponse.json(apiResponse(cluster), { status: 201 })
   } catch (error: any) {
     if (error.code === "P2002") {
-      return NextResponse.json(apiError("A cluster with this name already exists"), { status: 409 })
+      return NextResponse.json(apiError("A department head area with this name already exists"), { status: 409 })
     }
     console.error("POST /api/clusters error:", error)
     return NextResponse.json(apiError("Internal server error"), { status: 500 })

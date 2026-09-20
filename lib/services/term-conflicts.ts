@@ -87,6 +87,7 @@ const entrySelect = {
   roomId: true,
   sectionId: true,
   set: true,
+  mergeGroupId: true,
   subject: { select: { code: true, type: true, units: true } },
   faculty: {
     select: { employeeId: true, maxUnitsPerWeek: true, user: { select: { firstName: true, lastName: true } } },
@@ -129,6 +130,7 @@ function toConflictEntry(e: any): ScheduleEntry {
     // student groups only when both carry a set. Dropping it reports every Set A/Set B
     // pair as a section double-booking.
     set: e.set ?? null,
+    mergeGroupId: e.mergeGroupId ?? null,
   }
 }
 

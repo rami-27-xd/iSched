@@ -76,15 +76,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let clusterId: string
     if (myClusterId) {
       if (requestedClusterId && requestedClusterId !== myClusterId) {
-        return NextResponse.json(apiError("You can only finalize your own cluster"), { status: 403 })
+        return NextResponse.json(apiError("You can only finalize for your own department head area"), { status: 403 })
       }
       clusterId = myClusterId
     } else {
       if (!requestedClusterId) {
-        return NextResponse.json(apiError("Specify which cluster you are finalizing on behalf of"), { status: 400 })
+        return NextResponse.json(apiError("Specify which department head area you are finalizing on behalf of"), { status: 400 })
       }
       const cluster = await db.facultyCluster.findUnique({ where: { id: requestedClusterId }, select: { id: true } })
-      if (!cluster) return NextResponse.json(apiError("Unknown cluster"), { status: 404 })
+      if (!cluster) return NextResponse.json(apiError("Unknown department head area"), { status: 404 })
       clusterId = requestedClusterId
     }
 
@@ -139,7 +139,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         await createNotification({
           userId: pc.id,
           title: "GEC/GEL Finalized — You May Proceed",
-          message: `All three CAS cluster chairpersons have finalized GEC/GEL for ${schedule.department?.abbreviation ?? "your department"}. You can now add your major subjects.`,
+          message: `All three CAS department heads have finalized GEC/GEL for ${schedule.department?.abbreviation ?? "your department"}. You can now add your major subjects.`,
           type: "workflow_approved",
           link: "/dashboard/schedules",
         })
@@ -151,7 +151,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         entityId: id,
         departmentId: schedule.departmentId,
         scheduleId: id,
-        summary: `All 3 clusters finalized GEC/GEL for ${schedule.department?.abbreviation ?? "this schedule"} — ${programChairs.length} Program Chairperson(s) notified`,
+        summary: `All 3 department heads finalized GEC/GEL for ${schedule.department?.abbreviation ?? "this schedule"} — ${programChairs.length} Program Chairperson(s) notified`,
       })
     }
 

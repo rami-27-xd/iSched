@@ -30,12 +30,18 @@ The panelist required a strict workflow hierarchy. The role names in the DB do *
 
 | DB Role | Real-world title | Capabilities |
 |---|---|---|
-| `DEAN` | **Dean** (one per department) | Approves the accounts of **their own department** (User Management is Dean-only); reads **System Logs** (`/dashboard/logs`: department activity from `AuditLog`, every department schedule, room occupancy in their buildings). **Read-only** on every other page — no write route accepts DEAN. |
-| `SUPER_ADMIN` | **Department Chairperson (CAS)** | GEC/GEL + CAS major subjects; approves / rejects submitted schedules; sees all colleges. No longer approves accounts and no longer touches PATHFit/NSTP. |
-| `ADMIN` | **Program Chairperson** | Their own program's major subjects; submits schedule for review |
+| `DEAN` | **Dean** (one per department) | Approves the accounts of **their own department** (User Management is Dean-only); reads **System Logs** (`/dashboard/logs`: department activity from `AuditLog`, every department schedule, every scheduled class, Subject Summary, room occupancy in their buildings). **Read-only** on every other page — no write route accepts DEAN. |
+| `SUPER_ADMIN` | **Department Chairperson (CAS)** | GEC/GEL + CAS major subjects; approves / rejects submitted schedules; sees all colleges. System Logs (all five tabs) across every department. No longer approves accounts and no longer touches PATHFit/NSTP. |
+| `ADMIN` | **Program Chairperson** | Their own program's major subjects; submits schedule for review. System Logs (all five tabs) for their own department. |
 | `PATHFIT` | **PATHFit Director** (exactly one account) | Generates (`lib/services/pathfit-generation.ts`, TBA/GYM) and adds/edits/deletes PATHFit entries in every college's schedule. Nothing else. |
-| `NSTP` | **NSTP Director** (exactly one account) | Adds/edits/deletes NSTP entries in every college's schedule (never auto-generated). Nothing else. |
+| `NSTP` | **NSTP Director** (exactly one account) | Adds/edits/deletes NSTP entries in every college's schedule (never auto-generated), including **merged classes** for two or more sections (§1d). Nothing else. |
 | `FACULTY` | Faculty member | **No login.** A data record only (name on schedules, availability, specialization). Receives their schedule via the printed Teaching Load export from the DC/PC. |
+
+**Terminology (2026-09-19):** the word "cluster" is gone from the UI and docs. A CAS Department Chairperson heads a
+**department head area** (Social Sciences; Languages, Literature, and Humanities; Mathematics and Natural Sciences) and
+the three of them are "the three department heads". The DB/model names (`FacultyCluster`, `User.clusterId`,
+`Program.clusterId`, `Faculty.clusterId`, `GecFinalization.clusterId`, `CLUSTER_GEC_CODES`) are unchanged — only
+user-facing strings, comments in new code and this file say "department head".
 
 Role vocabulary + helpers live in `lib/roles.ts` (client-safe): `ROLE_LABELS` (the exact titles shown everywhere —
 Dean, Department Chairperson, Program Chairperson, PATHFit Director, NSTP Director), `isUniversityWideRole` (SUPER_ADMIN /
@@ -81,40 +87,40 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
 3. **Dept Chair**: finalizes/publishes the GEC/GEL schedule. The presence of GEC entries is the signal that unlocks Program Chairs to add their full major load.
 4. **All Program Chairs (ADMIN)**: add their full major subject load (lecture + lab) on `DRAFT`, then `submit` for the Dept Chair's final approval. A CIT chair's regeneration preserves the pre-plotted labs (they are excluded from the regenerated subject scope).
    **Enforced (`lib/services/workflow-gates.ts` → `isGecFinalized`, updated 2026-09-17)**: a Program Chair is blocked
-   from Add Entry, Generate and Submit (409 + `GEC_FIRST_MESSAGE`) until **all three CAS cluster chairpersons** have
+   from Add Entry, Generate and Submit (409 + `GEC_FIRST_MESSAGE`) until **all three CAS department heads** have
    explicitly finalized GEC/GEL for THIS schedule — not merely "some GEC entry exists" — except a CIT chair, who may
    add/generate LABORATORY subjects only in the meantime (step 1). The schedules page mirrors this with a
-   "Waiting for GEC" banner listing per-cluster status (`waitingForGec`, `gecReady`/`gecClusters` from
+   "Waiting for GEC" banner listing per-department-head status (`waitingForGec`, `gecReady`/`gecClusters` from
    `GET /api/schedules/[id]/gec-finalize`).
 5. **Dept Chair**: `approve` → `PUBLISHED` → visible to faculty.
 
 > **Compliance rule (updated 2026-09-17):** Every course code other than GEC/GEL, PATHFit and NSTP is a major
 > subject under its own program's Program Chairperson (enforced in `lib/services/subject-permissions.ts` and the
 > Add/Edit subject-pool filters). A department's schedule becomes actionable for its Program Chairpersons only once
-> **all three** CAS cluster chairpersons handling GEC/GEL have **finalized** their scheduling for that schedule — see
+> **all three** CAS department heads handling GEC/GEL have **finalized** their scheduling for that schedule — see
 > "GEC/GEL Finalization" below. Only the owning **CIT Program Chairperson** may add/edit/move/delete CIT
 > **laboratory** subjects — not the Dept Chair, not another program's chair. The Dept Chair may view but not edit
 > any non-CAS major subject.
 
 ### GEC/GEL Finalization (spec, 2026-09-17)
-- **Model**: `GecFinalization` — one row per (scheduleId, clusterId) recording which CAS cluster chairperson declared
+- **Model**: `GecFinalization` — one row per (scheduleId, clusterId) recording which CAS department head declared
   their GEC/GEL scheduling COMPLETE for that specific schedule, and when. Finalization is per schedule, not global —
   each department's schedule (CIT, CTE, CEN, CAM, CABHA, CAG, plus CAS's own) is finalized independently, and all
-  three clusters must finalize each one separately.
-- **Not inferred from entries** — a cluster chair placing a few GEC classes does not unlock Program Chairs; they must
-  explicitly click **Finalize** (`POST /api/schedules/[id]/gec-finalize { action: "finalize" }`, SUPER_ADMIN only —
-  their own cluster, or any cluster by `clusterId` for a no-cluster full-access chair). `GET` on the same route
-  returns per-cluster status (name, finalized, finalizedBy, finalizedAt) for the UI.
+  three department heads must finalize each one separately.
+- **Not inferred from entries** — a department head placing a few GEC classes does not unlock Program Chairs; they must
+  explicitly click **Finalize my GEC/GEL** (`POST /api/schedules/[id]/gec-finalize { action: "finalize" }`, SUPER_ADMIN
+  only — their own area, or any area by `clusterId` for a full-access chair with no area). `GET` on the same route
+  returns per-area status (name, finalized, finalizedBy, finalizedAt) for the UI.
 - **Auto-reopens on further edits** (`reopenGecIfStale` in `workflow-gates.ts`): creating, editing, or deleting a
-  GEC/GEL entry for a cluster that already finalized this schedule deletes that cluster's `GecFinalization` row again
+  GEC/GEL entry for an area that already finalized this schedule deletes that area's `GecFinalization` row again
   — wired into `entries/route.ts` POST, `entries/[entryId]/route.ts` PATCH/DELETE, and the SUPER_ADMIN branch of
   `generate/route.ts` (a full regeneration always reopens). The declaration must reflect the entries actually placed.
-- **Notification**: the moment the last of the three clusters finalizes a schedule, every approved Program
+- **Notification**: the moment the last of the three department heads finalizes a schedule, every approved Program
   Chairperson of that department is notified ("GEC/GEL Finalized — You May Proceed"). CAS's own schedule has no
   Program Chairpersons, so finalizing it is harmless bookkeeping that gates nothing.
-- **UI** (`app/(dashboard)/dashboard/schedules/page.tsx`): a "GEC/GEL finalization" card above the entry list for
-  SUPER_ADMIN (their own cluster's Finalize/Reopen button + all three clusters' status); the "Waiting for GEC" banner
-  for ADMIN lists the same per-cluster breakdown so a Program Chair can see who they're waiting on.
+- **UI** (`app/(dashboard)/dashboard/schedules/page.tsx`): a "GEC/GEL finalization — by department head" card above
+  the entry list for SUPER_ADMIN (their own Finalize / Reopen my GEC/GEL button + all three areas' status); the
+  "Waiting for GEC" banner for ADMIN lists the same breakdown so a Program Chair can see who they're waiting on.
 
 ---
 
@@ -133,7 +139,7 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
   for it. One matcher for the engine, `entry-validation.ts` and the Add/Edit pickers:
   `specializationsCoverSubject(specs, title, code)` in `lib/specialization-match.ts` — a tag may be the subject
   title (abbreviation-tolerant) or its **code** ("GEC01", "GEC01 - Understanding the Self"). CAS faculty must be tagged
-  per GEC (`prisma/seed-cas-gec-specializations.ts` tags each active CAS faculty with their cluster's GEC/GEL codes for
+  per GEC (`prisma/seed-cas-gec-specializations.ts` tags each active CAS faculty with their area's GEC/GEL codes for
   test data). The TBA placeholder is exempt (PATHFit generation).
 - **Faculty pool for a Program Chairperson run** = own program + department-wide faculty **+ instructors allocated to
   that program for that term** (approved `FacultyRequest` rows with `programId`, `semesterId`, `facultyId`). A
@@ -143,10 +149,56 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
 - **Rooms** — union semantics everywhere: a room's building is usable when it has NO department links (shared) or is
   linked to the department (`roomBuildingOpenToDepartment` in `entry-validation.ts`, used by entries POST/PATCH;
   `/api/rooms?departmentId=` applies the same rule). Previously manual entry only accepted mapped buildings.
+- **Faculty may teach in any building (2026-09-19).** The per-faculty, per-term building access list was removed: no
+  chips on Faculty Availability, no `/api/faculty/building-availability` route, `enforceBuildingAvailability: false`
+  in the engine (`allowedBuildingIds: []` from the generate route) and no rule 0f in `validateEntry`. The
+  `FacultyBuildingAvailability` model still exists (old rows are inert; `prisma/seed-cit-specs-availability.ts` still
+  writes them harmlessly).
+- **Faculty employment type (2026-09-19)**: `FacultyType { REGULAR, COSI }` on `Faculty.employmentType`
+  (default REGULAR). `lib/faculty-types.ts` (client-safe): **Regular = 21 units/week, COSI = 40** (`MAX_UNITS_BY_TYPE`),
+  default hours 30 / 40. `Faculty.maxUnitsPerWeek` is **derived from the type on every write** (`POST /api/faculty`,
+  `PATCH /api/faculty/[id]` — clients send `employmentType`, never a unit number; a type change lifts
+  `maxHoursPerWeek` to the type default when it is lower). Forms on the Faculty and Faculty Availability pages have an
+  "Employment type" select instead of a Max Units input; the table/cards show "Regular · max 21u". Engine ceiling
+  `maxWeeklyUnits` = 40 (`MAX_UNITS_ANY_TYPE`); `validateEntryCapacity` names the type in its warning.
+  `prisma/seed-faculty-type-caps.ts` re-derives every existing faculty's cap (run after `db push`; done locally).
 - **Year check** in `validateEntry` consults the curriculum map first (a shared subject's year differs per program),
   falling back to `Subject.year` only for unmapped programs / off-curriculum subjects.
 - **Deleting a class removes every session of a multi-day (`groupId`) class** (`DELETE /entries/[entryId]`), so the
   subject becomes addable again for that section.
+
+### 1c. GEC/GEL per-day session cap (2026-09-19)
+- `Subject.maxMinutesPerDay Int?` + `lib/session-rules.ts` (client-safe): `resolveMaxMinutesPerDay(subject)` = the
+  explicit value, else **90 for GEC/GEL** (`DEFAULT_GEC_MAX_MINUTES_PER_DAY`), else null (no cap). The Subjects form
+  shows "Longest session per day" (1 hour / 1 hour 30 minutes) for GEC/GEL codes only; the table shows a
+  "max 1 hour 30 minutes/day" badge. `POST/PATCH /api/subjects` accept 60 / 90 / null.
+- **Engine**: `SubjectInput.maxMinutesPerDay` → `getSessionDayGroups` drops every day pattern whose per-day session
+  exceeds the cap — including the single-block fallback. A 3-hour GEC therefore meets 1h×3 (MWF/TThS) or 1.5h×2
+  (TTh/MW/…), never as one 3-hour block (that fallback was being chosen at random by the greedy shuffle before).
+  Cap 60 leaves only the 1h×3 patterns. `diagnoseEmptyDomain` names the cap when no pattern can carry the hours.
+- **Manual entry**: `validateEntry` rule 0a returns a `[HARD]` error (never overridable with Save Anyway) when a
+  session is longer than the cap; the Add/Edit Entry End Time pickers only offer times within it and show a hint.
+
+### 1d. Merged NSTP sections (2026-09-19)
+- `ScheduleEntry.mergeGroupId String?` (+ index): a merged NSTP class is **one row per (section, day)**, all sharing
+  the id, with identical subject/faculty/room/time. Only NSTP may be merged (`isNstpCode`) — the API refuses others.
+- `POST /entries` takes `sectionIds: string[]` (the primary section + the extras the NSTP Director ticked under
+  "Merge with other sections"); every section's row is validated (its own timetable must be free), capacity is
+  checked once, rows are created in one transaction (multi-day patterns still share `groupId` too).
+- `PATCH /entries/[entryId]` on a merged row applies field changes to every section's row of that **session**
+  (same day/time) and accepts `sectionIds` to add / drop sections (adds get a row per existing session; dropping to
+  one section clears `mergeGroupId`). It can also merge a plain single-section NSTP class by sending `sectionIds`
+  with 2+ ids. `DELETE` removes the whole merge group.
+- **Same class, not a double-booking**: rows of one merge group are exempt from faculty/room overlap checks against each
+  other in `entry-validation.ts`, `conflicts.ts` (`sameMergedClass`) and `term-conflicts.ts`; section overlap
+  still applies per section. Their minutes/units count **once** in `validateEntryCapacity`, the engine's locked-slot
+  preload, `/api/faculty/workload`, `syncFacultySpecializations` and the Teaching Load export (one row
+  "NSTP01 … (BSIT 1-A + BSIT 1-B)").
+- **UI** (`schedules/page.tsx`): `collapsedEntries` folds the rows of one session into a single display row
+  (`__mergedSections`, `__mergedIds`) shown with a "Merged · n" badge in List/Table/Calendar; the Section filter
+  matches any member. The Edit dialog replaces the section combobox with chips + "Merge another section…" for NSTP;
+  the delete dialog says the whole merged class goes. `GET /api/schedules/[id]` now selects `groupId` and
+  `mergeGroupId` (the multi-day pattern badge never worked before because `groupId` was not selected).
 
 ### 2. Lab Specialization & Room Type
 - `LabSpecialization` enum on `Room.labSpecialization` and `Subject.requiredLabSpecialization`
@@ -203,14 +255,45 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   Directors see the KPI row + Recent Schedules (+ their own teaching schedule). The **Dean** gets
   `components/dashboard/dean-dashboard.tsx`: accounts awaiting approval (approve inline), department schedules with
   status/unassigned/conflict badges, and the latest audit rows — each linking to User Management / System Logs.
-- **User Manual** (`/dashboard/manual`, role-aware, all login roles; sidebar item + a quick action in every dashboard
-  hub + the ⋯ menu / "Waiting for GEC" banner on Manage Schedules) replaced the old Workflow Guide dialog. Page titles
-  come from `PAGE_TITLES` in `components/layout/dashboard-shell.tsx` (System Logs, User Manual have entries).
+- **User Manual** (`/dashboard/manual`, all login roles; sidebar item + the ⋯ menu / "Waiting for GEC" banner on
+  Manage Schedules) is **one visual manual per role** (2026-09-19): `lib/manual-workflows.ts` holds a `RoleManual`
+  per role (flowchart nodes on a col/row grid + edges, "where each step happens" cards, one-line rules) and
+  `components/manual/workflow-diagram.tsx` renders it as an SVG flowchart (steps / decisions / "another role — you
+  wait" / start-finish, "Enforced" badges, dashed loops back). The signed-in role's manual opens first; a role switcher
+  shows the others. Page titles come from `PAGE_TITLES` in `components/layout/dashboard-shell.tsx`. Manual "places"
+  point at `/dashboard/logs` for occupancy / summary / classes.
+- **System Logs** (`/dashboard/logs`, 2026-09-19) is the ONE oversight page for the **Dean, Department Chairperson
+  and Program Chairperson** — five tabs, every one colouring departments/colleges the same way via
+  `lib/department-colors.ts` (`departmentColor(abbr)`: fixed slots for CAS/CIT/CTE/CEN/CAM/CABHA/CAG/CAHM, hashed
+  otherwise; `DepartmentChip` / `DepartmentLegend` in `components/shared/department-legend.tsx`). Scope: DEAN/ADMIN
+  = their department; SUPER_ADMIN = every department (department filter where it makes sense). No separate sidebar
+  pages for Room Occupancy / Subject Summary any more (they were briefly `/dashboard/occupancy` and
+  `/dashboard/subject-summary`; both removed the same day).
+  - **Activity** — `GET /api/audit-logs` (DEAN/ADMIN own dept by subject-or-actor; SUPER_ADMIN all, `?departmentId=`).
+    Collapsible colour key (`lib/log-legend.ts`: one colour per actor role — same as User Management's role badges —
+    and one per kind of action); "By" column shows a role dot + badge; the schedule context line carries a department chip.
+  - **Schedules** — every schedule in scope (Department column + legend for the DC).
+  - **Classes** — `GET /api/schedules/classes?semesterId[&page&search&departmentId&programId&day&status][&format=csv]`:
+    **every scheduled class of the term** (section · course/program · subject · faculty · room · day/time · status)
+    across draft/pending/published non-archived schedules, merged NSTP rows collapsed to one line, server-paginated
+    (20/page), totals line (classes · sections · courses · subjects), CSV export. This is the "everything being
+    scheduled" list the panel asked for.
+  - **Subject Summary** — `components/schedule/subject-summary-view.tsx`, `GET /api/subjects/summary?academicYearId
+    &departmentId`: for every subject, which programs (grouped by department) take it in which semester — "1st
+    Semester: GEC05 | CAS — BSBio, BAPsych | CIT — BSIT". Merges **planned** (curriculum map, else Subject rows by
+    semester) with **scheduled** (non-archived schedules of that year). **By subject** matrix (dept chip | program chips:
+    filled = scheduled with section count, outlined = planned only, amber = scheduled off-curriculum) and **By program**
+    pivot; filters: academic year, department (DC), kind, scheduled only, search; 10 rows per page.
+  - **Room Occupancy** — `components/rooms/room-occupancy-view.tsx`, `GET /api/rooms/occupancy?semesterId[&buildingId]`
+    (replaces `/api/dean/room-occupancy`): a **room × time grid** per building (rows = rooms, 30-min columns
+    07:00–21:00, one colour per department, dashed border = not yet published, users icon = merged sections), day tabs
+    with counts, click a block for details, plus a List view. Buildings: DEAN → assigned to their department; ADMIN →
+    open to their department (shared or linked); SUPER_ADMIN → all buildings (no department filter — removed on request).
 - Pagination summaries read "1–10 out of 42 faculty"; the Faculty page's department headers read "9 out of 50 members"
   (rows on this page out of the department's total in the current search).
 - **Audit trail**: every write route calls `recordAudit()` (`lib/audit.ts`; labels in the client-safe
   `lib/audit-labels.ts`) → `AuditLog` rows tagged with the department the action was about and the actor's
-  department. `GET /api/audit-logs` and `GET /api/dean/room-occupancy` feed the Dean's System Logs page.
+  department. `GET /api/audit-logs` and `GET /api/rooms/occupancy` feed the System Logs page.
   Key actions also record structured `metadata` (generation: mode, classes placed/unplaced, conflicts, duration;
   classes: subject, section, faculty, room, days, time; workflow: from/to status + note; accounts: email, role) — the
   Activity tab shows full date + time, the schedule context line, and expands a row into those details; it has
@@ -220,7 +303,8 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   remounted with `key={selectedDay}` because FullCalendar went blank when only `hiddenDays` changed in place).
   Multi-day (MWF/TTh) classes appear on each of their days with a pattern badge. Faculty/Section/Room filters keep "All".
 - Calendar view colours events **per subject** (`subjectColor()` in `schedule-calendar.tsx`, golden-angle hues) with
-  a subject colour key; conflicts stay red.
+  a subject colour key; conflicts stay red. The time axis is labelled **every 30 minutes** (`slotLabelInterval`
+  00:30, half-hour labels lighter and dotted).
 - `/dashboard/schedules` has a route `loading.tsx` skeleton, and sidebar / dashboard links show a pending spinner
   (`components/shared/link-pending.tsx`, `useLinkStatus`).
 - Copy: plain verbs ("Generate", "Generating…", "Save Anyway", "Ready to Publish") — avoid algorithm/constraint jargon
@@ -262,14 +346,18 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 | `/api/faculty` | GET | Accepts `departmentId` or `collegeId` filter |
 | `/api/faculty` | POST | Creates faculty; email optional (stub vs. real auth user) |
 | `/api/faculty/availability` | GET/POST | Faculty time availability for a `semesterId`; POST rejects totals over `maxHoursPerWeek` and 409s without a non-archived schedule for that term |
-| `/api/faculty/building-availability` | GET/POST | Per-term building access (`?semesterId=`; POST replaces a faculty's rows) |
 | `/api/faculty/request` | GET/POST/PATCH | PC raises a request (term + reason); DC approves by allocating a `facultyId` → joins the program's pool for that term |
 | `/api/faculty/workload` | GET | `?semesterId=` → per-faculty scheduled minutes/classes across non-archived schedules (live workload bar) |
 | `/api/schedules/[id]/workflow` | POST | State transitions (submit / approve / reject) |
 | `/api/schedules/[id]/generate` | POST | Runs backtracking scheduler. DC generates PATHFit (priority, GYM/TBA) then GEC (no PC-submission gate); CIT labs are locked slots |
 | `/api/users/[id]` | PATCH/DELETE | DEAN (own department only): approve, re-role, (de)activate, permanently delete (DB rows + Supabase Auth; 409 if their faculty record still has entries). Refuses a second Dean per department / second PATHFIT or NSTP account |
-| `/api/audit-logs` | GET | DEAN: paginated department activity (`?page&action&search&role&from&to`), each row resolved to its schedule (term · dept · status); `format=csv` downloads the filtered log (≤5000 rows) |
-| `/api/dean/room-occupancy` | GET | DEAN: every class held this semester in the rooms of buildings assigned to their department |
+| `/api/audit-logs` | GET | DEAN / ADMIN (own department) / SUPER_ADMIN (all, `?departmentId=`): paginated activity (`?page&action&search&role&from&to`), each row resolved to its schedule (term · dept · status); `format=csv` downloads the filtered log (≤5000 rows) |
+| `/api/rooms/occupancy` | GET | DEAN / ADMIN / SUPER_ADMIN: every class held this semester in the rooms they may see (`?semesterId&buildingId`), merged NSTP rows collapsed, plus the departments present (colour key) |
+| `/api/schedules/classes` | GET | DEAN / ADMIN (own dept) / SUPER_ADMIN (all, `?departmentId=`): every scheduled class of a term, paginated (`?semesterId&page&search&programId&day&status`), `format=csv` |
+| `/api/faculty` · `/api/faculty/[id]` | POST · PATCH | Accept `employmentType` (REGULAR / COSI); `maxUnitsPerWeek` is derived (21 / 40) — a client-sent unit number is ignored |
+| `/api/subjects/summary` | GET | DEAN / ADMIN (own dept) / SUPER_ADMIN (all, `?departmentId=`): per subject × semester × department → program cells (planned / scheduled / sections / classes / years) for `?academicYearId=` |
+| `/api/schedules/[id]/entries` | POST | Add a class; `days[]` for MWF/TTh patterns, `sectionIds[]` to merge NSTP sections (one row per section sharing `mergeGroupId`) |
+| `/api/schedules/[id]/entries/[entryId]` | PATCH/DELETE | Edit applies to every section row of a merged session and accepts `sectionIds[]` (add/drop sections); delete removes the whole multi-day group / merge group |
 | `/api/auth/bootstrap-status` | GET | Public: which singleton accounts already exist (drives sign-up auto-approve / blocked messages) |
 | `/api/schedules/[id]/export-data` | GET | Enriched flat entries + header for the ISO / Teaching-Load exports (Section 6) |
 | `/api/schedules/[id]/lab-requests` \| `/[reqId]` | GET/POST/PATCH | DC→CIT-PC lab-change requests (Section 2), on `ScheduleSwapRequest` (`kind:"LAB_CHANGE"`) |
@@ -297,22 +385,24 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 
 ## Faculty Availability Page Notes
 
-- **Per-term.** Availability (`FacultyAvailability.semesterId`) and building access
-  (`FacultyBuildingAvailability.semesterId`) are recorded for a specific Academic Year + Semester. The page has a
-  **Term** selector listing only the terms that have a non-archived schedule in the user's department (default: the
-  active semester when listed, else the newest); no college dropdown — `/api/faculty` scopes everyone to their own
-  department server-side, so the page calls `useFacultyList()` with no params.
+- **Per-term.** Availability (`FacultyAvailability.semesterId`) is recorded for a specific Academic Year + Semester.
+  The page has a **Term** selector listing only the **1st and 2nd semesters** (never Summer, 2026-09-19) that have a
+  non-archived schedule the user's faculty take part in (own department; for a CAS Department Chairperson any
+  department's schedule — CAS faculty teach GEC/GEL everywhere), default: the active semester when listed, else the
+  newest; no college dropdown — `/api/faculty` scopes everyone to their own department server-side, so the page calls
+  `useFacultyList()` with no params. The card header shows the faculty's employment type and unit cap.
 - **Strict term isolation.** The generator (`generate/route.ts`) and manual entry (`entry-validation.ts`) read the
-  schedule's own semester's availability/building rows ONLY — the old "fall back to the active semester" rule is
-  gone on both sides (it was how 1st- and 2nd-semester data bled together and why generated entries failed manual
-  validation). Generation without any availability for that term fails up front with a message naming the term.
-- **Building access editor**: building chips on each availability card (buildings shared or assigned to the
-  department; no chips = any building), saved per term via `GET/POST /api/faculty/building-availability`.
-- `POST /api/faculty/availability` and the building-access POST return 409 unless a non-archived schedule exists for
-  that term in the faculty's department. Archived schedules never count — here, in `syncFacultySpecializations`
-  (load from non-archived schedules only), the workload route and the engine's locked entries.
+  schedule's own semester's availability rows ONLY — the old "fall back to the active semester" rule is gone on both
+  sides (it was how 1st- and 2nd-semester data bled together and why generated entries failed manual validation).
+  Generation without any availability for that term fails up front with a message naming the term.
+- Building access per faculty no longer exists (faculty may teach in any building — see pillar 1b).
+- `POST /api/faculty/availability` returns 409 unless a non-archived schedule exists for that term that the faculty's
+  department takes part in (`departmentHasScheduleForTerm` in `lib/services/term-scope.ts`: own department, or any
+  department for CAS). Archived schedules never count — here, in `syncFacultySpecializations` (load from non-archived
+  schedules only), the workload route and the engine's locked entries.
 - The Dean sees the page read-only (`FacultyCard readOnly`: no drag, presets, max-hours edits, Add/Edit/Deactivate).
-- The `Add Faculty` button in the availability page creates faculty records (email optional, record-only — faculty do not log in)
+- The `Add Faculty` button in the availability page creates faculty records (email optional, record-only — faculty do not
+  log in) with an Employment type (Regular / COSI) that fixes the unit cap; Max hours stays editable.
 
 ---
 
@@ -344,4 +434,4 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   `lib/curriculum-map.ts` — those blocks are generated from the same data, so edit the data module and regenerate rather
   than hand-editing the map. GEC/GEL/PATHFit/NSTP are never created outside CAS; the three GE electives these curricula
   introduced (GEL04 Living in the IT Era, GEL05 The Entrepreneurial Mind, GEL08 Human Reproduction) are upserted into CAS
-  and owned by the MNS cluster. CEN and CAM documents cover the 2nd semester only.
+  and owned by the MNS department head. CEN and CAM documents cover the 2nd semester only.

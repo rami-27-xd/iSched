@@ -40,6 +40,16 @@ export interface ScheduleEntry {
   startTime: string
   endTime: string
   set?: string | null
+  // Merged NSTP class (ScheduleEntry.mergeGroupId): sibling rows are the SAME
+  // class held for several sections at once — one faculty, one room, one time —
+  // so they are never a faculty/room double-booking of each other. Section
+  // overlaps still apply per section.
+  mergeGroupId?: string | null
+}
+
+/** Two rows of one merged class — not a resource clash. */
+function sameMergedClass(a: ScheduleEntry, b: ScheduleEntry): boolean {
+  return !!a.mergeGroupId && a.mergeGroupId === b.mergeGroupId
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +111,7 @@ function detectFacultyOverlaps(entries: ScheduleEntry[]): Conflict[] {
     if (group.length < 2) continue
     const overlaps = findTimeOverlaps(group)
     for (const [a, b] of overlaps) {
+      if (sameMergedClass(a, b)) continue
       conflicts.push({
         type: 'FACULTY_OVERLAP',
         severity: 'ERROR',
@@ -124,6 +135,7 @@ function detectRoomOverlaps(entries: ScheduleEntry[]): Conflict[] {
     if (group.length < 2) continue
     const overlaps = findTimeOverlaps(group)
     for (const [a, b] of overlaps) {
+      if (sameMergedClass(a, b)) continue
       conflicts.push({
         type: 'ROOM_OVERLAP',
         severity: 'ERROR',

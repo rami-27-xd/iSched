@@ -104,7 +104,7 @@ export async function checkSubjectEditPermission(
     if (subject.programId) {
       // CAS major subject — must belong to a program in this chair's cluster
       if (subject.program?.clusterId === clusterId) return null
-      return `${subject.code} is a major subject of ${subject.program?.abbreviation ?? "another program"} — it is managed by that program's chair or cluster head`
+      return `${subject.code} is a major subject of ${subject.program?.abbreviation ?? "another program"} — it is managed by that program's chairperson or department head`
     }
 
     // GEC/GEL — must be one of this cluster's codes
@@ -114,7 +114,7 @@ export async function checkSubjectEditPermission(
     })
     const ownedCodes = CLUSTER_GEC_CODES[cluster?.name ?? ""] ?? []
     if (ownedCodes.some((c) => c.toUpperCase() === code)) return null
-    return `${subject.code} is assigned to a different cluster head — you can only manage: ${ownedCodes.join(", ")}`
+    return `${subject.code} is assigned to a different department head — you can only manage: ${ownedCodes.join(", ")}`
   }
 
   if (dbUser.role === "ADMIN") {

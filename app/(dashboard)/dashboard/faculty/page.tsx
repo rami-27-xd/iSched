@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { FACULTY_TYPES, FACULTY_TYPE_LABELS, FACULTY_TYPE_DESCRIPTIONS, MAX_UNITS_BY_TYPE, maxUnitsForType, formatFacultyType, type FacultyType } from "@/lib/faculty-types"
 import { Card, CardContent } from "@/components/ui/card"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -257,7 +258,7 @@ function MobileFacultyList({
                           {f.isActive ? "Active" : "Inactive"}
                         </Badge>
                         <span className="text-xs text-muted-foreground tabular-nums">
-                          Max {f.maxUnitsPerWeek}u · {f.maxHoursPerWeek ?? 30}h /wk
+                          {formatFacultyType(f.employmentType)} · max {f.maxUnitsPerWeek}u · {f.maxHoursPerWeek ?? 30}h /wk
                         </span>
                       </div>
                     </div>
@@ -322,13 +323,14 @@ function MobileFacultyList({
  * same secondary line — instead of two differently-shaped cells side by side.
  * The usage line turns amber once it reaches the cap.
  */
-function CapCell({ cap, unit, used, usedLabel }: { cap: number; unit: "u" | "h"; used: number; usedLabel: string }) {
+function CapCell({ cap, unit, used, usedLabel, note }: { cap: number; unit: "u" | "h"; used: number; usedLabel: string; note?: string }) {
   const atCap = cap > 0 && used >= cap
   return (
     <TableCell className="text-right align-top whitespace-nowrap">
       <p className="text-sm font-medium tabular-nums leading-tight">
         {cap}
         <span className="ml-0.5 text-xs font-normal text-muted-foreground">{unit}/wk</span>
+        {note && <span className="ml-1 rounded bg-muted px-1 py-0 text-[9px] font-semibold text-muted-foreground">{note}</span>}
       </p>
       <p className={`mt-0.5 text-[10px] tabular-nums ${atCap ? "text-amber-600" : "text-muted-foreground"}`}>
         {used} {unit} {usedLabel}
@@ -347,7 +349,8 @@ export default function FacultyPage() {
     firstName: "",
     lastName: "",
     sectionCounts: {} as SectionCountMap,
-    maxUnitsPerWeek: 21 as number | string,
+    // Regular (21 units) / COSI (40 units) — the unit cap follows the type.
+    employmentType: "REGULAR" as FacultyType,
     hoursPerWeek: 0,
   })
   const [editOpen, setEditOpen] = useState(false)
@@ -355,7 +358,7 @@ export default function FacultyPage() {
   const [editForm, setEditForm] = useState({
     firstName: "", lastName: "",
     sectionCounts: {} as SectionCountMap,
-    maxUnitsPerWeek: 21 as number | string, hoursPerWeek: 0, isActive: true,
+    employmentType: "REGULAR" as FacultyType, hoursPerWeek: 0, isActive: true,
     clusterId: "",
   })
 
@@ -563,7 +566,7 @@ export default function FacultyPage() {
 
   // ── Handlers ──
   async function handleAdd() {
-    const { userId, firstName, lastName, sectionCounts, maxUnitsPerWeek, hoursPerWeek } = addForm
+    const { userId, firstName, lastName, sectionCounts, employmentType, hoursPerWeek } = addForm
     const specs = getSpecsFromCounts(sectionCounts)
 
     try {
@@ -578,7 +581,7 @@ export default function FacultyPage() {
           departmentId: userDeptId,
           specializations: specs,
           sectionCounts,
-          maxUnitsPerWeek: Number(maxUnitsPerWeek) || 21,
+          employmentType,
           hoursPerWeek,
         })
       } else {
@@ -587,10 +590,10 @@ export default function FacultyPage() {
         const user = availableUsers.find((u: any) => u.id === userId)
         const departmentId = user?.department?.id ?? user?.departmentId
         if (!departmentId) return toast.error("No department found. Please ensure your account has a department assigned.")
-        await createFaculty.mutateAsync({ userId, departmentId, specializations: specs, sectionCounts, maxUnitsPerWeek: Number(maxUnitsPerWeek) || 21, hoursPerWeek })
+        await createFaculty.mutateAsync({ userId, departmentId, specializations: specs, sectionCounts, employmentType, hoursPerWeek })
       }
       setAddOpen(false)
-      setAddForm({ userId: "", firstName: "", lastName: "", sectionCounts: {}, maxUnitsPerWeek: 21, hoursPerWeek: 0 })
+      setAddForm({ userId: "", firstName: "", lastName: "", sectionCounts: {}, employmentType: "REGULAR", hoursPerWeek: 0 })
     } catch (err: any) {
       toast.error(err.message)
     }
@@ -602,7 +605,7 @@ export default function FacultyPage() {
       firstName: f.user?.firstName ?? "",
       lastName: f.user?.lastName ?? "",
       sectionCounts: buildSectionCounts(f),
-      maxUnitsPerWeek: f.maxUnitsPerWeek,
+      employmentType: (f.employmentType ?? "REGULAR") as FacultyType,
       hoursPerWeek: f.hoursPerWeek ?? 0,
       isActive: f.isActive,
       clusterId: f.clusterId ?? "",
@@ -633,7 +636,7 @@ export default function FacultyPage() {
         lastName: editForm.lastName,
         specializations: specs,
         sectionCounts: mergedCounts,
-        maxUnitsPerWeek: Number(editForm.maxUnitsPerWeek) || 21,
+        employmentType: editForm.employmentType,
         hoursPerWeek: editForm.hoursPerWeek,
         isActive: editForm.isActive,
       })
@@ -750,15 +753,20 @@ export default function FacultyPage() {
                 </div>
                 )}
 
-                {/* Max units / Hours */}
+                {/* Employment type (decides the unit cap) / Hours */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label>Max Units / Week</Label>
-                    <Input
-                      type="number"
-                      value={addForm.maxUnitsPerWeek}
-                      onChange={(e) => setAddForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))}
-                    />
+                    <Label>Employment type</Label>
+                    <select
+                      value={addForm.employmentType}
+                      onChange={(e) => setAddForm(f => ({ ...f, employmentType: e.target.value as FacultyType }))}
+                      className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      {FACULTY_TYPES.map((t) => (
+                        <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]} — max {MAX_UNITS_BY_TYPE[t]} units / week</option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-muted-foreground">{FACULTY_TYPE_DESCRIPTIONS[addForm.employmentType]}.</p>
                   </div>
                   <div className="grid gap-2">
                     <Label className="text-muted-foreground">Hours / Week</Label>
@@ -769,7 +777,7 @@ export default function FacultyPage() {
 
                 <SpecializationPicker
                   sectionCounts={addForm.sectionCounts}
-                  maxUnits={Number(addForm.maxUnitsPerWeek) || 21}
+                  maxUnits={maxUnitsForType(addForm.employmentType)}
                   subjectTitles={subjectTitles}
                   subjectInfoMap={subjectInfoMap}
                   sectionCountByYear={sectionCountByYear}
@@ -901,7 +909,7 @@ export default function FacultyPage() {
                               cell holding both figures run together. Max Hours is the cap
                               set on the Faculty Availability card (Faculty.maxHoursPerWeek,
                               default 30); hoursPerWeek is what is actually scheduled. */}
-                          <CapCell cap={f.maxUnitsPerWeek} unit="u" used={totalLoad} usedLabel="assigned" />
+                          <CapCell cap={f.maxUnitsPerWeek} unit="u" used={totalLoad} usedLabel="assigned" note={formatFacultyType(f.employmentType)} />
                           <CapCell cap={f.maxHoursPerWeek ?? 30} unit="h" used={f.hoursPerWeek ?? 0} usedLabel="scheduled" />
                           <TableCell>
                             <Badge variant={f.isActive ? "default" : "secondary"}>
@@ -965,8 +973,17 @@ export default function FacultyPage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="grid gap-2">
-                <Label>Max Units / Week</Label>
-                <Input type="number" value={editForm.maxUnitsPerWeek} onChange={(e) => setEditForm(f => ({ ...f, maxUnitsPerWeek: e.target.value === "" ? "" : Number(e.target.value) }))} />
+                <Label>Employment type</Label>
+                <select
+                  value={editForm.employmentType}
+                  onChange={(e) => setEditForm(f => ({ ...f, employmentType: e.target.value as FacultyType }))}
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  {FACULTY_TYPES.map((t) => (
+                    <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]} — max {MAX_UNITS_BY_TYPE[t]}u</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-muted-foreground">Max {maxUnitsForType(editForm.employmentType)} units / week.</p>
               </div>
               <div className="grid gap-2">
                 <Label className="text-muted-foreground">Hours / Week</Label>
@@ -988,7 +1005,7 @@ export default function FacultyPage() {
 
             <SpecializationPicker
               sectionCounts={editForm.sectionCounts}
-              maxUnits={Number(editForm.maxUnitsPerWeek) || 21}
+              maxUnits={maxUnitsForType(editForm.employmentType)}
               subjectTitles={subjectTitles}
               subjectInfoMap={subjectInfoMap}
               sectionCountByYear={sectionCountByYear}
