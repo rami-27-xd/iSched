@@ -5,53 +5,55 @@ import Link from "next/link"
 import type { FlowEdge, FlowKind, FlowNode } from "@/lib/manual-workflows"
 
 /**
- * Renders a RoleManual's nodes/edges as an SVG flowchart. Nodes sit on a grid
- * (col 0 = main lane, col 1 = side lane; rows top-down); edges are orthogonal
- * arrows — straight down within a lane, elbowed across lanes, and looping up
- * the far side when they go back to an earlier row. Text is HTML inside
- * <foreignObject> so it wraps naturally.
+ * Renders a RoleManual's nodes/edges as a flowchart.
  *
- * Box heights are MEASURED, not estimated: the same NodeContent is first
- * rendered into a hidden div of the node's inner width, its height is read
- * back, and the SVG is laid out from those numbers — so a long description
- * gets a taller box (and row) and nothing is ever clipped.
+ * The boxes are ordinary HTML in a CSS grid (col 0 = main lane, col 1 = side
+ * lane; one grid row per diagram row, side boxes vertically centred on their
+ * row), so each box is exactly as tall as its text — nothing is estimated, so
+ * nothing can clip or float. The arrows are an SVG overlay drawn from the
+ * boxes' real rendered positions, re-read whenever the container resizes
+ * (fonts loading, window resize, browser zoom).
  */
 
 const NODE_W = 264
-const LANE_GAP = 96   // space between lanes — wide enough for a "problems" label on the connector
-const COL_W = NODE_W + LANE_GAP
-const ROW_GAP = 34    // vertical space between rows (room for arrows + labels)
-const PAD_X = 16
-const PAD_Y = 12
-const LOOP_GUTTER = 64 // how far right of the last lane a back-edge travels (label sits on it)
-const INNER_PAD = 10   // padding inside a box
-const TEXT_W = NODE_W - INNER_PAD * 2
-const LINE = 1.3
+const LANE_GAP = 96    // between the lanes — room for a "problems" label on the connector
+const ROW_GAP = 34     // between rows — room for arrows + labels
+const LOOP_GUTTER = 64 // how far right of the last lane a back-edge travels
+const PAD = 12
 
-const STYLE: Record<FlowKind, { fill: string; stroke: string; text: string; dash?: string; radius: number }> = {
+const STYLE: Record<FlowKind, { fill: string; stroke: string; text: string; dash?: boolean; radius: number }> = {
   start: { fill: "#1B4332", stroke: "#1B4332", text: "#ffffff", radius: 26 },
   end: { fill: "#1B4332", stroke: "#1B4332", text: "#ffffff", radius: 26 },
   step: { fill: "#F1F7F3", stroke: "#1B4332", text: "#1B4332", radius: 12 },
   decision: { fill: "#FBF0D0", stroke: "#D4AF37", text: "#5C4409", radius: 22 },
-  wait: { fill: "#F5F5F4", stroke: "#9CA3AF", text: "#374151", dash: "6 4", radius: 12 },
+  wait: { fill: "#F5F5F4", stroke: "#9CA3AF", text: "#374151", dash: true, radius: 12 },
 }
 
-/** The text inside a box — shared by the measuring pass and the SVG. */
-function NodeContent({ n }: { n: FlowNode }) {
+interface Box { x: number; y: number; w: number; h: number; cx: number; cy: number }
+interface EdgePath { key: number; d: string; label?: string; lx: number; ly: number; lw: number; loop: boolean }
+
+function NodeBox({ n }: { n: FlowNode }) {
   const s = STYLE[n.kind]
   const pill = n.kind === "start" || n.kind === "end"
   return (
     <div
+      data-node={n.id}
       style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: pill ? "center" : "flex-start",
-        textAlign: pill ? "center" : "left",
+        gridColumn: n.col + 1,
+        gridRow: n.row + 1,
+        width: NODE_W,
+        boxSizing: "border-box",
+        padding: pill ? "12px 16px" : "10px 12px",
+        borderRadius: s.radius,
+        background: s.fill,
         color: s.text,
-        fontFamily: "inherit",
-        lineHeight: LINE,
-        width: TEXT_W,
-        overflowWrap: "anywhere",
+        border: `${n.kind === "decision" ? 2 : 1.5}px ${s.dash ? "dashed" : "solid"} ${s.stroke}`,
+        boxShadow: n.kind === "decision" ? `inset 0 0 0 4px ${s.fill}, inset 0 0 0 5px ${s.stroke}80` : undefined,
+        lineHeight: 1.3,
+        textAlign: pill ? "center" : "left",
+        alignSelf: "center",
+        position: "relative",
+        zIndex: 1,
       }}
     >
       <div style={{ fontSize: 12.5, fontWeight: 700, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: pill ? "center" : "flex-start" }}>
@@ -77,120 +79,131 @@ function NodeContent({ n }: { n: FlowNode }) {
   )
 }
 
-// Fallback heights for the very first paint, before measurement lands.
-const FALLBACK_H: Record<FlowKind, number> = { start: 52, end: 52, step: 110, decision: 80, wait: 96 }
-
 export function WorkflowDiagram({ nodes, edges, title }: { nodes: FlowNode[]; edges: FlowEdge[]; title: string }) {
-  const measureRef = useRef<HTMLDivElement>(null)
-  const [measured, setMeasured] = useState<Record<string, number>>({})
+  const gridRef = useRef<HTMLDivElement>(null)
+  const [paths, setPaths] = useState<EdgePath[]>([])
+  const [size, setSize] = useState({ w: 0, h: 0 })
 
-  // Measure every node's text at its real width, then lay out from that.
-  useLayoutEffect(() => {
-    const el = measureRef.current
-    if (!el) return
-    const next: Record<string, number> = {}
-    el.querySelectorAll<HTMLElement>("[data-node]").forEach((d) => {
-      next[d.dataset.node!] = Math.ceil(d.getBoundingClientRect().height)
-    })
-    setMeasured(next)
-  }, [nodes])
-
-  const byId = new Map(nodes.map((n) => [n.id, n]))
   const maxCol = Math.max(...nodes.map((n) => n.col))
   const maxRow = Math.max(...nodes.map((n) => n.row))
-  const width = PAD_X * 2 + maxCol * COL_W + NODE_W + LOOP_GUTTER + 24
+  // Extra width on the right so loop-back arrows (and their labels) have a lane of their own.
+  const rightGutter = LOOP_GUTTER + 40
 
-  const heightOf = (n: FlowNode) => {
-    const text = measured[n.id]
-    return text ? text + INNER_PAD * 2 : FALLBACK_H[n.kind]
-  }
-  const heights = new Map(nodes.map((n) => [n.id, heightOf(n)]))
-  const rowHeight: number[] = Array.from({ length: maxRow + 1 }, (_, r) =>
-    Math.max(44, ...nodes.filter((n) => n.row === r).map((n) => heights.get(n.id)!))
-  )
-  const rowTop: number[] = []
-  let cursor = PAD_Y
-  for (let r = 0; r <= maxRow; r++) { rowTop[r] = cursor; cursor += rowHeight[r] + ROW_GAP }
-  const height = cursor - ROW_GAP + PAD_Y
+  // Draw (and redraw) the arrows from the boxes' real positions.
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
 
-  const box = (n: FlowNode) => {
-    const h = heights.get(n.id)!
-    const x = PAD_X + n.col * COL_W
-    // Side-lane nodes are centred on their row so they line up with the
-    // main-lane step they belong to.
-    const y = rowTop[n.row] + (rowHeight[n.row] - h) / 2
-    return { x, y, w: NODE_W, h, cx: x + NODE_W / 2, cy: y + h / 2 }
-  }
-
-  const labelW = (t: string) => t.length * 5.9 + 10
-  const gutterX = PAD_X + maxCol * COL_W + NODE_W + LOOP_GUTTER
-
-  const paths = edges.map((e, i) => {
-    const a = byId.get(e.from)
-    const b = byId.get(e.to)
-    if (!a || !b) return null
-    const A = box(a)
-    const B = box(b)
-    const lw = e.label ? labelW(e.label) : 0
-    let d: string
-    let lx = 0 // label pill left
-    let ly = 0 // label pill centre line
-    if (b.row > a.row && a.col === b.col) {
-      // Straight down — label beside the line.
-      d = `M ${A.cx} ${A.y + A.h} L ${B.cx} ${B.y}`
-      lx = A.cx + 7
-      ly = (A.y + A.h + B.y) / 2
-    } else if (b.row > a.row) {
-      // Down, across, down — label centred on the horizontal run.
-      const midY = A.y + A.h + Math.max(14, (B.y - (A.y + A.h)) / 2)
-      d = `M ${A.cx} ${A.y + A.h} L ${A.cx} ${midY} L ${B.cx} ${midY} L ${B.cx} ${B.y}`
-      lx = (A.cx + B.cx) / 2 - lw / 2
-      ly = midY
-    } else if (b.row === a.row) {
-      // Sideways between lanes — label centred on the connector, just above it.
-      const fromRight = B.cx > A.cx
-      const x1 = fromRight ? A.x + A.w : A.x
-      const x2 = fromRight ? B.x : B.x + B.w
-      d = `M ${x1} ${A.cy} L ${x2} ${B.cy}`
-      lx = (x1 + x2) / 2 - lw / 2
-      ly = A.cy - 11
-    } else {
-      // Back up to an earlier row: out the right edge, up the gutter, in at the target's right edge.
-      d = `M ${A.x + A.w} ${A.cy} L ${gutterX} ${A.cy} L ${gutterX} ${B.cy} L ${B.x + B.w} ${B.cy}`
-      lx = gutterX - lw / 2
-      ly = (A.cy + B.cy) / 2
+    const measure = () => {
+      const boxes = new Map<string, Box>()
+      grid.querySelectorAll<HTMLElement>("[data-node]").forEach((el) => {
+        const x = el.offsetLeft, y = el.offsetTop, w = el.offsetWidth, h = el.offsetHeight
+        boxes.set(el.dataset.node!, { x, y, w, h, cx: x + w / 2, cy: y + h / 2 })
+      })
+      const byId = new Map(nodes.map((n) => [n.id, n]))
+      const gutterX = grid.offsetWidth - rightGutter + LOOP_GUTTER
+      // Label pills are measured too (font-dependent), from hidden spans in the overlay.
+      const labelW = (t: string) => {
+        const span = grid.querySelector<HTMLElement>(`[data-label="${CSS.escape(t)}"]`)
+        return (span?.offsetWidth ?? t.length * 6) + 12
+      }
+      const out: EdgePath[] = []
+      edges.forEach((e, i) => {
+        const a = byId.get(e.from), b = byId.get(e.to)
+        const A = a && boxes.get(a.id), B = b && boxes.get(b.id)
+        if (!a || !b || !A || !B) return
+        const lw = e.label ? labelW(e.label) : 0
+        let d = "", lx = 0, ly = 0
+        if (b.row > a.row && a.col === b.col) {
+          // Straight down — label beside the line.
+          d = `M ${A.cx} ${A.y + A.h} L ${B.cx} ${B.y}`
+          lx = A.cx + 7
+          ly = (A.y + A.h + B.y) / 2
+        } else if (b.row > a.row) {
+          // Down from the source, then sideways INTO the target's near edge
+          // (upper third) — never onto its top, where the main-lane arrow lands.
+          const entryY = B.y + B.h * 0.3
+          const xEnd = B.cx > A.cx ? B.x : B.x + B.w
+          d = `M ${A.cx} ${A.y + A.h} L ${A.cx} ${entryY} L ${xEnd} ${entryY}`
+          lx = (A.cx + xEnd) / 2 - lw / 2
+          ly = entryY - 11
+        } else if (b.row === a.row) {
+          // Sideways between lanes — label centred on the connector, just above it.
+          const toRight = B.cx > A.cx
+          const x1 = toRight ? A.x + A.w : A.x
+          const x2 = toRight ? B.x : B.x + B.w
+          d = `M ${x1} ${A.cy} L ${x2} ${B.cy}`
+          lx = (x1 + x2) / 2 - lw / 2
+          ly = A.cy - 11
+        } else {
+          // Back up to an earlier row: out the right edge, up the gutter, in at
+          // the target's right edge (lower third, clear of any forward edge).
+          const entryY = B.y + B.h * 0.7
+          d = `M ${A.x + A.w} ${A.cy} L ${gutterX} ${A.cy} L ${gutterX} ${entryY} L ${B.x + B.w} ${entryY}`
+          lx = gutterX - lw / 2
+          ly = (A.cy + entryY) / 2
+        }
+        out.push({ key: i, d, label: e.label, lx, ly, lw, loop: b.row < a.row })
+      })
+      setPaths(out)
+      setSize({ w: grid.offsetWidth, h: grid.offsetHeight })
     }
-    return { key: i, d, label: e.label, lx, ly, lw, loop: b.row <= a.row }
-  })
+
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(grid)
+    grid.querySelectorAll<HTMLElement>("[data-node]").forEach((el) => ro.observe(el))
+    // Web fonts arriving after first paint change every box height.
+    if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+      ;(document as any).fonts.ready.then(measure).catch(() => {})
+    }
+    return () => ro.disconnect()
+  }, [nodes, edges, rightGutter])
+
+  const labels = [...new Set(edges.map((e) => e.label).filter((l): l is string => !!l))]
 
   return (
     <div className="overflow-x-auto">
-      {/* Hidden measuring pass — same content, same width, real font. */}
-      <div ref={measureRef} aria-hidden="true" style={{ position: "absolute", left: -99999, top: 0, visibility: "hidden", pointerEvents: "none" }}>
-        {nodes.map((n) => (
-          <div key={n.id} data-node={n.id} style={{ width: TEXT_W }}>
-            <NodeContent n={n} />
-          </div>
-        ))}
-      </div>
-
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        style={{ minWidth: Math.min(width, 600), maxWidth: width, height: "auto", display: "block" }}
+      <div
+        ref={gridRef}
         role="img"
         aria-label={title}
+        style={{
+          position: "relative",
+          display: "grid",
+          gridTemplateColumns: `repeat(${maxCol + 1}, ${NODE_W}px)`,
+          gridTemplateRows: `repeat(${maxRow + 1}, auto)`,
+          columnGap: LANE_GAP,
+          rowGap: ROW_GAP,
+          alignItems: "center",
+          padding: `${PAD}px ${rightGutter}px ${PAD}px ${PAD}px`,
+          width: "max-content",
+          fontFamily: "inherit",
+        }}
       >
-        <title>{title}</title>
-        <defs>
-          <marker id="wf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280" />
-          </marker>
-        </defs>
+        {nodes.map((n) => <NodeBox key={n.id} n={n} />)}
 
-        {/* Edges first so nodes sit on top. */}
-        {paths.map((p) =>
-          p ? (
+        {/* Hidden label spans — measured so each pill fits its text in the real font. */}
+        <div aria-hidden="true" style={{ position: "absolute", left: 0, top: 0, visibility: "hidden", pointerEvents: "none", whiteSpace: "nowrap" }}>
+          {labels.map((l) => (
+            <span key={l} data-label={l} style={{ fontSize: 10, fontWeight: 600, display: "inline-block" }}>{l}</span>
+          ))}
+        </div>
+
+        {/* Arrow overlay */}
+        <svg
+          aria-hidden="true"
+          width={size.w || 1}
+          height={size.h || 1}
+          viewBox={`0 0 ${size.w || 1} ${size.h || 1}`}
+          style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none", overflow: "visible" }}
+        >
+          <defs>
+            <marker id="wf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#6B7280" />
+            </marker>
+          </defs>
+          {paths.map((p) => (
             <g key={p.key}>
               <path d={p.d} fill="none" stroke="#6B7280" strokeWidth={1.6} markerEnd="url(#wf-arrow)" strokeDasharray={p.loop ? "4 3" : undefined} />
               {p.label && (
@@ -202,30 +215,9 @@ export function WorkflowDiagram({ nodes, edges, title }: { nodes: FlowNode[]; ed
                 </>
               )}
             </g>
-          ) : null
-        )}
-
-        {nodes.map((n) => {
-          const b = box(n)
-          const s = STYLE[n.kind]
-          const pill = n.kind === "start" || n.kind === "end"
-          return (
-            <g key={n.id}>
-              <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={s.radius} fill={s.fill} stroke={s.stroke} strokeWidth={n.kind === "decision" ? 2 : 1.5} strokeDasharray={s.dash} />
-              {n.kind === "decision" && (
-                <rect x={b.x + 6} y={b.y + 6} width={b.w - 12} height={b.h - 12} rx={s.radius - 6} fill="none" stroke={s.stroke} strokeWidth={1} strokeOpacity={0.5} />
-              )}
-              {/* React switches back to the HTML namespace inside <foreignObject>,
-                  so an ordinary div (with wrapping text) renders here. */}
-              <foreignObject x={b.x + INNER_PAD} y={b.y + INNER_PAD} width={TEXT_W} height={Math.max(1, b.h - INNER_PAD * 2)}>
-                <div style={{ height: "100%", display: "flex", alignItems: pill ? "center" : "flex-start", justifyContent: "center" }}>
-                  <NodeContent n={n} />
-                </div>
-              </foreignObject>
-            </g>
-          )
-        })}
-      </svg>
+          ))}
+        </svg>
+      </div>
     </div>
   )
 }
