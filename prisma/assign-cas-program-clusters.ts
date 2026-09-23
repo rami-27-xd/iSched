@@ -18,7 +18,7 @@ const db = new PrismaClient({ adapter })
 
 const CLUSTER_PROGRAMS: Record<string, string[]> = {
   "Social Sciences": ["BA History", "BA Psychology"],
-  "Languages, Literature, and Humanities": ["BA Communication"],
+  "Language, Communication, and Humanities": ["BA Communication"],
   "Mathematics and Natural Sciences": ["BS Biology", "BS Mathematics"],
 }
 

@@ -327,6 +327,10 @@ export function useCreateEntry() {
         startTime: string
         endTime: string
         set?: string | null
+        // Soft-validation override (e.g. a specialization mismatch) — save anyway
+        // and return a warning instead of blocking. Saturday, double-booking and
+        // the per-day session cap are never overridable even with this set.
+        force?: boolean
       }
     }) => {
       const { res, json } = await rawFetch(`/api/schedules/${scheduleId}/entries`, {
@@ -335,7 +339,8 @@ export function useCreateEntry() {
         body: JSON.stringify(entry),
       })
       if (!res.ok || json.error) throw new Error(json.error ?? `Server error (${res.status})`)
-      return json.data
+      // warning is returned when force:true bypassed a constraint
+      return { data: json.data, warning: (json.warning as string) ?? null }
     },
     onSuccess: (_data, { scheduleId }) => {
       queryClient.invalidateQueries({ queryKey: ["schedules", scheduleId] })

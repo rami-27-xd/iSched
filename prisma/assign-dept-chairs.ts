@@ -8,7 +8,7 @@ const db = new PrismaClient({ adapter })
 const ASSIGNMENTS: Record<string, string> = {
   "rorbeta@slsu.edu.ph": "SS",    // Social Sciences
   "ramielleorbeta@gmail.com": "MNS", // Mathematics and Natural Sciences
-  // LLH (Languages, Literature, and Humanities) needs a 3rd SUPER_ADMIN account
+  // LLH (Language, Communication, and Humanities) needs a 3rd SUPER_ADMIN account
 }
 
 async function main() {
@@ -66,7 +66,7 @@ async function main() {
       })
     }
   }
-  console.log("\nDone. LLH (Languages, Literature, and Humanities) still needs a 3rd SUPER_ADMIN account.")
+  console.log("\nDone. LLH (Language, Communication, and Humanities) still needs a 3rd SUPER_ADMIN account.")
 }
 
 main().catch(console.error).finally(() => db.$disconnect())

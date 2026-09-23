@@ -246,7 +246,7 @@ model Faculty {
   userId          String                       @unique
   departmentId    String
   programId       String?                      // assigned to a specific program; null = dept-wide pool
-  // CAS cluster (Social Sciences / Languages, Literature, and Humanities /
+  // CAS cluster (Social Sciences / Language, Communication, and Humanities /
   // Mathematics and Natural Sciences) this faculty member primarily belongs to.
   // Null = unassigned, or a non-CAS faculty (clusters only exist within CAS).
   // Lets a cluster chair's write access (checkFacultyWriteAccess) be scoped to

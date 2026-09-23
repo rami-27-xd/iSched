@@ -17,6 +17,7 @@ import { useDepartments } from "@/hooks/use-data"
 import { passwordError } from "@/lib/password"
 import { PasswordRequirements } from "@/components/shared/password-requirements"
 import { LinesSkeleton } from "@/components/shared/loading-skeletons"
+import { formatRole } from "@/lib/roles"
 
 export default function SettingsPage() {
   const searchParams = useSearchParams()
@@ -45,7 +46,7 @@ export default function SettingsPage() {
   const { data: departments = [] } = useDepartments()
 
   // CAS department head areas a Department Chairperson can head (Social
-  // Sciences / Languages, Literature, and Humanities / Mathematics and Natural
+  // Sciences / Language, Communication, and Humanities / Mathematics and Natural
   // Sciences). Stored as FacultyCluster rows.
   const { data: clusters = [] } = useQuery({
     queryKey: ["clusters"],
@@ -160,11 +161,7 @@ export default function SettingsPage() {
                   <div className="grid gap-2">
                     <Label>Role</Label>
                     <Input
-                      value={
-                        currentUser?.role === "SUPER_ADMIN" ? "Department Chair (Super Admin)"
-                          : currentUser?.role === "ADMIN" ? "Program Chair"
-                          : "Faculty"
-                      }
+                      value={formatRole(currentUser?.role)}
                       disabled
                       className="bg-muted"
                     />
@@ -215,7 +212,7 @@ export default function SettingsPage() {
                       ))}
                     </select>
                     <p className="text-xs text-muted-foreground">
-                      The CAS area you head as department head — Social Sciences; Languages, Literature, and Humanities; or Mathematics and Natural Sciences. This scopes the GEC/GEL subjects you manage.
+                      The CAS area you head as department head — Social Sciences; Language, Communication, and Humanities; or Mathematics and Natural Sciences. This scopes the GEC/GEL subjects you manage.
                     </p>
                   </div>
                 )}

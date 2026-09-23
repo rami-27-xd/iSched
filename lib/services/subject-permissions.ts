@@ -8,7 +8,7 @@ import { ROLE_LABELS, geUnitOwnsCode, isGeUnitRole, isNstpCode, isPathfitSubject
  */
 export const CLUSTER_GEC_CODES: Record<string, string[]> = {
   "Social Sciences":                         ["GEC01", "GEC02", "GEC03", "GEC04", "GEC09", "GEL07", "GEL10"],
-  "Languages, Literature, and Humanities":   ["GEC06", "GEC07", "GEC10", "GEC11", "GEC12", "GEC13", "GEC14"],
+  "Language, Communication, and Humanities":   ["GEC06", "GEC07", "GEC10", "GEC11", "GEC12", "GEC13", "GEC14"],
   // GEL04/05/08 are the GE electives the CTE / CABHA / CAM curricula use
   // (Living in the IT Era, The Entrepreneurial Mind, Human Reproduction) —
   // seeded into CAS by prisma/seed-curriculum-colleges.ts.

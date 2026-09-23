@@ -10,7 +10,7 @@ import { PaginationControls, usePagination } from "@/components/shared/paginatio
 import { DepartmentChip, DepartmentLegend } from "@/components/shared/department-legend"
 import { TableSkeleton } from "@/components/shared/loading-skeletons"
 import { useUserRole } from "@/components/layout/dashboard-shell"
-import { useSemesters, useDepartments } from "@/hooks/use-data"
+import { useScheduledSemesters, useDepartments } from "@/hooks/use-data"
 
 // ─── Types (shape of GET /api/subjects/summary) ──────────────────────────────
 
@@ -77,7 +77,7 @@ const YEAR_LABEL = ["1st", "2nd", "3rd", "4th", "5th"]
 export function SubjectSummaryView() {
   const role = useUserRole()
   const isUniversityWide = role === "SUPER_ADMIN"
-  const { data: semesters = [] } = useSemesters()
+  const { data: semesters = [] } = useScheduledSemesters()
   const { data: departments = [] } = useDepartments()
   const academicYears = useMemo(() => {
     const seen = new Map<string, { id: string; label: string; startYear: number; isCurrent: boolean }>()
@@ -170,7 +170,7 @@ export function SubjectSummaryView() {
         </span>
         <span className="inline-flex items-center gap-1.5">
           <ProgramChip cell={{ programId: "z", program: "BSIT", programName: "", planned: false, scheduled: true, sections: 1, classes: 3, years: [] }} demo />
-          Scheduled although not in the curriculum for that term
+          Scheduled
         </span>
         <span className="text-muted-foreground">Hover a chip for year level, sections and classes.</span>
       </div>

@@ -509,6 +509,166 @@ export function buildTeachingLoadHtml(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 6.3  Room Occupancy — colour-coded room × time matrix, one page per building
+// ─────────────────────────────────────────────────────────────────────────────
+// Mirrors the on-screen grid (components/rooms/room-occupancy-view.tsx) exactly:
+// same department colours (lib/department-colors.ts), same grid bounds — the
+// caller passes its own GRID_START_MIN/GRID_END_MIN/SLOT_MIN so the two can never
+// drift apart.
+
+import { departmentColor } from "@/lib/department-colors"
+
+export interface OccupancyExportBlock {
+  day: string
+  startTime: string
+  endTime: string
+  subjectCode: string
+  section: string
+  merged: boolean
+  departmentId: string
+}
+export interface OccupancyExportRoom {
+  id: string
+  code: string
+  name: string
+  occupancy: OccupancyExportBlock[]
+}
+export interface OccupancyExportBuilding {
+  id: string
+  code: string
+  name: string
+  rooms: OccupancyExportRoom[]
+}
+export interface OccupancyExportDepartment {
+  id: string
+  abbreviation: string
+  name: string
+}
+
+const OCC_DAY_FULL: Record<string, string> = {
+  MONDAY: "Monday", TUESDAY: "Tuesday", WEDNESDAY: "Wednesday",
+  THURSDAY: "Thursday", FRIDAY: "Friday", SATURDAY: "Saturday",
+}
+
+function occupancyMinutes(t: string): number {
+  const [h, m] = t.split(":").map(Number)
+  return h * 60 + m
+}
+
+/** One day's room × time table for a single building. */
+function occupancyDayTable(
+  building: OccupancyExportBuilding,
+  day: string,
+  gridStartMin: number,
+  slotCount: number,
+  slotMin: number,
+  colorOf: (deptId: string) => { bg: string; fg: string; border: string }
+): string {
+  const hourLabels: string[] = []
+  for (let i = 0; i < slotCount; i += 2) {
+    const mins = gridStartMin + i * slotMin
+    const h = Math.floor(mins / 60)
+    const suffix = h >= 12 ? "PM" : "AM"
+    const h12 = h % 12 === 0 ? 12 : h % 12
+    hourLabels.push(`${h12} ${suffix}`)
+  }
+
+  const rows = building.rooms
+    .map((room) => {
+      const blocks = [...room.occupancy.filter((o) => o.day === day)].sort(
+        (a, b) => occupancyMinutes(a.startTime) - occupancyMinutes(b.startTime)
+      )
+      const cells: string[] = []
+      let cursor = 0
+      for (const block of blocks) {
+        const startCol = Math.max(0, Math.round((occupancyMinutes(block.startTime) - gridStartMin) / slotMin))
+        const endCol = Math.min(slotCount, Math.round((occupancyMinutes(block.endTime) - gridStartMin) / slotMin))
+        if (startCol >= slotCount || endCol <= cursor) continue
+        if (startCol > cursor) cells.push(`<td colspan="${startCol - cursor}"></td>`)
+        const c = colorOf(block.departmentId)
+        const label = `${escapeHtml(block.subjectCode)} — ${escapeHtml(block.section)}${block.merged ? " (merged)" : ""}`
+        cells.push(
+          `<td colspan="${Math.max(1, endCol - startCol)}" style="background:${c.bg};color:${c.fg};border-color:${c.border};font-size:8px;padding:2px;text-align:center;line-height:1.15">${label}</td>`
+        )
+        cursor = endCol
+      }
+      if (cursor < slotCount) cells.push(`<td colspan="${slotCount - cursor}"></td>`)
+      return `<tr><td class="occ-room">${escapeHtml(room.code)}</td>${cells.join("")}</tr>`
+    })
+    .join("")
+
+  return `
+    <div style="margin-top:10px">
+      <div style="font-weight:bold;font-size:11px;margin-bottom:3px">${OCC_DAY_FULL[day] ?? day}</div>
+      <table class="occ-grid">
+        <thead>
+          <tr>
+            <th class="occ-room">Room</th>
+            ${hourLabels.map((l) => `<th colspan="2">${l}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td class="occ-room"></td><td colspan="${slotCount}" style="text-align:center;color:#888">No rooms in this building</td></tr>`}</tbody>
+      </table>
+    </div>`
+}
+
+/**
+ * Colour-coded room × time matrix, one printable page per building, all six days.
+ * Visually mirrors the on-screen Room Occupancy grid by construction — same
+ * colours, same bounds, same data — so the export can never drift from the view.
+ */
+export function buildRoomOccupancyHtml(opts: {
+  buildings: OccupancyExportBuilding[]
+  departments: OccupancyExportDepartment[]
+  semesterLabel: string
+  academicYear: string
+  logoDataUrl: string
+  gridStartMin: number
+  gridEndMin: number
+  slotMin: number
+}): string {
+  const abbrById = new Map(opts.departments.map((d) => [d.id, d.abbreviation]))
+  const colorOf = (deptId: string) => departmentColor(abbrById.get(deptId))
+  const slotCount = Math.round((opts.gridEndMin - opts.gridStartMin) / opts.slotMin)
+
+  const legend = opts.departments
+    .map((d) => {
+      const c = departmentColor(d.abbreviation)
+      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px"><span style="display:inline-block;width:9px;height:9px;background:${c.bg};border:1px solid ${c.border}"></span>${escapeHtml(d.abbreviation)}</span>`
+    })
+    .join("")
+
+  const pages = (opts.buildings.length ? opts.buildings : [])
+    .map((b) => {
+      const days = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
+      const tables = days.map((d) => occupancyDayTable(b, d, opts.gridStartMin, slotCount, opts.slotMin, colorOf)).join("")
+      return `
+        <div class="page occ-page">
+          <div class="letterhead">
+            ${opts.logoDataUrl ? `<img src="${opts.logoDataUrl}" alt="SLSU" />` : ""}
+            <div class="lh-line2" style="margin-top:8px">ROOM OCCUPANCY — ${escapeHtml(b.name.toUpperCase())}</div>
+            <div class="lh-line1">${escapeHtml(opts.semesterLabel)}, AY ${escapeHtml(opts.academicYear)} · Building ${escapeHtml(b.code)}</div>
+          </div>
+          <div style="margin:8px 0;font-size:10px">${legend}</div>
+          ${tables}
+        </div>`
+    })
+    .join("")
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8" />
+    <title>Room Occupancy — ${escapeHtml(opts.semesterLabel)} ${escapeHtml(opts.academicYear)}</title>
+    <style>${PRINT_BASE_CSS}
+      .occ-page { padding: 14px 16px 24px; }
+      .occ-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      .occ-grid th, .occ-grid td { border: 1px solid #999; }
+      .occ-grid th { background: #f0f0f0; font-size: 8px; font-weight: normal; padding: 2px 0; }
+      .occ-room { width: 70px; font-size: 9px; font-weight: bold; padding: 2px 4px; background: #fafafa; }
+      @media print { @page { size: A4 landscape; margin: 8mm; } }
+    </style></head>
+    <body>${pages || '<div class="page"><p>No buildings to export.</p></div>'}</body></html>`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Shared client helpers
 // ─────────────────────────────────────────────────────────────────────────────
 

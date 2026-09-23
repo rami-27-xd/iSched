@@ -14,6 +14,13 @@ export async function GET(req: Request) {
     }
 
     const dbUser = await getCurrentUser()
+
+    // The Dean is restricted to Dashboard, Manage Schedules, Departments, User
+    // Management and System Logs — no Faculty access.
+    if (dbUser?.role === "DEAN") {
+      return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
+    }
+
     const userDeptId = getUserDepartmentId(dbUser)
 
     // Scoping rules — both chair roles see ONLY their own department's faculty.
@@ -30,7 +37,7 @@ export async function GET(req: Request) {
 
     // Within CAS every Dept Chair shares the one CAS department, so department
     // scope alone cannot separate them. A CAS chair heads a cluster (Social
-    // Sciences / Languages, Literature, and Humanities / Mathematics and Natural
+    // Sciences / Language, Communication, and Humanities / Mathematics and Natural
     // Sciences) and sees only that cluster's faculty. A chair with no cluster
     // assigned keeps department-wide access (nothing to narrow by).
     const chairClusterId = (dbUser as any)?.clusterId ?? null

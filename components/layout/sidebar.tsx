@@ -15,7 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ScrollText,
-  BookOpenCheck,
+  CircleUserRound,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,7 @@ interface NavItem {
   href: string
   icon: LucideIcon
   roles: UserRole[]
+  group: 'menu' | 'others'
 }
 
 export interface SidebarProps {
@@ -44,26 +45,32 @@ export interface SidebarProps {
 }
 
 // Who sees which page (lib/roles.ts has the role descriptions):
-//   DEAN            — read-only on every data page + User Management (Dean only) + System Logs
+//   DEAN            — restricted to Dashboard, Manage Schedules (read-only), Departments,
+//                     User Management (Dean only) and System Logs. No Faculty Availability,
+//                     Faculty or Buildings access.
 //   SUPER_ADMIN     — Department Chairperson: everything scheduling-related; System Logs
 //                     (activity, schedules, classes, subject summary, room occupancy) across every department
 //   ADMIN           — Program Chairperson: everything scheduling-related (own program);
 //                     System Logs for their department
 //   PATHFIT / NSTP  — Manage Schedules only (their own subject family)
+//
+// Grouped into MENU (day-to-day scheduling work) and OTHERS (oversight / account).
+// Contextual help lives in the floating help button (components/shared/floating-help-button.tsx),
+// not a sidebar link.
 const navItems: NavItem[] = [
-  { title: 'Dashboard',            href: '/dashboard',              icon: LayoutDashboard, roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP', 'FACULTY'] },
-  { title: 'Manage Schedules',     href: '/dashboard/schedules',    icon: CalendarDays,    roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'] },
-  { title: 'Faculty Availability', href: '/dashboard/availability', icon: Clock,           roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
-  { title: 'Faculty',              href: '/dashboard/faculty',      icon: Users,           roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
-  { title: 'Departments',          href: '/dashboard/subjects',     icon: BookOpen,        roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
-  { title: 'Buildings',            href: '/dashboard/rooms',        icon: Building2,       roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
-  { title: 'User Management',      href: '/dashboard/users',        icon: Users,           roles: ['DEAN'] },
-  { title: 'System Logs',          href: '/dashboard/logs',         icon: ScrollText,      roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'] },
-  { title: 'User Manual',          href: '/dashboard/manual',       icon: BookOpenCheck,   roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'] },
+  { title: 'Dashboard',            href: '/dashboard',              icon: LayoutDashboard, roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP', 'FACULTY'], group: 'menu' },
+  { title: 'Manage Schedules',     href: '/dashboard/schedules',    icon: CalendarDays,    roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'], group: 'menu' },
+  { title: 'Faculty Availability', href: '/dashboard/availability', icon: Clock,           roles: ['SUPER_ADMIN', 'ADMIN'], group: 'menu' },
+  { title: 'Faculty',              href: '/dashboard/faculty',      icon: Users,           roles: ['SUPER_ADMIN', 'ADMIN'], group: 'menu' },
+  { title: 'Departments',          href: '/dashboard/subjects',     icon: BookOpen,        roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'], group: 'menu' },
+  { title: 'Buildings',            href: '/dashboard/rooms',        icon: Building2,       roles: ['SUPER_ADMIN', 'ADMIN'], group: 'menu' },
+  { title: 'User Management',      href: '/dashboard/users',        icon: Users,           roles: ['DEAN'], group: 'others' },
+  { title: 'System Logs',          href: '/dashboard/logs',         icon: ScrollText,      roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'], group: 'others' },
+  { title: 'My Profile',           href: '/dashboard/settings',     icon: CircleUserRound, roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'], group: 'others' },
 ]
 
-function getFilteredNavItems(role: string): NavItem[] {
-  return navItems.filter(item => item.roles.includes(role as UserRole))
+function getFilteredNavItems(role: string, group: 'menu' | 'others'): NavItem[] {
+  return navItems.filter(item => item.group === group && item.roles.includes(role as UserRole))
 }
 
 function getInitials(name?: string): string {
@@ -75,9 +82,60 @@ function formatRole(role: string): string {
   return formatRoleLabel(role)
 }
 
+function NavGroup({
+  label,
+  items,
+  pathname,
+  collapsed,
+}: {
+  label: string
+  items: NavItem[]
+  pathname: string
+  collapsed: boolean
+}) {
+  if (items.length === 0) return null
+  return (
+    <div className="flex flex-col gap-1">
+      {!collapsed && (
+        <span className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
+          {label}
+        </span>
+      )}
+      <nav className="flex flex-col gap-1">
+        {items.map((item) => {
+          const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
+          const Icon = item.icon
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              title={collapsed ? item.title : undefined}
+              className={cn(
+                'flex items-center rounded-lg text-sm font-medium transition-colors',
+                collapsed ? 'justify-center h-10 w-10 mx-auto' : 'gap-3 px-3 py-2',
+                isActive
+                  ? 'text-sidebar-accent-foreground font-semibold'
+                  : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'
+              )}
+            >
+              {/* The icon turns into a spinner while the destination page is
+                  still loading — the schedules page is heavy enough that a
+                  click otherwise feels ignored for a moment. Swapping in place
+                  (rather than adding a badge) keeps the collapsed rail tidy. */}
+              <LinkPendingIcon icon={Icon} className="size-4 shrink-0" />
+              {!collapsed && <span className="flex-1">{item.title}</span>}
+            </Link>
+          )
+        })}
+      </nav>
+    </div>
+  )
+}
+
 export function Sidebar({ userRole, userName, userEmail, collapsed = false, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname()
-  const filtered = getFilteredNavItems(userRole)
+  const menuItems = getFilteredNavItems(userRole, 'menu')
+  const othersItems = getFilteredNavItems(userRole, 'others')
 
   const { data: userInfo } = useQuery({
     queryKey: ['sidebar-user-info', userEmail],
@@ -140,35 +198,12 @@ export function Sidebar({ userRole, userName, userEmail, collapsed = false, onTo
         )}
       </div>
 
-      {/* Nav links */}
+      {/* Nav links — grouped MENU (day-to-day scheduling) / OTHERS (oversight, account) */}
       <ScrollArea className="flex-1 py-3">
-        <nav className={cn('flex flex-col gap-1', collapsed ? 'px-2' : 'px-3')}>
-          {filtered.map((item) => {
-            const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))
-            const Icon = item.icon
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={collapsed ? item.title : undefined}
-                className={cn(
-                  'flex items-center rounded-lg text-sm font-medium transition-colors',
-                  collapsed ? 'justify-center h-10 w-10 mx-auto' : 'gap-3 px-3 py-2',
-                  isActive
-                    ? 'text-sidebar-accent-foreground font-semibold'
-                    : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'
-                )}
-              >
-                {/* The icon turns into a spinner while the destination page is
-                    still loading — the schedules page is heavy enough that a
-                    click otherwise feels ignored for a moment. Swapping in place
-                    (rather than adding a badge) keeps the collapsed rail tidy. */}
-                <LinkPendingIcon icon={Icon} className="size-4 shrink-0" />
-                {!collapsed && <span className="flex-1">{item.title}</span>}
-              </Link>
-            )
-          })}
-        </nav>
+        <div className={cn('flex flex-col gap-4', collapsed ? 'px-2' : 'px-3')}>
+          <NavGroup label="Menu" items={menuItems} pathname={pathname} collapsed={collapsed} />
+          <NavGroup label="Others" items={othersItems} pathname={pathname} collapsed={collapsed} />
+        </div>
       </ScrollArea>
 
       <Separator className="bg-sidebar-border" />

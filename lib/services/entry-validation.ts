@@ -7,6 +7,7 @@ import { specializationsCoverSubject } from "@/lib/specialization-match"
 import { isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
 import { describeRequiredRoomTypes, roomTypeAllowedForSubject } from "@/lib/room-type-rules"
 import { resolveMaxMinutesPerDay, formatMinutes } from "@/lib/session-rules"
+import { DAY_START_TIME, DAY_END_TIME } from "@/lib/constants"
 import { MAX_UNITS_ANY_TYPE, formatFacultyType } from "@/lib/faculty-types"
 
 interface EntryData {
@@ -267,6 +268,12 @@ export async function validateEntry(
     if (cap !== null && sessionMinutes > cap) {
       return `${HARD_CONFLICT_PREFIX}${subject.code} may run for at most ${formatMinutes(cap)} per day — this session is ${formatMinutes(sessionMinutes)} (${entry.startTime}–${entry.endTime}). Split it across more days, or change the subject's per-day limit on the Subjects page.`
     }
+  }
+
+  // 0a2. Operating hours — every class must sit within 7:30 AM-8:00 PM, generated
+  // or by hand. Never overridable (same tier as double-booking).
+  if (entry.startTime < DAY_START_TIME || entry.endTime > DAY_END_TIME) {
+    return `${HARD_CONFLICT_PREFIX}Classes must be scheduled between 7:30 AM and 8:00 PM — this session runs ${entry.startTime}-${entry.endTime}.`
   }
 
   // 0. Inactive faculty check — either Faculty.isActive or User.isActive must be true

@@ -13,7 +13,7 @@ const DEPT_SUBJECTS: Record<string, string[]> = {
 
 const DEPT_META: Record<string, { name: string; abbr: string }> = {
   "SS":  { abbr: "SS",  name: "Social Sciences" },
-  "LLH": { abbr: "LLH", name: "Languages, Literature, and Humanities" },
+  "LLH": { abbr: "LLH", name: "Language, Communication, and Humanities" },
   "MNS": { abbr: "MNS", name: "Mathematics and Natural Sciences" },
 }
 

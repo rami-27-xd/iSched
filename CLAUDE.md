@@ -38,7 +38,7 @@ The panelist required a strict workflow hierarchy. The role names in the DB do *
 | `FACULTY` | Faculty member | **No login.** A data record only (name on schedules, availability, specialization). Receives their schedule via the printed Teaching Load export from the DC/PC. |
 
 **Terminology (2026-09-19):** the word "cluster" is gone from the UI and docs. A CAS Department Chairperson heads a
-**department head area** (Social Sciences; Languages, Literature, and Humanities; Mathematics and Natural Sciences) and
+**department head area** (Social Sciences; Language, Communication, and Humanities; Mathematics and Natural Sciences) and
 the three of them are "the three department heads". The DB/model names (`FacultyCluster`, `User.clusterId`,
 `Program.clusterId`, `Faculty.clusterId`, `GecFinalization.clusterId`, `CLUSTER_GEC_CODES`) are unchanged — only
 user-facing strings, comments in new code and this file say "department head".

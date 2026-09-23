@@ -10,6 +10,14 @@ export async function GET(req: Request) {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
 
+    // The Dean is restricted to Dashboard, Manage Schedules, Departments, User
+    // Management and System Logs — no Buildings/Rooms access. (Room Occupancy under
+    // System Logs is a separate, still-permitted route: /api/rooms/occupancy.)
+    const dbUser = await getCurrentUser()
+    if (dbUser?.role === "DEAN") {
+      return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
+    }
+
     const { searchParams } = new URL(req.url)
     const type = searchParams.get("type")
     const buildingId = searchParams.get("buildingId")

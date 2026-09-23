@@ -370,7 +370,7 @@ export default function RoomsPage() {
   }
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "DEAN"]}>
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
     <div className="space-y-6">
       <PageHeader
         action={

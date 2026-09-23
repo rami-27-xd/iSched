@@ -30,7 +30,7 @@ const SUB_DEPTS = [
   },
   {
     abbreviation: "LLH",
-    name: "Languages, Literature, and Humanities",
+    name: "Language, Communication, and Humanities",
     programMatches: ["BAComm", "BA Communication", "BAComm"],
   },
   {

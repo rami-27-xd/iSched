@@ -15,7 +15,7 @@ const db = new PrismaClient({ adapter })
 
 const CAS_CLUSTERS = [
   { name: "Social Sciences",                          description: "BA History, BA Psychology, BA Communication" },
-  { name: "Languages, Literature, and Humanities",    description: "Language and communication-focused programs" },
+  { name: "Language, Communication, and Humanities",    description: "Language and communication-focused programs" },
   { name: "Mathematics and Natural Sciences",         description: "BS Biology, BS Mathematics" },
 ]
 

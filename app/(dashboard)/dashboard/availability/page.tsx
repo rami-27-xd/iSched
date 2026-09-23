@@ -1062,7 +1062,7 @@ export default function AvailabilityPage() {
   const isLoading = loadingFaculty || loadingAvailability || loadingSemesters || loadingSchedules
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "DEAN"]}>
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
     {/* flex/gap instead of space-y: space-y's margin-bottom lands on the sticky
         bar itself (it's not the last child), which throws off the browser's
         sticky release point and shows as a gap/overlap once you scroll. */}

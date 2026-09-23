@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
-import { validateEntry, validateEntryCapacity, stripConflictMarker, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
+import { validateEntry, validateEntryCapacity, stripConflictMarker, isHardConflict, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
 import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
@@ -145,6 +145,13 @@ export async function POST(
     // merged class every section is checked too (each section's own timetable
     // must be free) — the sibling rows share the merge group, so they are not
     // a faculty/room clash with each other.
+    // force: true = soft-validation — save anyway and return a warning instead of
+    // blocking, same rule PATCH /entries/[entryId] uses. Never overridable even
+    // with force: the Saturday restriction, faculty/room double-booking and the
+    // per-day session cap (Saturday text-matched; the other two [HARD]-marked —
+    // see isHardConflict). A specialization mismatch is the common case this
+    // unlocks: allowed manually with a warning, never on auto-generation.
+    let overriddenWarning: string | null = null
     for (const day of days) {
       for (const sectionId of sectionIds) {
         const validationError = await validateEntry(id, {
@@ -158,9 +165,15 @@ export async function POST(
           set: body.set ?? null,
           mergeGroupId,
         })
-        if (validationError) {
+        if (!validationError) continue
+        const forceable =
+          body.force === true &&
+          !validationError.includes("Saturday classes are reserved") &&
+          !isHardConflict(validationError)
+        if (!forceable) {
           return NextResponse.json(apiError(stripConflictMarker(validationError)), { status: 409 })
         }
+        overriddenWarning = stripConflictMarker(validationError)
       }
     }
 
@@ -258,12 +271,13 @@ export async function POST(
         Days: days.join(", "),
         Time: `${body.startTime}–${body.endTime}`,
         ...(body.set ? { Set: body.set } : {}),
-        ...(body.force ? { "Capacity warning overridden": "yes" } : {}),
+        ...(overriddenWarning ? { "Warning overridden": overriddenWarning } : body.force ? { "Capacity warning overridden": "yes" } : {}),
       },
     })
 
+    const responsePayload = apiResponse(createdEntries.length > 1 ? createdEntries : entry)
     return NextResponse.json(
-      apiResponse(createdEntries.length > 1 ? createdEntries : entry),
+      overriddenWarning ? { ...responsePayload, warning: overriddenWarning } : responsePayload,
       { status: 201 }
     )
   } catch (error) {

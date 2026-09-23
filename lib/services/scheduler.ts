@@ -211,6 +211,13 @@ const TIMEOUT_CHECK_INTERVAL = 200
 // regular class hours, in 30-minute steps.
 const PRIORITY_WINDOW_START_MIN = 7 * 60   // 07:00
 const PRIORITY_WINDOW_END_MIN   = 18 * 60  // 18:00
+// Operating hours — every generated class must sit within this window, whatever a
+// faculty member's marked availability says (lib/constants.ts DAY_START_TIME/
+// DAY_END_TIME; kept as raw minutes here since the engine works in minutes
+// throughout). Clamped in getCommonAvailableTimes, so no candidate is ever built
+// outside it in the first place.
+const DAY_START_MIN = 7 * 60 + 30  // 07:30
+const DAY_END_MIN   = 20 * 60      // 20:00
 // Beyond this many tasks, backtracking provably cannot finish before the timeout.
 // Keep low so GEC runs (many sections) always use fast greedy mode.
 const GREEDY_ONLY_THRESHOLD = 60
@@ -991,8 +998,8 @@ export class SchedulingEngine {
   private getCommonAvailableTimes(fac: FacultyInput, days: DayOfWeek[], minutesEach: number): number[] {
     const anchors = new Set<number>()
     for (const w of fac.availability.filter(a => a.day === days[0])) {
-      const wStart = this.toMinutes(w.startTime)
-      const wEnd = this.toMinutes(w.endTime)
+      const wStart = Math.max(this.toMinutes(w.startTime), DAY_START_MIN)
+      const wEnd = Math.min(this.toMinutes(w.endTime), DAY_END_MIN)
       for (let t = wStart; t + minutesEach <= wEnd; t += 30) {
         anchors.add(t)
       }
@@ -1002,7 +1009,7 @@ export class SchedulingEngine {
       days.slice(1).every(day =>
         fac.availability
           .filter(a => a.day === day)
-          .some(w => this.toMinutes(w.startTime) <= t && this.toMinutes(w.endTime) >= t + minutesEach)
+          .some(w => Math.max(this.toMinutes(w.startTime), DAY_START_MIN) <= t && Math.min(this.toMinutes(w.endTime), DAY_END_MIN) >= t + minutesEach)
       )
     )
   }

@@ -8,7 +8,7 @@
  * the cluster ↔ GEC ownership in lib/services/subject-permissions.ts:
  *
  *   Social Sciences                        → GEC01-04, GEC09, GEL07, GEL10
- *   Languages, Literature, and Humanities  → GEC06, GEC07, GEC10-14
+ *   Language, Communication, and Humanities  → GEC06, GEC07, GEC10-14
  *   Mathematics and Natural Sciences       → GEC05, GEC08, GEL01, GEL04, GEL05, GEL08
  *
  * Existing specializations are kept; only missing tags are added (re-runnable).
@@ -26,7 +26,7 @@ const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.
 // seed has no app imports.
 const CLUSTER_GEC_CODES: Record<string, string[]> = {
   "Social Sciences": ["GEC01", "GEC02", "GEC03", "GEC04", "GEC09", "GEL07", "GEL10"],
-  "Languages, Literature, and Humanities": ["GEC06", "GEC07", "GEC10", "GEC11", "GEC12", "GEC13", "GEC14"],
+  "Language, Communication, and Humanities": ["GEC06", "GEC07", "GEC10", "GEC11", "GEC12", "GEC13", "GEC14"],
   "Mathematics and Natural Sciences": ["GEC05", "GEC08", "GEL01", "GEL04", "GEL05", "GEL08"],
 }
 

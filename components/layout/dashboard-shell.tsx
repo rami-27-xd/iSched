@@ -12,6 +12,7 @@ import {
 import { Sidebar, type SidebarProps } from '@/components/layout/sidebar'
 import { Topbar } from '@/components/layout/topbar'
 import { CollegeProvider } from '@/lib/college-context'
+import { FloatingHelpButton } from '@/components/shared/floating-help-button'
 
 // ── User role context ─────────────────────────────────────────────────────
 const UserRoleContext = React.createContext<string>('FACULTY')
@@ -117,6 +118,7 @@ export function DashboardShell({
             />
             <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
           </div>
+          <FloatingHelpButton />
         </div>
       </CollegeProvider>
     </UserRoleContext.Provider>

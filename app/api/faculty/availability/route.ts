@@ -67,9 +67,11 @@ export async function GET(req: Request) {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
 
-    // Chairs manage/view availability; the Dean reads their own department's.
+    // Chairs manage/view availability. The Dean no longer has Faculty Availability
+    // access (restricted to Dashboard, Manage Schedules, Departments, User
+    // Management and System Logs).
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "DEAN"].includes(dbUser.role)) {
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
       return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
     }
 

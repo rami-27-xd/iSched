@@ -80,6 +80,32 @@ export function useSemesters() {
   })
 }
 
+/**
+ * Semesters that actually have a non-archived schedule the signed-in user can see
+ * (the API scopes /api/schedules per role, same as Manage Schedules) — so a filter
+ * dropdown never offers a term that's empty in Manage Schedules. Falls back to every
+ * semester when none currently qualify, so the dropdown is never empty outright.
+ * Mirrors the per-term "has a schedule" rule already used for the Faculty
+ * Availability term selector (lib/services/term-scope.ts, server-side).
+ */
+export function useScheduledSemesters() {
+  const semestersQuery = useSemesters()
+  const schedulesQuery = useQuery({
+    queryKey: ["schedules", { isArchived: false, scope: "scheduled-semesters" }],
+    queryFn: () => apiFetch<any[]>("/api/schedules"),
+  })
+
+  const semesters = semestersQuery.data ?? []
+  const schedules = schedulesQuery.data ?? []
+  const scheduledIds = new Set(schedules.map((s: any) => s.semesterId))
+  const scheduled = semesters.filter((s: any) => scheduledIds.has(s.id))
+
+  return {
+    data: scheduled.length > 0 ? scheduled : semesters,
+    isLoading: semestersQuery.isLoading || schedulesQuery.isLoading,
+  }
+}
+
 // ─── Colleges ─────────────────────────────────────────────────────────────────
 
 export function useColleges(_semester?: string) {

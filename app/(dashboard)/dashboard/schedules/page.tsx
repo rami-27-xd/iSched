@@ -58,7 +58,6 @@ import {
   Search,
   X,
   Workflow,
-  BookOpenCheck,
   Circle,
   Rows3,
   ChevronDown,
@@ -157,7 +156,10 @@ function missingRing(missing: string[], field: string): string {
     : ""
 }
 
-const TIME_OPTIONS = Array.from({ length: 28 }, (_, i) => {
+// Classes run 7:30 AM-8:00 PM (26 half-hour marks, 7:30 through 20:00 inclusive).
+// Capping the shared option list here — rather than only the End Time picker —
+// means the Start Time picker also never offers a start with nowhere left to end.
+const TIME_OPTIONS = Array.from({ length: 26 }, (_, i) => {
   const totalMins = 7 * 60 + 30 + i * 30
   const h = String(Math.floor(totalMins / 60)).padStart(2, "0")
   const m = String(totalMins % 60).padStart(2, "0")
@@ -289,8 +291,11 @@ export default function SchedulesPage() {
     return () => document.removeEventListener("mousedown", handleClick)
   }, [])
 
-  // Fetch current user role for access control
-  const { data: currentUser } = useQuery({
+  // Fetch current user role for access control. `isPending` matters here: the
+  // `userRole` default below falls back to "FACULTY" while this is in flight, which
+  // used to briefly render the "available to Chairpersons only" warning for every
+  // real chair on every navigation to this page, before their actual role loaded.
+  const { data: currentUser, isPending: currentUserPending } = useQuery({
     queryKey: ["current-user-role"],
     queryFn: async () => {
       const res = await fetch("/api/users/me")
@@ -818,10 +823,25 @@ export default function SchedulesPage() {
     if (first !== entryForm.day) setEntryForm((f) => ({ ...f, day: first }))
   }, [dayPattern, patternDays, entryForm.day])
 
-  // Conflict override dialog state (soft-validation)
+  // Conflict override dialog state (soft-validation) — shared by Add Entry and
+  // Edit Entry. pendingForceCreate is set for a new entry (e.g. a specialization
+  // mismatch — allowed manually with this warning, never on auto-generation);
+  // pendingForceChanges + forceEntryId are set for editing an existing one.
   const [conflictMessage, setConflictMessage] = useState<string | null>(null)
   const [pendingForceChanges, setPendingForceChanges] = useState<Record<string, unknown> | null>(null)
   const [forceEntryId, setForceEntryId] = useState<string | null>(null)
+  const [pendingForceCreate, setPendingForceCreate] = useState<Record<string, unknown> | null>(null)
+
+  function isOverridableConflict(message: string | null | undefined): boolean {
+    const m = (message ?? "").toLowerCase()
+    return (
+      m.includes("conflict") ||
+      m.includes("already assigned") ||
+      m.includes("double-booked") ||
+      m.includes("not available") ||
+      m.includes("specialization mismatch")
+    )
+  }
 
   // Edit entry state
   const [editEntryId, setEditEntryId] = useState<string | null>(null)
@@ -1806,8 +1826,8 @@ export default function SchedulesPage() {
       }
     }
 
+    const mergedIds = mergeSectionIds.length > 0 ? [sectionId, ...mergeSectionIds.filter((x) => x !== sectionId)] : undefined
     try {
-      const mergedIds = mergeSectionIds.length > 0 ? [sectionId, ...mergeSectionIds.filter((x) => x !== sectionId)] : undefined
       await createEntry.mutateAsync({
         scheduleId: selectedScheduleId,
         entry: {
@@ -1826,7 +1846,22 @@ export default function SchedulesPage() {
           : patternDays.length > 1 ? `Entry added on ${patternDays.length} days` : "Entry added"
       )
     } catch (err: any) {
-      toast.error(err.message)
+      // Detect conflict errors — offer soft-validation override instead of hard-blocking
+      // (e.g. a specialization mismatch: allowed manually with a warning, never on
+      // auto-generation). Saturday, double-booking and the per-day cap are still
+      // rejected outright by the server even when this retries with force: true.
+      if (isOverridableConflict(err.message)) {
+        setConflictMessage(err.message)
+        setPendingForceCreate({
+          ...entryForm,
+          day: patternDays[0],
+          days: patternDays.length > 1 ? patternDays : undefined,
+          sectionIds: mergedIds,
+          facultyName: entryForm.facultyName?.trim() || null,
+        })
+      } else {
+        toast.error(err.message)
+      }
     }
   }
 
@@ -2084,14 +2119,7 @@ export default function SchedulesPage() {
       }
     } catch (err: any) {
       // Detect conflict errors — offer soft-validation override instead of hard-blocking
-      const isConflict = err.message && (
-        err.message.toLowerCase().includes("conflict") ||
-        err.message.toLowerCase().includes("already assigned") ||
-        err.message.toLowerCase().includes("double-booked") ||
-        err.message.toLowerCase().includes("not available") ||
-        err.message.toLowerCase().includes("specialization mismatch")
-      )
-      if (isConflict && editEntryId) {
+      if (isOverridableConflict(err.message) && editEntryId) {
         setConflictMessage(err.message)
         setPendingForceChanges({ ...editEntryForm })
         setForceEntryId(editEntryId)
@@ -2102,8 +2130,21 @@ export default function SchedulesPage() {
   }
 
   async function handleForceOverride() {
-    if (!pendingForceChanges || !forceEntryId || !selectedScheduleId) return
+    if (!selectedScheduleId) return
     try {
+      if (pendingForceCreate) {
+        const result = await createEntry.mutateAsync({
+          scheduleId: selectedScheduleId,
+          entry: { ...pendingForceCreate, force: true } as any,
+        })
+        setConflictMessage(null)
+        setPendingForceCreate(null)
+        setAddEntryOpen(false)
+        resetEntryForm()
+        toast.warning(result.warning ? `Added with conflict: ${result.warning}` : "Entry added (conflict overridden)", { duration: 6000 })
+        return
+      }
+      if (!pendingForceChanges || !forceEntryId) return
       const result = await updateEntry.mutateAsync({
         scheduleId: selectedScheduleId,
         entryId: forceEntryId,
@@ -2195,8 +2236,13 @@ export default function SchedulesPage() {
     )}
 
     <div className="space-y-6">
-      {/* Faculty have no login access (RoleGuard already redirects them). */}
-      {userRole === "FACULTY" ? (
+      {/* While the role/department fetch is in flight, show a skeleton — not the
+          FACULTY fallback below, which used to flash for every real chair. */}
+      {currentUserPending ? (
+        <ScheduleListSkeleton />
+      ) : userRole === "FACULTY" ? (
+        /* Faculty have no login access (RoleGuard already redirects them) — this is
+           a defensive fallback, not a state a real user should ever reach. */
         <Card>
           <CardContent className="py-12 text-center">
             <CalendarDays className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3" />
@@ -2288,11 +2334,6 @@ export default function SchedulesPage() {
                     Export
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem render={<Link href="/dashboard/manual#workflow" />}>
-                  <BookOpenCheck className="mr-2 h-4 w-4" />
-                  User Manual
-                </DropdownMenuItem>
-
                 {/* Archive / Unarchive + Delete — Dept Chair on any schedule,
                     Program Chair on their own department's. */}
                 {selectedScheduleId && canArchiveOrDelete && (
@@ -2387,7 +2428,7 @@ export default function SchedulesPage() {
       {selectedScheduleId && waitingForGec && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <Workflow className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0">
             <p className="font-medium">Waiting for GEC/GEL to be finalized</p>
             <p className="mt-0.5 text-amber-700">
               {chairIsCit
@@ -2411,12 +2452,6 @@ export default function SchedulesPage() {
               </ul>
             )}
           </div>
-          <Link
-            href="/dashboard/manual#workflow"
-            className="shrink-0 rounded-md border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
-          >
-            User Manual
-          </Link>
         </div>
       )}
 
@@ -4250,7 +4285,7 @@ export default function SchedulesPage() {
       {/* ── Conflict Override Dialog (soft-validation) ── */}
       <Dialog
         open={!!conflictMessage}
-        onOpenChange={() => { setConflictMessage(null); setPendingForceChanges(null); setForceEntryId(null) }}
+        onOpenChange={() => { setConflictMessage(null); setPendingForceChanges(null); setForceEntryId(null); setPendingForceCreate(null) }}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -4270,7 +4305,7 @@ export default function SchedulesPage() {
           <DialogFooter className="gap-2">
             <Button
               variant="outline"
-              onClick={() => { setConflictMessage(null); setPendingForceChanges(null); setForceEntryId(null) }}
+              onClick={() => { setConflictMessage(null); setPendingForceChanges(null); setForceEntryId(null); setPendingForceCreate(null) }}
             >
               Cancel
             </Button>

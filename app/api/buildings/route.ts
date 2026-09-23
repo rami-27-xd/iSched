@@ -9,6 +9,13 @@ export async function GET(_req: Request) {
     const user = await getAuthenticatedUser()
     if (!user) return NextResponse.json(apiError("Unauthorized"), { status: 401 })
 
+    // The Dean is restricted to Dashboard, Manage Schedules, Departments, User
+    // Management and System Logs — no Buildings/Rooms access.
+    const dbUser = await getCurrentUser()
+    if (dbUser?.role === "DEAN") {
+      return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
+    }
+
     const buildings = await db.building.findMany({
       include: {
         rooms: {

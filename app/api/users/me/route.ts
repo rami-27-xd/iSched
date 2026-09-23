@@ -75,7 +75,7 @@ export async function PATCH(req: Request) {
     }
 
     // Only SUPER_ADMIN (Department Chair) can set which CAS cluster they head
-    // (Social Sciences / Languages, Literature, and Humanities / Mathematics
+    // (Social Sciences / Language, Communication, and Humanities / Mathematics
     // and Natural Sciences). User.clusterId IS the FacultyCluster.supervisors
     // link, so setting it here makes them that cluster's head.
     if (clusterId !== undefined && currentUser.role === "SUPER_ADMIN") {

@@ -2,17 +2,20 @@
 
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Building2, DoorOpen, Clock, LayoutGrid, Rows3, Search, X, Users } from "lucide-react"
+import { Building2, DoorOpen, Clock, LayoutGrid, Rows3, Search, X, Users, FileDown, Loader2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { CardListSkeleton } from "@/components/shared/loading-skeletons"
-import { useSemesters } from "@/hooks/use-data"
+import { useScheduledSemesters } from "@/hooks/use-data"
 import { useUserRole } from "@/components/layout/dashboard-shell"
 import { DAY_LABELS } from "@/lib/constants"
 import { departmentColor, type DeptColor } from "@/lib/department-colors"
 import { DepartmentLegend } from "@/components/shared/department-legend"
+import { buildRoomOccupancyHtml, fetchLogoDataUrl, openPrintWindow } from "@/lib/exports/schedule-format"
+import { toast } from "sonner"
 
 // ─── Types (shape of GET /api/rooms/occupancy) ───────────────────────────────
 
@@ -115,7 +118,7 @@ function todayWeekday(): string {
  */
 export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
   const role = useUserRole()
-  const { data: semesters = [] } = useSemesters()
+  const { data: semesters = [] } = useScheduledSemesters()
   const activeSemester = useMemo(() => (semesters as any[]).find((s) => s.isActive) ?? (semesters as any[])[0], [semesters])
   const [semesterId, setSemesterId] = useState("")
   const [day, setDay] = useState<string>(todayWeekday)
@@ -169,6 +172,35 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
     return { rooms, classesToday, classesWeek, busyRooms }
   }, [buildings, day])
 
+  const [exporting, setExporting] = useState(false)
+
+  async function handleExportAllRooms() {
+    if (buildings.length === 0) {
+      toast.error("No buildings to export")
+      return
+    }
+    setExporting(true)
+    try {
+      const logo = await fetchLogoDataUrl()
+      const semType = data?.semester?.type
+      const semesterLabelText =
+        semType === "FIRST" ? "1st Semester" : semType === "SECOND" ? "2nd Semester" : semType === "SUMMER" ? "Summer" : ""
+      const html = buildRoomOccupancyHtml({
+        buildings,
+        departments: deptList,
+        semesterLabel: semesterLabelText,
+        academicYear: data?.semester?.academicYear ?? "",
+        logoDataUrl: logo,
+        gridStartMin: GRID_START_MIN,
+        gridEndMin: GRID_END_MIN,
+        slotMin: SLOT_MIN,
+      })
+      openPrintWindow(html)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const selectClass = "h-9 rounded-lg border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
 
   return (
@@ -211,6 +243,16 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
               <Rows3 className="h-3.5 w-3.5" /> List
             </button>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={handleExportAllRooms}
+            disabled={exporting || buildings.length === 0}
+          >
+            {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <FileDown className="mr-1.5 h-3.5 w-3.5" />}
+            Export All Rooms
+          </Button>
         </div>
 
         {/* Day tabs */}

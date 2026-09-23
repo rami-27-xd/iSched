@@ -10,7 +10,7 @@
  * subjects from THEIR cluster's programs:
  *
  *   Social Sciences                        → BA History, BA Psychology
- *   Languages, Literature, and Humanities  → BA Communication
+ *   Language, Communication, and Humanities  → BA Communication
  *   Mathematics and Natural Sciences       → BS Biology, BS Mathematics
  *
  * GEC/GEL are deliberately NOT assigned. The engine exempts them from the

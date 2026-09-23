@@ -14,7 +14,7 @@ import { TableSkeleton } from "@/components/shared/loading-skeletons"
 import { RoomOccupancyView } from "@/components/rooms/room-occupancy-view"
 import { SubjectSummaryView } from "@/components/schedule/subject-summary-view"
 import { DepartmentChip, DepartmentLegend } from "@/components/shared/department-legend"
-import { useSemesters } from "@/hooks/use-data"
+import { useScheduledSemesters } from "@/hooks/use-data"
 import { useUserRole } from "@/components/layout/dashboard-shell"
 import { useDepartments } from "@/hooks/use-data"
 import { useSchedules } from "@/hooks/use-schedules"
@@ -373,10 +373,10 @@ function ActivityTab() {
                               </span>
                             )}
                           </TableCell>
-                          <TableCell className="text-sm">
-                            <span className="flex items-center gap-1.5 font-medium">
+                          <TableCell className="max-w-0 text-sm">
+                            <span className="flex min-w-0 items-center gap-1.5 font-medium">
                               <span className={`h-2 w-2 shrink-0 rounded-full ${roleDot}`} aria-hidden="true" />
-                              {row.actorName}
+                              <span className="truncate" title={row.actorName}>{row.actorName}</span>
                             </span>
                             <span className={`mt-0.5 inline-flex rounded-full border px-1.5 py-0 text-[10px] ${roleStyle}`}>{formatRole(row.actorRole)}</span>
                           </TableCell>
@@ -561,7 +561,7 @@ const DAY_ORDER = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATU
 function ClassesTab() {
   const role = useUserRole()
   const isUniversityWide = role === "SUPER_ADMIN"
-  const { data: semesters = [] } = useSemesters()
+  const { data: semesters = [] } = useScheduledSemesters()
   const { data: departments = [] } = useDepartments()
   const activeSemester = useMemo(() => (semesters as any[]).find((s) => s.isActive) ?? (semesters as any[])[0], [semesters])
   const [semesterId, setSemesterId] = useState("")
