@@ -66,10 +66,10 @@ export const ACTION_TONES: ActionTone[] = [
   },
   {
     key: "finalized",
-    label: "GEC/GEL finalized / reopened",
+    label: "Finalized / marked done / reopened",
     className: "bg-violet-100 text-violet-800 border-violet-200",
-    examples: "GEC/GEL finalized (one department head), GEC/GEL fully finalized, GEC/GEL reopened",
-    matches: (a) => a.includes("gec"),
+    examples: "GEC/GEL finalized (one department head), GEC/GEL fully finalized, GEC/GEL reopened, Program marked done, Program reopened, All programs done",
+    matches: (a) => a.includes("gec") || a.includes("program"),
   },
   {
     key: "archived",

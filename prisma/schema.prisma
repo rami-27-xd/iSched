@@ -182,6 +182,28 @@ model GecFinalization {
   @@index([scheduleId])
 }
 
+// One row per (schedule, program) whose Program Chairperson has declared they
+// are DONE plotting their program's subjects in this schedule. A department's
+// schedule can be submitted for the Dean's approval only once every program of
+// the department that has an approved Program Chairperson has a row here (and
+// GEC/GEL is finalized) — see lib/services/workflow-gates.ts
+// `getProgramFinalizationStatus`. Adding, editing or deleting a class (or
+// regenerating) as that Program Chairperson deletes the row again, so the
+// declaration always reflects the classes actually placed.
+model ProgramFinalization {
+  id          String   @id @default(cuid())
+  scheduleId  String
+  programId   String
+  finalizedBy String
+  finalizedAt DateTime @default(now())
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  program  Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, programId])
+  @@index([scheduleId])
+}
+
 model DepartmentChair {
   id           String     @id @default(cuid())
   userId       String     @unique
@@ -205,6 +227,7 @@ model Program {
   faculty      Faculty[]   // faculty assigned to this program
   subjects     Subject[]   // program-specific subjects (null programId = shared/GEC)
   rooms        ProgramRoom[] // rooms restricted to this program (course-level access)
+  finalizations ProgramFinalization[] // "done plotting" declarations per schedule
 
   @@unique([abbreviation, departmentId])
 }
@@ -468,8 +491,8 @@ model Schedule {
   isArchived   Boolean        @default(false)
   generatedAt  DateTime?
   publishedAt  DateTime?
-  // Note from the Dept Chair (SUPER_ADMIN) explaining why this schedule was
-  // returned to DRAFT. Cleared on the next submit/approve/reset.
+  // Note from the Dean explaining why this schedule was returned to DRAFT.
+  // Cleared on the next submit/approve/reset.
   rejectionReason String?
   createdBy    String
   createdAt    DateTime       @default(now())
@@ -482,7 +505,8 @@ model Schedule {
   unassigned UnassignedEntry[]
 
   @@index([departmentId])
-  gecFinalizations GecFinalization[]
+  gecFinalizations     GecFinalization[]
+  programFinalizations ProgramFinalization[]
 }
 
 model ScheduleEntry {

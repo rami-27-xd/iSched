@@ -222,11 +222,11 @@ export function Sidebar({ userRole, userName, userEmail, collapsed = false, onTo
               <span className="truncate text-xs text-sidebar-foreground/60">{userEmail}</span>
             )}
             <div className="mt-1 flex flex-wrap items-center gap-1">
-              <Badge variant="secondary" className="w-fit bg-sidebar-primary/20 text-sidebar-primary text-[10px]">
+              <Badge variant="secondary" className="w-fit h-auto max-w-full whitespace-normal break-words rounded-md text-left leading-tight bg-sidebar-primary/20 text-sidebar-primary text-[10px]">
                 {formatRole(userRole)}
               </Badge>
               {departmentName && (
-                <Badge variant="secondary" className="w-fit bg-[#D4AF37]/20 text-[#D4AF37] text-[10px]">
+                <Badge variant="secondary" title={departmentName} className="w-fit h-auto max-w-full whitespace-normal break-words rounded-md text-left leading-tight bg-[#D4AF37]/20 text-[#D4AF37] text-[10px]">
                   {departmentName}
                 </Badge>
               )}

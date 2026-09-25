@@ -120,7 +120,7 @@ export default function SystemLogsPage() {
       {/* The page title ("System Logs") comes from the topbar via PAGE_TITLES. */}
       <div className="space-y-6">
         <Tabs defaultValue="activity">
-          <TabsList className="flex-wrap">
+          <TabsList className="h-auto w-full flex-wrap justify-start sm:w-fit">
             <TabsTrigger value="activity"><ScrollText className="mr-1.5 h-4 w-4" />Activity</TabsTrigger>
             <TabsTrigger value="schedules"><CalendarDays className="mr-1.5 h-4 w-4" />Schedules</TabsTrigger>
             <TabsTrigger value="classes"><ListChecks className="mr-1.5 h-4 w-4" />Classes</TabsTrigger>
@@ -276,13 +276,13 @@ function ActivityTab() {
             </a>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search actions or people…"
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1) }}
-                className="pl-9 sm:w-60"
+                className="h-9 pl-9 sm:w-60"
               />
             </div>
             {isUniversityWide && (
@@ -325,12 +325,12 @@ function ActivityTab() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="min-w-[820px] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8" />
-                    <TableHead className="w-44">Date &amp; time</TableHead>
-                    <TableHead className="w-44">Action</TableHead>
+                    <TableHead className="w-9" />
+                    <TableHead className="w-48">Date &amp; time</TableHead>
+                    <TableHead className="w-48">Action</TableHead>
                     <TableHead>Details</TableHead>
                     <TableHead className="w-52">By</TableHead>
                   </TableRow>
@@ -350,21 +350,21 @@ function ActivityTab() {
                           onClick={() => canExpand && setExpanded(isOpen ? null : row.id)}
                           aria-expanded={canExpand ? isOpen : undefined}
                         >
-                          <TableCell className="pr-0 text-muted-foreground">
+                          <TableCell className="pr-0 align-top text-muted-foreground">
                             {canExpand && (isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />)}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap">
+                          <TableCell className="align-top whitespace-normal">
                             <span className="block text-sm">{d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span>
                             <span className="block text-xs text-muted-foreground tabular-nums">
                               {d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })} · {timeAgo(row.createdAt)}
                             </span>
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={`text-[10px] ${actionTone(row.action)}`}>
+                          <TableCell className="align-top whitespace-normal">
+                            <Badge variant="outline" className={`h-auto max-w-full whitespace-normal text-left text-[10px] leading-tight ${actionTone(row.action)}`}>
                               {(AUDIT_ACTION_LABELS as Record<string, string>)[row.action] ?? row.action}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-sm">
+                          <TableCell className="align-top whitespace-normal break-words text-sm">
                             {row.summary}
                             {row.schedule && (
                               <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -373,7 +373,7 @@ function ActivityTab() {
                               </span>
                             )}
                           </TableCell>
-                          <TableCell className="max-w-0 text-sm">
+                          <TableCell className="align-top text-sm">
                             <span className="flex min-w-0 items-center gap-1.5 font-medium">
                               <span className={`h-2 w-2 shrink-0 rounded-full ${roleDot}`} aria-hidden="true" />
                               <span className="truncate" title={row.actorName}>{row.actorName}</span>
@@ -384,7 +384,7 @@ function ActivityTab() {
                         {isOpen && (
                           <TableRow className="bg-muted/30 hover:bg-muted/30">
                             <TableCell />
-                            <TableCell colSpan={4} className="py-3">
+                            <TableCell colSpan={4} className="whitespace-normal py-3">
                               <dl className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2 lg:grid-cols-3">
                                 {row.schedule && (
                                   <>
@@ -464,31 +464,31 @@ function SchedulesTab() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="min-w-[760px] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Term</TableHead>
-                    {showDept && <TableHead>Department</TableHead>}
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Classes</TableHead>
-                    <TableHead className="text-right">Conflicts</TableHead>
-                    <TableHead>Last generated</TableHead>
-                    <TableHead>Published</TableHead>
+                    <TableHead className="px-4">Term</TableHead>
+                    {showDept && <TableHead className="w-32">Department</TableHead>}
+                    <TableHead className="w-40">Status</TableHead>
+                    <TableHead className="w-24 text-right">Classes</TableHead>
+                    <TableHead className="w-24 text-right">Conflicts</TableHead>
+                    <TableHead className="w-44 pl-6">Last generated</TableHead>
+                    <TableHead className="w-44">Published</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {pager.pageItems.map((s: any) => (
                     <TableRow key={s.id}>
-                      <TableCell className="font-medium">{semesterLabel(s.semester)}</TableCell>
+                      <TableCell className="truncate px-4 font-medium">{semesterLabel(s.semester)}</TableCell>
                       {showDept && <TableCell className="text-sm"><DepartmentChip abbreviation={s.department?.abbreviation} title={s.department?.name} /></TableCell>}
                       <TableCell>
                         <Badge variant="outline" className={`text-[10px] ${STATUS_STYLE[s.status] ?? ""}`}>
                           {STATUS_LABEL[s.status] ?? s.status}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right">{s._count?.entries ?? 0}</TableCell>
-                      <TableCell className="text-right">{s._count?.conflicts ?? 0}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{s.generatedAt ? formatWhen(s.generatedAt) : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{s._count?.entries ?? 0}</TableCell>
+                      <TableCell className="text-right tabular-nums">{s._count?.conflicts ?? 0}</TableCell>
+                      <TableCell className="pl-6 text-xs text-muted-foreground">{s.generatedAt ? formatWhen(s.generatedAt) : "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{s.publishedAt ? formatWhen(s.publishedAt) : "—"}</TableCell>
                     </TableRow>
                   ))}
@@ -636,9 +636,9 @@ function ClassesTab() {
                 <option key={s.id} value={s.id}>{semesterLabel(s)}{s.isActive ? " (active)" : ""}</option>
               ))}
             </select>
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Subject, section, course, faculty, room…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} className="pl-9 sm:w-64" />
+              <Input placeholder="Subject, section, course, faculty, room…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} className="h-9 pl-9 sm:w-64" />
             </div>
             {isUniversityWide && (
               <select value={departmentId} onChange={(e) => { setDepartmentId(e.target.value); setProgramId(""); setPage(1) }} className={`${selectClass} sm:w-44`} aria-label="Department">
@@ -682,23 +682,23 @@ function ClassesTab() {
         ) : (
           <>
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="min-w-[980px] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-24">Dept.</TableHead>
-                    <TableHead>Course · Section</TableHead>
+                    <TableHead className="w-24 px-4">Dept.</TableHead>
+                    <TableHead className="w-44">Course · Section</TableHead>
                     <TableHead>Subject</TableHead>
-                    <TableHead>Faculty</TableHead>
-                    <TableHead>Room</TableHead>
-                    <TableHead className="w-36">Day · Time</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead className="w-48">Faculty</TableHead>
+                    <TableHead className="w-32">Room</TableHead>
+                    <TableHead className="w-40">Day · Time</TableHead>
+                    <TableHead className="w-36">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {items.map((c) => (
                     <TableRow key={c.id}>
-                      <TableCell><DepartmentChip abbreviation={c.department} title={c.departmentName} /></TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="px-4"><DepartmentChip abbreviation={c.department} title={c.departmentName} /></TableCell>
+                      <TableCell className="whitespace-normal text-sm">
                         <span className="font-medium">{c.program}</span>
                         {c.yearLevel && <span className="ml-1 text-xs text-muted-foreground">Year {c.yearLevel}</span>}
                         <span className="block text-xs text-muted-foreground">
@@ -709,10 +709,10 @@ function ClassesTab() {
                       <TableCell className="text-sm">
                         <span className="font-mono text-xs font-semibold">{c.subjectCode}</span>
                         {c.set && <Badge variant="outline" className="ml-1 text-[10px]">Set {c.set}</Badge>}
-                        <span className="block max-w-[260px] truncate text-xs text-muted-foreground" title={c.subjectTitle}>{c.subjectTitle}</span>
+                        <span className="block truncate text-xs text-muted-foreground" title={c.subjectTitle}>{c.subjectTitle}</span>
                       </TableCell>
-                      <TableCell className="text-sm">{c.faculty}</TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="whitespace-normal break-words text-sm">{c.faculty}</TableCell>
+                      <TableCell className="whitespace-normal break-words text-sm">
                         <span className="font-mono text-xs">{c.room}</span>
                         {c.building && <span className="block text-[10px] text-muted-foreground">{c.building}</span>}
                       </TableCell>

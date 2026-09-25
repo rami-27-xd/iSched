@@ -105,7 +105,7 @@ export async function GET(req: Request) {
           select: {
             id: true,
             status: true,
-            department: { select: { id: true, abbreviation: true, name: true, college: { select: { abbreviation: true } } } },
+            department: { select: { id: true, abbreviation: true, name: true, college: { select: { abbreviation: true, name: true } } } },
           },
         },
       },
@@ -116,10 +116,10 @@ export async function GET(req: Request) {
     // one occupancy block listing every section.
     const byRoom = new Map<string, any[]>()
     const mergedIndex = new Map<string, any>()
-    const departments = new Map<string, { id: string; abbreviation: string; name: string; college: string }>()
+    const departments = new Map<string, { id: string; abbreviation: string; name: string; college: string; collegeName: string }>()
     for (const e of entries) {
       const dept = e.schedule.department
-      if (dept) departments.set(dept.id, { id: dept.id, abbreviation: dept.abbreviation, name: dept.name, college: dept.college?.abbreviation ?? "" })
+      if (dept) departments.set(dept.id, { id: dept.id, abbreviation: dept.abbreviation, name: dept.name, college: dept.college?.abbreviation ?? "", collegeName: dept.college?.name ?? "" })
       const list = byRoom.get(e.roomId) ?? []
       const mergeKey = e.mergeGroupId ? `${e.roomId}|${e.mergeGroupId}|${e.day}|${e.startTime}|${e.endTime}` : null
       if (mergeKey && mergedIndex.has(mergeKey)) {

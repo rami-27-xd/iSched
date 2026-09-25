@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { notifyAllSuperAdmins } from "@/lib/notifications"
 import { recordAudit } from "@/lib/audit"
+import { TBA_EMPLOYEE_ID } from "@/lib/sentinels"
 import { isFacultyType, maxUnitsForType, DEFAULT_HOURS_BY_TYPE } from "@/lib/faculty-types"
 
 export async function GET(req: Request) {
@@ -71,11 +72,9 @@ export async function GET(req: Request) {
     // deactivating would look identical to deleting. Consumers that need only
     // schedulable faculty filter on isActive themselves.
     //
-    // The "TBA" sentinel (employeeId "TBA") is included for every chair
-    // regardless of department/cluster — it's the placeholder a chair picks in
-    // Add/Edit Entry when no real faculty is available yet to resolve an
-    // Unassigned Queue item, so it must be selectable everywhere, not scoped
-    // to whichever department happens to own the seeded row.
+    // The "TBA" placeholder faculty (employeeId "TBA") is hidden from every
+    // list and picker — only the PATHFit Director still receives it, because
+    // PATHFit classes default to TBA faculty (Add Entry pre-fills it).
     // Instructors the Department Chairperson allocated to this Program Chairperson's
     // program (approved faculty requests) join the schedulable pool — for the term
     // given by ?semesterId=, or for any term when none is given — so the Add/Edit
@@ -95,8 +94,8 @@ export async function GET(req: Request) {
     const faculty = await db.faculty.findMany({
       where: {
         OR: [
-          scopeFilter,
-          { employeeId: "TBA" },
+          { ...scopeFilter, employeeId: { not: TBA_EMPLOYEE_ID } },
+          ...(dbUser?.role === "PATHFIT" ? [{ employeeId: TBA_EMPLOYEE_ID }] : []),
           ...(allocatedIds.length ? [{ id: { in: allocatedIds } }] : []),
         ],
       },

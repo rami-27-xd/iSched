@@ -11,7 +11,7 @@ import { detectCrossScheduleConflicts, type CrossScheduleEntry } from "@/lib/ser
 import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
 import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
 import { resolveMaxMinutesPerDay } from "@/lib/session-rules"
-import { isGecFinalized, GEC_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenProgramIfStale } from "@/lib/services/workflow-gates"
 import { runPathfitGeneration } from "@/lib/services/pathfit-generation"
 import { recordAudit } from "@/lib/audit"
 
@@ -902,6 +902,8 @@ export async function POST(
         await db.gecFinalization.deleteMany({ where: { scheduleId: id, clusterId: myClusterId } })
       }
     }
+    // Likewise a Program Chairperson's regeneration reopens their "done" mark.
+    await reopenProgramIfStale(id, dbUser)
 
     const labCount = entryRows.filter(r => r.set !== null).length
     const assignedCount = result.assignments.length

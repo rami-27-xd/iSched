@@ -18,6 +18,9 @@ export type AuditAction =
   | "schedule.gecClusterFinalized"
   | "schedule.gecFullyFinalized"
   | "schedule.gecReopened"
+  | "schedule.programFinalized"
+  | "schedule.programReopened"
+  | "schedule.programsAllFinalized"
   | "entry.created"
   | "entry.updated"
   | "entry.deleted"
@@ -55,6 +58,9 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   "schedule.gecClusterFinalized": "GEC/GEL finalized (one department head)",
   "schedule.gecFullyFinalized": "GEC/GEL fully finalized",
   "schedule.gecReopened": "GEC/GEL reopened",
+  "schedule.programFinalized": "Program marked done",
+  "schedule.programReopened": "Program reopened",
+  "schedule.programsAllFinalized": "All programs done",
   "entry.created": "Class added",
   "entry.updated": "Class edited",
   "entry.deleted": "Class removed",

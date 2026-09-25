@@ -3,6 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId, getUserColle
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
+import { TBA_ROOM_CODE } from "@/lib/sentinels"
 
 export async function GET(_req: Request) {
   try {
@@ -16,9 +17,12 @@ export async function GET(_req: Request) {
       return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
     }
 
+    // The "TBA" placeholder building/room is hidden from Buildings & Rooms.
     const buildings = await db.building.findMany({
+      where: { code: { not: TBA_ROOM_CODE } },
       include: {
         rooms: {
+          where: { code: { not: TBA_ROOM_CODE } },
           orderBy: { code: "asc" },
         },
         departments: {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { ensureDbUser } from '@/lib/auth'
+import { db } from '@/lib/db'
 
 export async function GET(request: Request) {
   const url = new URL(request.url)
@@ -44,9 +45,44 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/sign-in?error=auth_failed`)
   }
 
+  // Did this person already have an iSched account before this sign-in? Faculty
+  // stubs ("manual-…") cannot log in, so they don't count. Drives the notice the
+  // dashboard shows next (see components/auth/auth-notice.tsx):
+  //   existing_account — Continue with Google on the SIGN-UP page for an email
+  //                      that already has an account: signed in to that account,
+  //                      and the role picked on the form is ignored.
+  //   google_ready     — first Google sign-in: account created, email confirmed.
+  //   email_confirmed  — the confirmation link of a password sign-up.
+  // A returning user's everyday sign-in gets no notice.
+  const sessionUser = session.user
+  let existedBefore = false
+  let lookupFailed = false
+  try {
+    existedBefore = !!(await db.user.findFirst({
+      where: {
+        OR: [
+          { supabaseId: sessionUser.id },
+          ...(sessionUser.email ? [{ email: { equals: sessionUser.email, mode: 'insensitive' as const } }] : []),
+        ],
+        NOT: { supabaseId: { startsWith: 'manual-' } },
+      },
+      select: { id: true },
+    }))
+  } catch (err) {
+    console.error('[auth/callback] existing-account lookup failed:', err)
+    lookupFailed = true
+  }
+  const viaGoogle = sessionUser.app_metadata?.provider === 'google'
+  const notice = lookupFailed
+    ? null
+    : existedBefore
+    ? (role ? 'existing_account' : null)
+    : (viaGoogle ? 'google_ready' : 'email_confirmed')
+
   // For Google sign-up: persist the chosen role and department into Supabase user_metadata
-  // so that ensureDbUser() can read them when creating the DB record.
-  if (role) {
+  // so that ensureDbUser() can read them when creating the DB record. Never for an
+  // account that already exists — signing up again must not change its role.
+  if (role && !existedBefore) {
     await supabase.auth.updateUser({
       data: {
         requested_role: role,
@@ -68,5 +104,5 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.redirect(`${origin}/dashboard`)
+  return NextResponse.redirect(`${origin}/dashboard${notice ? `?notice=${notice}` : ''}`)
 }

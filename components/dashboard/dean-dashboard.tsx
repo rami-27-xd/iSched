@@ -6,8 +6,8 @@ import { toast } from "sonner"
 import {
   UserCheck,
   CalendarDays,
-  Users,
   AlertTriangle,
+  ClipboardCheck,
   ScrollText,
   CheckCircle2,
   ArrowRight,
@@ -26,9 +26,11 @@ import { formatRole } from "@/lib/roles"
  * scheduling KPIs + navigation shortcuts were noise for them. What a Dean
  * actually acts on, in the order they need it:
  *
- *   1. Accounts waiting for their approval — approvable right here.
- *   2. The state of their department's schedules this term.
- *   3. What has been happening in the department (the audit trail).
+ *   1. Schedules their Program Chairpersons submitted for approval — each opens
+ *      in Manage Schedules, where the Dean reviews it and Approves or Returns it.
+ *   2. Accounts waiting for their approval — approvable right here.
+ *   3. The state of their department's schedules this term.
+ *   4. What has been happening in the department (the audit trail).
  *
  * Everything links into the fuller page (User Management, Manage Schedules,
  * System Logs) for the detail.
@@ -142,6 +144,20 @@ export function DeanDashboard({ stats, statsLoading, recentSchedules, renderStat
   })
   const recentActivity = (activity?.items ?? []).slice(0, 6)
 
+  // Schedules submitted for the Dean's approval (server-scoped to their department).
+  const { data: pendingSchedules = [], isLoading: loadingPendingSchedules } = useQuery<any[]>({
+    queryKey: ["schedules", "pending-for-dean"],
+    queryFn: async () => {
+      const res = await fetch("/api/schedules?status=PENDING_APPROVAL")
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Failed to load schedules awaiting approval")
+      return json.data ?? []
+    },
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+  })
+
   const statusCounts = recentSchedules.reduce<Record<string, number>>((acc, s) => {
     acc[s.status] = (acc[s.status] ?? 0) + 1
     return acc
@@ -152,7 +168,13 @@ export function DeanDashboard({ stats, statsLoading, recentSchedules, renderStat
       {/* KPI row — what needs the Dean's attention */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         <KPICard
-          title="Awaiting Approval"
+          title="Schedules to Approve"
+          value={loadingPendingSchedules ? "—" : String(pendingSchedules.length)}
+          icon={ClipboardCheck}
+          variant={pendingSchedules.length > 0 ? "error" : "success"}
+        />
+        <KPICard
+          title="Accounts to Approve"
           value={loadingPending ? "—" : String(pending.length)}
           icon={UserCheck}
           variant={pending.length > 0 ? "error" : "success"}
@@ -164,12 +186,6 @@ export function DeanDashboard({ stats, statsLoading, recentSchedules, renderStat
           variant="default"
         />
         <KPICard
-          title="Faculty"
-          value={statsLoading ? "—" : String(stats.totalFaculty)}
-          icon={Users}
-          variant="accent"
-        />
-        <KPICard
           title="Unresolved Conflicts"
           value={statsLoading ? "—" : String(stats.conflictsDetected ?? 0)}
           icon={AlertTriangle}
@@ -178,7 +194,51 @@ export function DeanDashboard({ stats, statsLoading, recentSchedules, renderStat
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* 1. Accounts awaiting approval — the Dean's primary job */}
+        {/* 1. Schedules submitted for approval — shown while there are any */}
+        {pendingSchedules.length > 0 && (
+          <Card className="border-amber-300 lg:col-span-2">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
+                Schedules awaiting your approval
+              </CardTitle>
+              <Link href="/dashboard/schedules" className="inline-flex items-center gap-1 text-xs font-medium text-[#1B4332] hover:underline">
+                Manage Schedules <ArrowRight className="h-3 w-3" />
+              </Link>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {pendingSchedules.map((s: any) => (
+                  <div key={s.id} className="flex flex-col gap-2 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {semesterLabel(s.semester)} · {s.department?.name ?? "Department"}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span>{s._count?.entries ?? 0} classes</span>
+                        <span>submitted {timeAgo(s.updatedAt)}</span>
+                        {s._count?.conflicts > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                            <AlertTriangle className="h-3 w-3" />
+                            {s._count.conflicts} conflicts
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <Link
+                      href={`/dashboard/schedules?schedule=${s.id}`}
+                      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[#1B4332] px-3 text-sm font-medium text-white transition-colors hover:bg-[#2D6A4F]"
+                    >
+                      Review &amp; approve <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* 2. Accounts awaiting approval */}
         <Card className={pending.length > 0 ? "border-amber-300" : ""}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
@@ -229,7 +289,7 @@ export function DeanDashboard({ stats, statsLoading, recentSchedules, renderStat
           </CardContent>
         </Card>
 
-        {/* 2. Department schedules — status at a glance */}
+        {/* 3. Department schedules — status at a glance */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
@@ -257,7 +317,7 @@ export function DeanDashboard({ stats, statsLoading, recentSchedules, renderStat
                 {recentSchedules.map((s: any) => (
                   <Link
                     key={s.id}
-                    href="/dashboard/schedules"
+                    href={`/dashboard/schedules?schedule=${s.id}`}
                     className="flex items-center justify-between rounded-lg border border-border p-3 transition-colors hover:bg-muted/50"
                   >
                     <div>
@@ -286,7 +346,7 @@ export function DeanDashboard({ stats, statsLoading, recentSchedules, renderStat
           </CardContent>
         </Card>
 
-        {/* 3. Recent activity — the audit trail, newest first */}
+        {/* 4. Recent activity — the audit trail, newest first */}
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-2 text-base font-semibold">

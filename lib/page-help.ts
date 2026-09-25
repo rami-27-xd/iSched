@@ -21,9 +21,10 @@ const SCHEDULES_HELP: RoleHelpMap = {
   DEAN: {
     title: "Manage Schedules",
     tips: [
-      "Read-only for your role — you can open any department's schedule (including drafts) but can't add, edit or generate.",
-      "Use the status badge and the Unassigned/Conflicts counts to see how a schedule is progressing.",
-      "For the full activity trail, see System Logs instead.",
+      "A Draft shows which Program Chairpersons are done plotting and who is still working.",
+      "When they submit it (status Pending), open the schedule and click Approve — or Return for Revision with a note.",
+      "Approve is disabled while conflicts remain; return the schedule so the chairpersons can fix them.",
+      "Otherwise read-only: you can't add, edit or generate classes. For the full activity trail, see System Logs.",
     ],
   },
   SUPER_ADMIN: {
@@ -32,7 +33,7 @@ const SCHEDULES_HELP: RoleHelpMap = {
       "Plot your area's GEC/GEL first — Generate handles it, or use Add Entry by hand.",
       "Click Finalize my GEC/GEL once your area is done; Program Chairpersons stay locked out of their majors until all three department heads finalize.",
       "CIT's laboratory subjects are pre-plotted and locked — GEC can never land on those slots.",
-      "Approve or Reject each department's submitted schedule from Pending Approval.",
+      "Each department's schedule is submitted by its Program Chairpersons and approved by its Dean; you publish only your own CAS schedule.",
       "Export the ISO Schedule of Subjects and Teaching Load once a schedule is published.",
     ],
   },
@@ -41,7 +42,8 @@ const SCHEDULES_HELP: RoleHelpMap = {
     tips: [
       "Add your program's major subjects (lecture + lab) once all three department heads finalize GEC/GEL — a banner here shows who you're waiting on.",
       "CIT chairs can pre-plot laboratory subjects earlier, before GEC is finalized.",
-      "Submit sends your Draft to the Department Chairperson for approval; a rejection returns it with their note.",
+      "When your program's classes are complete, click Mark my subjects as done — editing a class later reopens it automatically.",
+      "Submit for Approval unlocks once every Program Chairperson in your department is done; it goes to your Dean, who approves it or returns it with a note.",
       "Only you may edit your own program's major subjects — other chairs' majors are view-only.",
     ],
   },
@@ -78,7 +80,7 @@ const PAGE_HELP: Record<string, PageHelpContent | RoleHelpMap> = {
     tips: [
       "A quick snapshot: key counts up top, recent schedules below.",
       "Chairs who also teach see their own published teaching schedule here.",
-      "Deans additionally see accounts awaiting approval and department-level status — act on either straight from the cards.",
+      "Deans additionally see schedules and accounts awaiting their approval — Review & approve opens the submitted schedule.",
     ],
   },
   "/dashboard/schedules": SCHEDULES_HELP,

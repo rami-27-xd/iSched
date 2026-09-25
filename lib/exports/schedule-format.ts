@@ -509,21 +509,23 @@ export function buildTeachingLoadHtml(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6.3  Room Occupancy — colour-coded room × time matrix, one page per building
+// 6.3  Room schedule — one printable weekly timetable per room
 // ─────────────────────────────────────────────────────────────────────────────
-// Mirrors the on-screen grid (components/rooms/room-occupancy-view.tsx) exactly:
-// same department colours (lib/department-colors.ts), same grid bounds — the
-// caller passes its own GRID_START_MIN/GRID_END_MIN/SLOT_MIN so the two can never
-// drift apart.
-
-import { departmentColor } from "@/lib/department-colors"
+// Follows the college's room-schedule form: COLLEGE / LOCATION / SCHOOL YEAR /
+// SEMESTER header, then a TIME/DAY × Monday–Saturday grid with hourly rows
+// (07:30–08:30 …). Each hour is two half-hour sub-rows so 1.5-hour sessions
+// still land on the right line; every class is one coloured block (colour per
+// subject) showing the subject code, then "section – room" and the faculty.
 
 export interface OccupancyExportBlock {
   day: string
   startTime: string
   endTime: string
   subjectCode: string
+  subjectType?: string
   section: string
+  sections?: string[]
+  faculty?: string
   merged: boolean
   departmentId: string
 }
@@ -543,129 +545,174 @@ export interface OccupancyExportDepartment {
   id: string
   abbreviation: string
   name: string
+  collegeName?: string
 }
 
-const OCC_DAY_FULL: Record<string, string> = {
-  MONDAY: "Monday", TUESDAY: "Tuesday", WEDNESDAY: "Wednesday",
-  THURSDAY: "Thursday", FRIDAY: "Friday", SATURDAY: "Saturday",
-}
+const ROOM_DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
+// Classes run 7:30 AM – 8:00 PM; the form's last row is 07:30–08:30 PM.
+const ROOM_GRID_START = 7 * 60 + 30
+const ROOM_GRID_END = 20 * 60 + 30
+const ROOM_SLOT = 30
+const ROOM_SLOTS = (ROOM_GRID_END - ROOM_GRID_START) / ROOM_SLOT
 
 function occupancyMinutes(t: string): number {
   const [h, m] = t.split(":").map(Number)
   return h * 60 + m
 }
 
-/** One day's room × time table for a single building. */
-function occupancyDayTable(
-  building: OccupancyExportBuilding,
-  day: string,
-  gridStartMin: number,
-  slotCount: number,
-  slotMin: number,
-  colorOf: (deptId: string) => { bg: string; fg: string; border: string }
-): string {
-  const hourLabels: string[] = []
-  for (let i = 0; i < slotCount; i += 2) {
-    const mins = gridStartMin + i * slotMin
-    const h = Math.floor(mins / 60)
-    const suffix = h >= 12 ? "PM" : "AM"
-    const h12 = h % 12 === 0 ? 12 : h % 12
-    hourLabels.push(`${h12} ${suffix}`)
+/** "07:30" style, 12-hour clock without AM/PM — as printed on the form. */
+function formClock(mins: number): string {
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")}`
+}
+
+/** Pastel fill per subject (golden-angle hues), dark text on top. */
+function roomSubjectColor(index: number): string {
+  const hue = Math.round((index * 137.508) % 360)
+  return `hsl(${hue} 55% 78%)`
+}
+
+/** "College of Industrial Technology" → "INDUSTRIAL TECHNOLOGY". */
+function collegeHeading(name: string): string {
+  return name.replace(/^college\s+of\s+(the\s+)?/i, "").toUpperCase()
+}
+
+type RoomCell = { span: number; blocks: OccupancyExportBlock[] } | "covered"
+
+function roomTimetable(room: OccupancyExportRoom): string {
+  const codes = [...new Set(room.occupancy.map((o) => o.subjectCode))].sort((a, b) => a.localeCompare(b))
+  const colorOf = new Map(codes.map((c, i) => [c, roomSubjectColor(i)]))
+
+  // Per day: slot index → the block that starts there (with its row span), or
+  // "covered" when a block above spans into it.
+  const grid = new Map<string, (RoomCell | undefined)[]>()
+  for (const day of ROOM_DAYS) {
+    const col: (RoomCell | undefined)[] = new Array(ROOM_SLOTS).fill(undefined)
+    const blocks = room.occupancy
+      .filter((o) => o.day === day)
+      .sort((a, b) => occupancyMinutes(a.startTime) - occupancyMinutes(b.startTime))
+    let lastStart = -1
+    for (const block of blocks) {
+      const start = Math.max(0, Math.floor((occupancyMinutes(block.startTime) - ROOM_GRID_START) / ROOM_SLOT))
+      const end = Math.min(ROOM_SLOTS, Math.ceil((occupancyMinutes(block.endTime) - ROOM_GRID_START) / ROOM_SLOT))
+      if (start >= ROOM_SLOTS || end <= start) continue
+      if (col[start] !== undefined && lastStart >= 0) {
+        // Overlaps the block above (a double-booking) — list it in the same cell.
+        const host = col[lastStart] as { span: number; blocks: OccupancyExportBlock[] }
+        host.blocks.push(block)
+        const newEnd = Math.max(lastStart + host.span, end)
+        for (let i = lastStart + host.span; i < newEnd; i++) col[i] = "covered"
+        host.span = newEnd - lastStart
+        continue
+      }
+      col[start] = { span: end - start, blocks: [block] }
+      for (let i = start + 1; i < end; i++) col[i] = "covered"
+      lastStart = start
+    }
+    grid.set(day, col)
   }
 
-  const rows = building.rooms
-    .map((room) => {
-      const blocks = [...room.occupancy.filter((o) => o.day === day)].sort(
-        (a, b) => occupancyMinutes(a.startTime) - occupancyMinutes(b.startTime)
-      )
-      const cells: string[] = []
-      let cursor = 0
-      for (const block of blocks) {
-        const startCol = Math.max(0, Math.round((occupancyMinutes(block.startTime) - gridStartMin) / slotMin))
-        const endCol = Math.min(slotCount, Math.round((occupancyMinutes(block.endTime) - gridStartMin) / slotMin))
-        if (startCol >= slotCount || endCol <= cursor) continue
-        if (startCol > cursor) cells.push(`<td colspan="${startCol - cursor}"></td>`)
-        const c = colorOf(block.departmentId)
-        const label = `${escapeHtml(block.subjectCode)} — ${escapeHtml(block.section)}${block.merged ? " (merged)" : ""}`
-        cells.push(
-          `<td colspan="${Math.max(1, endCol - startCol)}" style="background:${c.bg};color:${c.fg};border-color:${c.border};font-size:8px;padding:2px;text-align:center;line-height:1.15">${label}</td>`
-        )
-        cursor = endCol
+  const blockHtml = (b: OccupancyExportBlock) => {
+    const sections = b.sections?.length ? b.sections.join(" + ") : b.section
+    const kind = b.subjectType === "LABORATORY" ? " Lab" : ""
+    return `<div class="rs-code">${escapeHtml(b.subjectCode)}${kind}</div>
+      <div class="rs-sub">${escapeHtml(sections)} – ${escapeHtml(room.code)}</div>
+      ${b.faculty ? `<div class="rs-sub">${escapeHtml(b.faculty)}</div>` : ""}`
+  }
+
+  const rows: string[] = []
+  for (let s = 0; s < ROOM_SLOTS; s++) {
+    const cells: string[] = []
+    if (s % 2 === 0) {
+      const from = ROOM_GRID_START + s * ROOM_SLOT
+      cells.push(`<td class="rs-time" rowspan="2">${formClock(from)}- ${formClock(from + 60)}</td>`)
+    }
+    for (const day of ROOM_DAYS) {
+      const cell = grid.get(day)![s]
+      if (cell === "covered") continue
+      if (!cell) {
+        cells.push(`<td class="rs-slot${s % 2 === 0 ? " rs-half" : ""}"></td>`)
+        continue
       }
-      if (cursor < slotCount) cells.push(`<td colspan="${slotCount - cursor}"></td>`)
-      return `<tr><td class="occ-room">${escapeHtml(room.code)}</td>${cells.join("")}</tr>`
-    })
-    .join("")
+      const bg = colorOf.get(cell.blocks[0].subjectCode) ?? "#eee"
+      cells.push(
+        `<td class="rs-block" rowspan="${cell.span}" style="background:${bg}">${cell.blocks.map(blockHtml).join(`<div class="rs-sep"></div>`)}</td>`
+      )
+    }
+    rows.push(`<tr>${cells.join("")}</tr>`)
+  }
 
   return `
-    <div style="margin-top:10px">
-      <div style="font-weight:bold;font-size:11px;margin-bottom:3px">${OCC_DAY_FULL[day] ?? day}</div>
-      <table class="occ-grid">
-        <thead>
-          <tr>
-            <th class="occ-room">Room</th>
-            ${hourLabels.map((l) => `<th colspan="2">${l}</th>`).join("")}
-          </tr>
-        </thead>
-        <tbody>${rows || `<tr><td class="occ-room"></td><td colspan="${slotCount}" style="text-align:center;color:#888">No rooms in this building</td></tr>`}</tbody>
-      </table>
-    </div>`
+    <table class="rs-grid">
+      <colgroup><col style="width:16%" />${ROOM_DAYS.map(() => `<col style="width:14%" />`).join("")}</colgroup>
+      <thead><tr><th>TIME/ DAY</th>${ROOM_DAYS.map((d) => `<th>${d}</th>`).join("")}</tr></thead>
+      <tbody>
+        <tr class="rs-blank"><td></td>${ROOM_DAYS.map(() => "<td></td>").join("")}</tr>
+        ${rows.join("")}
+      </tbody>
+    </table>`
 }
 
 /**
- * Colour-coded room × time matrix, one printable page per building, all six days.
- * Visually mirrors the on-screen Room Occupancy grid by construction — same
- * colours, same bounds, same data — so the export can never drift from the view.
+ * Every room's weekly timetable, one printable page per room (grouped by
+ * building). The COLLEGE line names the college(s) whose classes use the room.
  */
 export function buildRoomOccupancyHtml(opts: {
   buildings: OccupancyExportBuilding[]
   departments: OccupancyExportDepartment[]
   semesterLabel: string
   academicYear: string
-  logoDataUrl: string
-  gridStartMin: number
-  gridEndMin: number
-  slotMin: number
 }): string {
-  const abbrById = new Map(opts.departments.map((d) => [d.id, d.abbreviation]))
-  const colorOf = (deptId: string) => departmentColor(abbrById.get(deptId))
-  const slotCount = Math.round((opts.gridEndMin - opts.gridStartMin) / opts.slotMin)
-
-  const legend = opts.departments
-    .map((d) => {
-      const c = departmentColor(d.abbreviation)
-      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px"><span style="display:inline-block;width:9px;height:9px;background:${c.bg};border:1px solid ${c.border}"></span>${escapeHtml(d.abbreviation)}</span>`
-    })
-    .join("")
-
-  const pages = (opts.buildings.length ? opts.buildings : [])
-    .map((b) => {
-      const days = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
-      const tables = days.map((d) => occupancyDayTable(b, d, opts.gridStartMin, slotCount, opts.slotMin, colorOf)).join("")
+  const collegeByDept = new Map(opts.departments.map((d) => [d.id, d.collegeName ?? ""]))
+  const pages = opts.buildings
+    .flatMap((b) => b.rooms.map((room) => ({ b, room })))
+    .map(({ b, room }) => {
+      const colleges = [...new Set(room.occupancy.map((o) => collegeByDept.get(o.departmentId)).filter(Boolean) as string[])]
+        .map(collegeHeading)
       return `
-        <div class="page occ-page">
-          <div class="letterhead">
-            ${opts.logoDataUrl ? `<img src="${opts.logoDataUrl}" alt="SLSU" />` : ""}
-            <div class="lh-line2" style="margin-top:8px">ROOM OCCUPANCY — ${escapeHtml(b.name.toUpperCase())}</div>
-            <div class="lh-line1">${escapeHtml(opts.semesterLabel)}, AY ${escapeHtml(opts.academicYear)} · Building ${escapeHtml(b.code)}</div>
-          </div>
-          <div style="margin:8px 0;font-size:10px">${legend}</div>
-          ${tables}
+        <div class="page rs-page">
+          <table class="rs-head">
+            <tr>
+              <td>COLLEGE: ${escapeHtml(colleges.join(" / ") || "—")}</td>
+              <td>SCHOOL YEAR: ${escapeHtml(opts.academicYear)}</td>
+            </tr>
+            <tr>
+              <td>LOCATION: LUCBAN, QUEZON</td>
+              <td>SEMESTER: ${escapeHtml(opts.semesterLabel)}</td>
+            </tr>
+            <tr>
+              <td>ROOM: ${escapeHtml(room.code)}${room.name && room.name !== room.code ? ` – ${escapeHtml(room.name)}` : ""}</td>
+              <td>BUILDING: ${escapeHtml(b.name)}</td>
+            </tr>
+          </table>
+          ${roomTimetable(room)}
         </div>`
     })
     .join("")
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8" />
-    <title>Room Occupancy — ${escapeHtml(opts.semesterLabel)} ${escapeHtml(opts.academicYear)}</title>
+    <title>Room Schedules — ${escapeHtml(opts.semesterLabel)} ${escapeHtml(opts.academicYear)}</title>
     <style>${PRINT_BASE_CSS}
-      .occ-page { padding: 14px 16px 24px; }
-      .occ-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-      .occ-grid th, .occ-grid td { border: 1px solid #999; }
-      .occ-grid th { background: #f0f0f0; font-size: 8px; font-weight: normal; padding: 2px 0; }
-      .occ-room { width: 70px; font-size: 9px; font-weight: bold; padding: 2px 4px; background: #fafafa; }
-      @media print { @page { size: A4 landscape; margin: 8mm; } }
+      .rs-page { padding: 22px 28px 24px; font-family: Arial, Helvetica, sans-serif; }
+      .rs-head { width: 100%; margin-bottom: 10px; }
+      .rs-head td { font-size: 13px; font-weight: bold; padding: 1px 0; width: 50%; }
+      .rs-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      .rs-grid th, .rs-grid td { border: 1px solid #000; }
+      .rs-grid th { font-size: 12px; font-weight: bold; padding: 4px 2px; text-align: center; }
+      .rs-grid tr.rs-blank td { height: 18px; }
+      .rs-grid td.rs-slot { height: 12px; }
+      .rs-grid td.rs-slot.rs-half { border-bottom-style: hidden; }
+      .rs-time { font-size: 12px; padding: 0 6px; white-space: nowrap; }
+      .rs-block { vertical-align: top; padding: 2px 4px; line-height: 1.15; }
+      .rs-code { font-size: 11px; font-weight: bold; }
+      .rs-sub { font-size: 8px; }
+      .rs-sep { border-top: 1px dashed #333; margin: 2px 0; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      @media print { @page { size: A4 portrait; margin: 8mm; } }
     </style></head>
-    <body>${pages || '<div class="page"><p>No buildings to export.</p></div>'}</body></html>`
+    <body>${pages || '<div class="page"><p>No rooms to export.</p></div>'}</body></html>`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

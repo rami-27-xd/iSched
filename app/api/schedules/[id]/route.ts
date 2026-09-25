@@ -281,6 +281,16 @@ export async function PATCH(
       return NextResponse.json(apiResponse(updated))
     }
 
+    // Raw status changes: only on the Department Chairperson's own (CAS) schedule.
+    // Every other department's schedule changes status through ./workflow —
+    // its Program Chairpersons submit it and its Dean approves or returns it.
+    if (body.status && target.departmentId !== getUserDepartmentId(dbUser)) {
+      return NextResponse.json(
+        apiError("This schedule is submitted by its Program Chairpersons and approved by its Dean"),
+        { status: 403 }
+      )
+    }
+
     // Handle status update
     const schedule = await db.schedule.update({
       where: { id },

@@ -25,7 +25,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { RoleGuard } from "@/components/shared/role-guard"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { describeRequiredRoomTypes } from "@/lib/room-type-rules"
-import { isGecCode, resolveMaxMinutesPerDay, formatMinutes, SESSION_CAP_OPTIONS, DEFAULT_GEC_MAX_MINUTES_PER_DAY } from "@/lib/session-rules"
+import { isGecCode, formatMinutes, SESSION_CAP_OPTIONS, DEFAULT_GEC_MAX_MINUTES_PER_DAY } from "@/lib/session-rules"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 import { CardListSkeleton } from "@/components/shared/loading-skeletons"
 
@@ -55,7 +55,16 @@ function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester
   const semLabel = (sem: string) => sem === "FIRST" ? "1st" : sem === "SECOND" ? "2nd" : "—"
   return (
     <div className="rounded-lg border overflow-x-auto">
-      <table className="w-full text-sm min-w-[640px]">
+      {/* Fixed layout + explicit column widths so every year's table lines up
+          with the next (auto layout sized each table to its own titles). */}
+      <table className="w-full text-sm min-w-[640px] table-fixed">
+        <colgroup>
+          <col className="w-[18%]" />
+          <col />
+          <col className="w-[16%]" />
+          <col className="w-[10%]" />
+          <col className="w-16" />
+        </colgroup>
         <thead>
           <tr className="bg-muted/50">
             <th className="px-3 py-1.5 text-left text-xs font-medium text-muted-foreground">Code</th>
@@ -80,17 +89,7 @@ function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester
                   {s.type}
                 </span>
               </td>
-              <td className="px-3 py-1.5 text-xs">
-                {s.units}
-                {resolveMaxMinutesPerDay(s) !== null && (
-                  <span
-                    className="ml-1.5 inline-flex rounded-full bg-sky-50 px-1.5 py-0 text-[9px] font-medium text-sky-700 border border-sky-200"
-                    title="Longest session this subject may hold on one day"
-                  >
-                    max {formatMinutes(resolveMaxMinutesPerDay(s)!)}/day
-                  </span>
-                )}
-              </td>
+              <td className="px-3 py-1.5 text-xs">{s.units}</td>
               <td className="px-3 py-1.5">
                 <div className="flex items-center gap-1">
                   <button onClick={() => onEdit(s)} className="p-1 rounded hover:bg-muted">
@@ -339,17 +338,15 @@ export default function CoursesPage() {
   }
 
   async function handleSectionSubmit() {
-    const { name, yearLevelId, capacity } = sectionForm
+    // Capacity is no longer asked for — new sections take the API default and
+    // an edit leaves the stored value untouched.
+    const { name, yearLevelId } = sectionForm
     if (!name || !yearLevelId) return toast.error("Fill in all required fields")
-    const capacityValue = Number(capacity)
-    if (String(capacity).trim() === "" || !Number.isFinite(capacityValue) || capacityValue <= 0) {
-      return toast.error("Capacity must be a number greater than 0")
-    }
     try {
       if (editSectionTarget) {
-        await updateSection.mutateAsync({ id: editSectionTarget.id, ...sectionForm, capacity: Number(sectionForm.capacity) })
+        await updateSection.mutateAsync({ id: editSectionTarget.id, name, yearLevelId })
       } else {
-        await createSection.mutateAsync({ ...sectionForm, capacity: Number(sectionForm.capacity) })
+        await createSection.mutateAsync({ name, yearLevelId })
       }
       setSectionOpen(false)
     } catch (err: any) {
@@ -693,7 +690,7 @@ export default function CoursesPage() {
             <div className="grid gap-2">
               <Label>Type</Label>
               <Select value={subjectForm.type} onValueChange={(v) => v && setSubjectForm(f => ({ ...f, type: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Select type" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="LECTURE">Lecture</SelectItem>
                   <SelectItem value="LABORATORY">Laboratory</SelectItem>
@@ -706,7 +703,7 @@ export default function CoursesPage() {
                 value={subjectForm.roomType || "AUTO"}
                 onValueChange={(v) => setSubjectForm(f => ({ ...f, roomType: !v || v === "AUTO" ? "" : v }))}
               >
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="AUTO">Automatic (by subject type)</SelectItem>
                   <SelectItem value="LECTURE_ROOM">Lecture Room</SelectItem>
@@ -731,7 +728,7 @@ export default function CoursesPage() {
                   value={subjectForm.maxMinutesPerDay || String(DEFAULT_GEC_MAX_MINUTES_PER_DAY)}
                   onValueChange={(v) => setSubjectForm(f => ({ ...f, maxMinutesPerDay: v ?? "" }))}
                 >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {SESSION_CAP_OPTIONS.map((o) => (
                       <SelectItem key={o.minutes} value={String(o.minutes)}>{o.label}</SelectItem>
@@ -749,7 +746,7 @@ export default function CoursesPage() {
               <div className="grid gap-2">
                 <Label>Semester</Label>
                 <Select value={subjectForm.semester} onValueChange={(v) => v && setSubjectForm(f => ({ ...f, semester: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="FIRST">1st Semester</SelectItem>
                     <SelectItem value="SECOND">2nd Semester</SelectItem>
@@ -759,7 +756,7 @@ export default function CoursesPage() {
               <div className="grid gap-2">
                 <Label>Year Level</Label>
                 <Select value={subjectForm.year} onValueChange={(v) => v && setSubjectForm(f => ({ ...f, year: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="1">1st Year</SelectItem>
                     <SelectItem value="2">2nd Year</SelectItem>
@@ -790,17 +787,6 @@ export default function CoursesPage() {
             <div className="grid gap-2">
               <Label>Section Name</Label>
               <Input placeholder="e.g. BSBio 1-A" value={sectionForm.name} onChange={(e) => setSectionForm(f => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Capacity</Label>
-              <Input
-                type="number"
-                min={1}
-                step={1}
-                placeholder="e.g. 40"
-                value={sectionForm.capacity}
-                onChange={(e) => setSectionForm(f => ({ ...f, capacity: e.target.value }))}
-              />
             </div>
             {editSectionTarget && (
               <Button variant="destructive" size="sm" onClick={() => setDeleteSectionTarget(editSectionTarget)}>

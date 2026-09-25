@@ -14,7 +14,7 @@ import { useUserRole } from "@/components/layout/dashboard-shell"
 import { DAY_LABELS } from "@/lib/constants"
 import { departmentColor, type DeptColor } from "@/lib/department-colors"
 import { DepartmentLegend } from "@/components/shared/department-legend"
-import { buildRoomOccupancyHtml, fetchLogoDataUrl, openPrintWindow } from "@/lib/exports/schedule-format"
+import { buildRoomOccupancyHtml, openPrintWindow } from "@/lib/exports/schedule-format"
 import { toast } from "sonner"
 
 // ─── Types (shape of GET /api/rooms/occupancy) ───────────────────────────────
@@ -60,7 +60,7 @@ export interface BuildingOccupancy {
 interface OccupancyPayload {
   semester: { id: string; type: string; academicYear: string | null } | null
   buildings: BuildingOccupancy[]
-  departments: { id: string; abbreviation: string; name: string; college: string }[]
+  departments: { id: string; abbreviation: string; name: string; college: string; collegeName?: string }[]
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -181,19 +181,14 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
     }
     setExporting(true)
     try {
-      const logo = await fetchLogoDataUrl()
       const semType = data?.semester?.type
       const semesterLabelText =
-        semType === "FIRST" ? "1st Semester" : semType === "SECOND" ? "2nd Semester" : semType === "SUMMER" ? "Summer" : ""
+        semType === "FIRST" ? "1st SEMESTER" : semType === "SECOND" ? "2nd SEMESTER" : semType === "SUMMER" ? "Summer" : ""
       const html = buildRoomOccupancyHtml({
         buildings,
         departments: deptList,
         semesterLabel: semesterLabelText,
         academicYear: data?.semester?.academicYear ?? "",
-        logoDataUrl: logo,
-        gridStartMin: GRID_START_MIN,
-        gridEndMin: GRID_END_MIN,
-        slotMin: SLOT_MIN,
       })
       openPrintWindow(html)
     } finally {
@@ -229,7 +224,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
               role="tab"
               aria-selected={view === "grid"}
               onClick={() => setView("grid")}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${view === "grid" ? "bg-[#1B4332] text-white" : "text-muted-foreground hover:bg-muted"}`}
+              className={`inline-flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${view === "grid" ? "bg-[#1B4332] text-white" : "text-muted-foreground hover:bg-muted"}`}
             >
               <LayoutGrid className="h-3.5 w-3.5" /> Grid
             </button>
@@ -238,7 +233,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
               role="tab"
               aria-selected={view === "list"}
               onClick={() => setView("list")}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${view === "list" ? "bg-[#1B4332] text-white" : "text-muted-foreground hover:bg-muted"}`}
+              className={`inline-flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-xs font-medium ${view === "list" ? "bg-[#1B4332] text-white" : "text-muted-foreground hover:bg-muted"}`}
             >
               <Rows3 className="h-3.5 w-3.5" /> List
             </button>
@@ -366,8 +361,8 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
                     .sort((a, c) => a.startTime.localeCompare(c.startTime))
                   return (
                     <div key={room.id} className="rounded-lg border">
-                      <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-2">
-                        <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <DoorOpen className="h-4 w-4 text-muted-foreground" />
                           <span className="text-sm font-medium">{room.code}</span>
                           <span className="text-xs text-muted-foreground">{room.name}</span>
@@ -380,15 +375,15 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
                         <p className="px-3 py-2 text-xs text-muted-foreground">Free on {DAY_FULL[day]}.</p>
                       ) : (
                         <div className="overflow-x-auto">
-                          <Table>
+                          <Table className="min-w-[820px] table-fixed">
                             <TableHeader>
                               <TableRow>
-                                <TableHead className="w-28">Time</TableHead>
+                                <TableHead className="w-32 px-3">Time</TableHead>
                                 <TableHead>Subject</TableHead>
-                                <TableHead>Section</TableHead>
-                                <TableHead>Faculty</TableHead>
-                                <TableHead>Department</TableHead>
-                                <TableHead>Status</TableHead>
+                                <TableHead className="w-44">Section</TableHead>
+                                <TableHead className="w-48">Faculty</TableHead>
+                                <TableHead className="w-32">Department</TableHead>
+                                <TableHead className="w-36">Status</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -396,19 +391,19 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
                                 const c = colorOf(o.departmentId)
                                 return (
                                   <TableRow key={o.id}>
-                                    <TableCell className="whitespace-nowrap text-xs">
+                                    <TableCell className="whitespace-nowrap px-3 text-xs">
                                       <span className="inline-flex items-center gap-1 text-muted-foreground"><Clock className="h-3 w-3" />{o.startTime}–{o.endTime}</span>
                                     </TableCell>
                                     <TableCell className="text-sm">
                                       <span className="font-medium">{o.subjectCode}</span>
                                       {o.set && <Badge variant="outline" className="ml-1 text-[10px]">Set {o.set}</Badge>}
-                                      <span className="block text-xs text-muted-foreground">{o.subjectTitle}</span>
+                                      <span className="block truncate text-xs text-muted-foreground" title={o.subjectTitle}>{o.subjectTitle}</span>
                                     </TableCell>
-                                    <TableCell className="text-sm">
+                                    <TableCell className="whitespace-normal break-words text-sm">
                                       {o.section}
                                       {o.merged && <Badge variant="outline" className="ml-1 border-sky-200 bg-sky-50 text-[10px] text-sky-800">Merged</Badge>}
                                     </TableCell>
-                                    <TableCell className="text-sm">{o.faculty}</TableCell>
+                                    <TableCell className="whitespace-normal break-words text-sm">{o.faculty}</TableCell>
                                     <TableCell className="text-sm">
                                       <span className="inline-flex items-center gap-1.5">
                                         <span className="inline-block h-2.5 w-2.5 rounded-sm border" style={{ background: c.bg, borderColor: c.border }} />

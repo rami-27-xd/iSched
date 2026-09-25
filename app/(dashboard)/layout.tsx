@@ -2,6 +2,7 @@ import { cookies } from "next/headers"
 import { ROLE_LABELS } from "@/lib/roles"
 import { redirect } from "next/navigation"
 import { DashboardShell } from "@/components/layout/dashboard-shell"
+import { AuthNotice } from "@/components/auth/auth-notice"
 import { createClient } from "@/lib/supabase/server"
 import { ensureDbUser, getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { ShieldAlert, WifiOff, DatabaseZap } from "lucide-react"
@@ -74,18 +75,26 @@ export default async function DashboardLayout({
 
   // Block unapproved users with a pending approval screen
   if (!isApproved) {
-    return <PendingApprovalScreen userName={userName} userEmail={userEmail} userRole={userRole} />
+    return (
+      <>
+        <PendingApprovalScreen userName={userName} userEmail={userEmail} userRole={userRole} />
+        <AuthNotice email={userEmail} isApproved={false} />
+      </>
+    )
   }
 
   return (
-    <DashboardShell
-      userRole={userRole}
-      userName={userName}
-      userEmail={userEmail}
-      defaultCollegeId={defaultCollegeId}
-    >
-      {children}
-    </DashboardShell>
+    <>
+      <AuthNotice email={userEmail} isApproved />
+      <DashboardShell
+        userRole={userRole}
+        userName={userName}
+        userEmail={userEmail}
+        defaultCollegeId={defaultCollegeId}
+      >
+        {children}
+      </DashboardShell>
+    </>
   )
 }
 

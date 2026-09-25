@@ -245,7 +245,7 @@ function SubjectMatrix({ subjects, columns, academicYear }: { subjects: SummaryS
     <Card>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-sm">
+          <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
             <thead>
               <tr className="bg-muted/50 text-left">
                 <th className="sticky left-0 z-10 w-64 bg-muted/50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Subject</th>
@@ -262,7 +262,7 @@ function SubjectMatrix({ subjects, columns, academicYear }: { subjects: SummaryS
                       <span className="font-mono text-xs font-semibold">{s.code}</span>
                       <SubjectKindBadge s={s} />
                     </div>
-                    <p className="mt-0.5 max-w-[240px] text-xs text-muted-foreground" title={s.title}>{s.title}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground" title={s.title}>{s.title}</p>
                     {s.units != null && <p className="text-[10px] text-muted-foreground">{s.units} unit{s.units === 1 ? "" : "s"} · {s.type === "LABORATORY" ? "Laboratory" : "Lecture"}</p>}
                   </td>
                   {columns.map((c) => {
@@ -354,7 +354,7 @@ function ProgramPivot({
     <Card>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-sm">
+          <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
             <thead>
               <tr className="bg-muted/50 text-left">
                 <th className="sticky left-0 z-10 w-56 bg-muted/50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Program</th>

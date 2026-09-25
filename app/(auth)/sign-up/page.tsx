@@ -165,6 +165,24 @@ function SignUpForm() {
 
     setLoading(true)
 
+    // Already have an account (password or Google)? Say so before Supabase is
+    // asked — its own duplicate signal misses Google-created accounts.
+    try {
+      const res = await fetch('/api/auth/email-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      const json = await res.json().catch(() => null)
+      if (res.ok && json?.data?.exists) {
+        setExistingAccountEmail(email)
+        setLoading(false)
+        return
+      }
+    } catch {
+      // Network hiccup — fall through; Supabase's own duplicate check still runs.
+    }
+
     let supabase
     try {
       supabase = createClient()

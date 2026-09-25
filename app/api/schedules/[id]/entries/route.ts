@@ -3,7 +3,7 @@ import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { validateEntry, validateEntryCapacity, stripConflictMarker, isHardConflict, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
-import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale, reopenProgramIfStale } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 import { isGeUnitRole, isNstpCode } from "@/lib/roles"
@@ -253,6 +253,7 @@ export async function POST(
       await syncFacultySpecializations(body.facultyId).catch(() => {})
     }
     await reopenGecIfStale(id, entry.subject?.code, dbUser)
+    await reopenProgramIfStale(id, dbUser)
 
     await recordAudit({
       actor: dbUser as any,

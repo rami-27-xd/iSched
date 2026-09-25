@@ -30,9 +30,9 @@ The panelist required a strict workflow hierarchy. The role names in the DB do *
 
 | DB Role | Real-world title | Capabilities |
 |---|---|---|
-| `DEAN` | **Dean** (one per department) | Approves the accounts of **their own department** (User Management is Dean-only); reads **System Logs** (`/dashboard/logs`: department activity from `AuditLog`, every department schedule, every scheduled class, Subject Summary, room occupancy in their buildings). **Read-only** on every other page — no write route accepts DEAN. |
-| `SUPER_ADMIN` | **Department Chairperson (CAS)** | GEC/GEL + CAS major subjects; approves / rejects submitted schedules; sees all colleges. System Logs (all five tabs) across every department. No longer approves accounts and no longer touches PATHFit/NSTP. |
-| `ADMIN` | **Program Chairperson** | Their own program's major subjects; submits schedule for review. System Logs (all five tabs) for their own department. |
+| `DEAN` | **Dean** (one per department) | Approves the accounts of **their own department** (User Management is Dean-only) and **approves or returns (with a note) their department's schedule** once its Program Chairpersons submit it (2026-09-26); reads **System Logs** (`/dashboard/logs`: department activity from `AuditLog`, every department schedule, every scheduled class, Subject Summary, room occupancy in their buildings). **Read-only** on every other page — the only write routes that accept DEAN are `PATCH/DELETE /api/users/[id]` and `approve`/`reject` on `/api/schedules/[id]/workflow`. |
+| `SUPER_ADMIN` | **Department Chairperson (CAS)** | GEC/GEL + CAS major subjects; sees all colleges. Publishes only their **own CAS schedule** (no Program Chairpersons there); every other department's schedule is approved by its Dean (2026-09-26). May still Reset / Unpublish a published schedule. System Logs (all five tabs) across every department. No longer approves accounts or schedules and no longer touches PATHFit/NSTP. |
+| `ADMIN` | **Program Chairperson** | Their own program's major subjects; **marks them done**, then submits the department's schedule for the Dean's approval once **every** Program Chairperson of the department is done. System Logs (all five tabs) for their own department. |
 | `PATHFIT` | **PATHFit Director** (exactly one account) | Generates (`lib/services/pathfit-generation.ts`, TBA/GYM) and adds/edits/deletes PATHFit entries in every college's schedule. Nothing else. |
 | `NSTP` | **NSTP Director** (exactly one account) | Adds/edits/deletes NSTP entries in every college's schedule (never auto-generated), including **merged classes** for two or more sections (§1d). Nothing else. |
 | `FACULTY` | Faculty member | **No login.** A data record only (name on schedules, availability, specialization). Receives their schedule via the printed Teaching Load export from the DC/PC. |
@@ -54,6 +54,12 @@ form):** the **first Dean of a department is auto-approved**, a second Dean for 
 `PATCH /api/users/[id]` refuses to approve / re-role into a duplicate); DC and PC sign-ups wait for **their department's
 Dean** (`notifyDepartmentDeans`). The very first SUPER_ADMIN in an empty system is still bootstrapped automatically.
 PATHFIT / NSTP users are placed in the CAS department (their subjects live there).
+**Duplicate accounts / sign-in notices (2026-09-23):** the sign-up form asks the public `POST /api/auth/email-status`
+(User table, faculty `manual-` stubs ignored) before `signUp` and shows the "Account already exists" popup. `/auth/callback`
+checks whether the account existed before: Continue with Google on the sign-up page for an existing account keeps its
+role (no metadata update) and lands on `/dashboard?notice=existing_account`; a first Google sign-in → `google_ready`
+("You're all set!"), a password confirmation link → `email_confirmed`. `components/auth/auth-notice.tsx` (rendered by
+the dashboard layout, also over the pending-approval screen) shows the popup with a Continue button.
 
 ### Organizational Structure at SLSU-Lucban
 
@@ -71,7 +77,9 @@ and Program Chair runs never touch PATHFit or NSTP (`EXCLUDED_AUTO`). GYM/TBA ar
 room/faculty double-booking checks everywhere (engine, `entry-validation.ts`, `term-conflicts.ts`, cross-schedule
 checks). Placeholder helpers: `lib/sentinels.ts` (client-safe constants) and `lib/services/sentinels.ts` (upserts;
 also `prisma/seed-sentinels.ts`). Only the matching Director may add/edit/delete PATHFit or NSTP entries
-(`lib/services/subject-permissions.ts`).
+(`lib/services/subject-permissions.ts`). **TBA is hidden from the UI (2026-09-23)**: `GET /api/faculty` returns the
+TBA faculty to the PATHFit Director only (for the PATHFit default); `GET /api/rooms` and `GET /api/buildings` never
+return the TBA room/building (GYM still is). The rows still exist for PATHFit generation.
 
 Each CAS Department Head's `User.departmentId` must point to the `CAS` parent department. Use `getUserDepartmentId()` from `lib/auth.ts` to read it (checks `User.departmentId` first).
 
@@ -85,14 +93,40 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
 1. **CIT Program Chair (ADMIN)**: pre-plots **laboratory subjects only** (labs-only is hard-blocked server-side until GEC exists — `POST /api/schedules/[id]/entries`). CIT-only stage.
 2. **Dept Chair (SUPER_ADMIN)**: generates GEC/GEL for all sections — **no longer gated on Program Chair submission**. Already-plotted CIT labs are treated as locked slots (hard constraint, no override), so GEC can never be placed on a CIT lab's slot.
 3. **Dept Chair**: finalizes/publishes the GEC/GEL schedule. The presence of GEC entries is the signal that unlocks Program Chairs to add their full major load.
-4. **All Program Chairs (ADMIN)**: add their full major subject load (lecture + lab) on `DRAFT`, then `submit` for the Dept Chair's final approval. A CIT chair's regeneration preserves the pre-plotted labs (they are excluded from the regenerated subject scope).
+4. **All Program Chairs (ADMIN)**: add their full major subject load (lecture + lab) on `DRAFT`, click **Mark my subjects as done**, and — once every Program Chairperson of the department is done — **Submit for Approval** to their **Dean** (see "Program Chairperson done → Dean approval" below). A CIT chair's regeneration preserves the pre-plotted labs (they are excluded from the regenerated subject scope).
    **Enforced (`lib/services/workflow-gates.ts` → `isGecFinalized`, updated 2026-09-17)**: a Program Chair is blocked
    from Add Entry, Generate and Submit (409 + `GEC_FIRST_MESSAGE`) until **all three CAS department heads** have
    explicitly finalized GEC/GEL for THIS schedule — not merely "some GEC entry exists" — except a CIT chair, who may
    add/generate LABORATORY subjects only in the meantime (step 1). The schedules page mirrors this with a
    "Waiting for GEC" banner listing per-department-head status (`waitingForGec`, `gecReady`/`gecClusters` from
    `GET /api/schedules/[id]/gec-finalize`).
-5. **Dept Chair**: `approve` → `PUBLISHED` → visible to faculty.
+5. **Dean** (of that department): `approve` → `PUBLISHED` (blocked while the term-wide conflict check finds a
+   double-booking), or `reject` with a note → back to `DRAFT`. The Dept Chair publishes only the CAS schedule itself.
+
+### Program Chairperson done → Dean approval (spec, 2026-09-26)
+- **Model**: `ProgramFinalization` — one row per (scheduleId, programId): that program's Program Chairperson declared
+  their subjects DONE for this schedule (who, when). Like `GecFinalization` it is a deliberate declaration, and it
+  **auto-reopens**: `reopenProgramIfStale` (`workflow-gates.ts`) deletes the actor's row whenever a Program Chairperson
+  adds / edits / deletes a class (`entries` POST, `entries/[entryId]` PATCH/DELETE) or regenerates (`generate`).
+- **"Everyone"** = every program of the schedule's department that has an approved, active Program Chairperson
+  (`getProgramFinalizationStatus`); a program nobody chairs is not counted. `allFinalized` needs ≥ 1 program.
+- **Route** `/api/schedules/[id]/program-finalize`: `GET` per-program status (department's Dean / PCs, university-wide
+  roles); `POST { action: "finalize" | "unfinalize" }` — ADMIN only, own program, own department, `DRAFT` only;
+  finalize also needs GEC/GEL finalized. The last one in notifies every PC ("Everyone Is Done — Ready to Submit").
+- **Submit gate** (`workflow` route, `submit`): ADMIN of the schedule's own department, GEC finalized, **all programs
+  done**, and the department must have an approved Dean. Notifies the Dean(s) and the other PCs.
+- **Approve / reject**: DEAN of the schedule's department only, from `PENDING_APPROVAL`. Approve re-runs
+  `detectTermConflicts` (same as `/publish`): ERROR conflicts are written to `ConflictLog` and the call fails (422) —
+  the Dean returns the schedule instead; on success the log is replaced by the warnings. Reject requires a note.
+- `/publish` (and the raw `status` PATCH on `/api/schedules/[id]`) refuse a SUPER_ADMIN on any schedule but their own
+  department's, so nothing skips the Dean.
+- **UI**: `components/schedule/workflow-actions.tsx` — ADMIN on DRAFT: "Program Chairpersons — done plotting" card
+  (per-program ✓ / still plotting, `n of m done`), **Mark my subjects as done** / **Reopen**, **Submit for Approval**
+  (disabled until everyone is done). DEAN on DRAFT: the same list read-only; on PENDING: **Approve** / **Return for
+  Revision**. SUPER_ADMIN on PENDING: "waiting for the Dean". The status query is keyed `["schedules", id,
+  "program-finalization"]` so every entry mutation refreshes it. Notifications link to
+  `/dashboard/schedules?schedule=<id>` (the page opens that schedule — `ScheduleDeepLink`). The Dean's dashboard
+  lists "Schedules awaiting your approval" with **Review & approve** links.
 
 > **Compliance rule (updated 2026-09-17):** Every course code other than GEC/GEL, PATHFit and NSTP is a major
 > subject under its own program's Program Chairperson (enforced in `lib/services/subject-permissions.ts` and the
@@ -213,11 +247,13 @@ Each CAS Department Head's `User.departmentId` must point to the `CAS` parent de
 
 ### 3. Schedule Workflow State Machine
 ```
-DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN approves)──►  PUBLISHED
-                                                ──(SUPER_ADMIN rejects) ──►  DRAFT
+DRAFT  ──(ADMIN submits, everyone done)──►  PENDING_APPROVAL  ──(DEAN approves)──►  PUBLISHED
+                                                               ──(DEAN returns) ──►  DRAFT
+PUBLISHED ──(SUPER_ADMIN reset / unpublish)──► DRAFT        CAS schedule: SUPER_ADMIN publishes directly (/publish)
 ```
-- Route: `POST /api/schedules/[id]/workflow` with `{ action: "submit"|"approve"|"reject" }`
-- `submit` is **ADMIN-only**; `approve`/`reject` are **SUPER_ADMIN-only**
+- Route: `POST /api/schedules/[id]/workflow` with `{ action: "submit"|"approve"|"reject"|"reset" }`
+- `submit` is **ADMIN-only** (own department, all programs done); `approve`/`reject` are **DEAN-only** (own
+  department); `reset` is SUPER_ADMIN
 - SUPER_ADMIN GEC generation is **no longer gated** on ADMIN submission (order inverted — DC goes first). CIT labs already plotted act as locked slots during GEC generation.
 - ADMIN generation runs on `DRAFT` status only
 - UI: `components/schedule/workflow-actions.tsx`
@@ -253,7 +289,8 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
   dialog); `GET /api/users` stays readable (own department) for the Faculty page's "link an existing account" picker.
 - **Dashboard**: no quick-action / Management Hub cards (removed 2026-09-16 as redundant with the sidebar). Chairs and
   Directors see the KPI row + Recent Schedules (+ their own teaching schedule). The **Dean** gets
-  `components/dashboard/dean-dashboard.tsx`: accounts awaiting approval (approve inline), department schedules with
+  `components/dashboard/dean-dashboard.tsx`: schedules awaiting their approval (**Review & approve** →
+  `/dashboard/schedules?schedule=<id>`), accounts awaiting approval (approve inline), department schedules with
   status/unassigned/conflict badges, and the latest audit rows — each linking to User Management / System Logs.
 - **User Manual** (`/dashboard/manual`, all login roles; sidebar item + the ⋯ menu / "Waiting for GEC" banner on
   Manage Schedules) is **one visual manual per role** (2026-09-19): `lib/manual-workflows.ts` holds a `RoleManual`
@@ -351,7 +388,8 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 | `/api/faculty/availability` | GET/POST | Faculty time availability for a `semesterId`; POST rejects totals over `maxHoursPerWeek` and 409s without a non-archived schedule for that term |
 | `/api/faculty/request` | GET/POST/PATCH | PC raises a request (term + reason); DC approves by allocating a `facultyId` → joins the program's pool for that term |
 | `/api/faculty/workload` | GET | `?semesterId=` → per-faculty scheduled minutes/classes across non-archived schedules (live workload bar) |
-| `/api/schedules/[id]/workflow` | POST | State transitions (submit / approve / reject) |
+| `/api/schedules/[id]/workflow` | POST | State transitions: submit (PC, everyone done) / approve · reject (Dean) / reset (DC) |
+| `/api/schedules/[id]/program-finalize` | GET/POST | Program Chairpersons' "done plotting" status for the schedule's department; POST finalize / unfinalize (own program, DRAFT) |
 | `/api/schedules/[id]/generate` | POST | Runs backtracking scheduler. DC generates PATHFit (priority, GYM/TBA) then GEC (no PC-submission gate); CIT labs are locked slots |
 | `/api/users/[id]` | PATCH/DELETE | DEAN (own department only): approve, re-role, (de)activate, permanently delete (DB rows + Supabase Auth; 409 if their faculty record still has entries). Refuses a second Dean per department / second PATHFIT or NSTP account |
 | `/api/audit-logs` | GET | DEAN / ADMIN (own department) / SUPER_ADMIN (all, `?departmentId=`): paginated activity (`?page&action&search&role&from&to`), each row resolved to its schedule (term · dept · status); `format=csv` downloads the filtered log (≤5000 rows) |
@@ -418,6 +456,7 @@ DRAFT  ──(ADMIN submits)──►  PENDING_APPROVAL  ──(SUPER_ADMIN appr
 | Labs categorized by academic specialization | `LabSpecialization` enum | `components/rooms/lab-inventory.tsx` |
 | Per-college data organization | `selectedCollegeId` filter on all pages (one dept per college, so per-dept schedules are per-college) | `lib/college-context.tsx` |
 | Dept Chair plots GEC first → Program Chairs add majors → approve | Inverted workflow (Section 2) | `/api/schedules/[id]/generate`, `/workflow` |
+| PCs mark their subjects done; submit only when the whole department is done; the Dean approves | `ProgramFinalization` + submit gate + Dean approve | `/program-finalize`, `/workflow`, `workflow-actions.tsx` |
 | CIT labs pre-plotted; only CIT PC edits them | Labs-only pre-plot + exclusive edit lock | `entries/route.ts`, `subject-permissions.ts` |
 | DC requests CIT PC to move a blocking lab | Tracked request + notification | `lab-requests` routes, `components/schedule/lab-requests-panel.tsx` |
 | ISO "Schedule of Subjects" + "Teaching Load" exports | Two on-demand exports from published data | `lib/exports/schedule-format.ts`, `components/schedule/export-dialog.tsx` |

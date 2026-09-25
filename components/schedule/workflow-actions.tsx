@@ -1,42 +1,31 @@
 'use client'
 
 /**
- * WorkflowActions — shows the correct action buttons based on the current user's
- * role and the schedule's status.
+ * WorkflowActions — the approval strip above a schedule, by role and status
+ * (see CLAUDE.md "Scheduling Workflow"; spec 2026-09-26):
  *
- * Real flow (see CLAUDE.md "Scheduling Workflow" — INVERTED per the 2026-08-28
- * spec update). For another college's schedule (isOwnSchedule=false — the normal
- * case for a Program Chair's own department):
- *   Step 1 (CIT Program Chair only): pre-plots LABORATORY subjects only, before
- *     GEC exists — hard-blocked server-side to labs-only until then.
- *   Step 2 (Dept Chair / SUPER_ADMIN): generates GEC/GEL into this schedule.
- *     NOT gated on any Program Chair submission — this is the FIRST step now,
- *     not the second. Already-plotted CIT labs are treated as locked slots.
- *   Step 3 (Dept Chair): finalizes/publishes the GEC/GEL schedule.
- *   Step 4 (Program Chair / ADMIN): once GEC exists, adds their full major load
- *     (lecture + lab) on DRAFT, then Submits for Review → PENDING_APPROVAL.
- *   Step 5 (Dept Chair): Approve/Reject the submission.
+ * ┌──────────────────────────────┬────────────────────────────────────────────────────┐
+ * │ Role / Status                │ Shows                                              │
+ * ├──────────────────────────────┼────────────────────────────────────────────────────┤
+ * │ ADMIN + DRAFT (own dept)     │ Who is done plotting · [Mark my subjects as done]  │
+ * │                              │ · [Submit for Approval] — unlocks once GEC/GEL is  │
+ * │                              │ finalized and EVERY Program Chairperson is done    │
+ * │ ADMIN + PENDING_APPROVAL     │ "Waiting for the Dean's approval" (locked)         │
+ * │ DEAN + DRAFT                 │ Who is done plotting (read-only)                   │
+ * │ DEAN + PENDING_APPROVAL      │ [Approve ✓]  [Return for revision ✗]               │
+ * │ DEAN + PUBLISHED             │ Published banner                                   │
+ * │ SUPER_ADMIN + PENDING        │ "Waiting for the Dean" (read-only)                 │
+ * │ SUPER_ADMIN + PUBLISHED      │ Published banner · [Reset to Draft]                │
+ * └──────────────────────────────┴────────────────────────────────────────────────────┘
  *
- * The Dept Chair's OWN CAS schedule (isOwnSchedule=true) has no separate Program
- * Chair to wait on — the "CAS special case" — so they generate cluster majors/GEC
- * and Publish directly from DRAFT, no submit/approve step. This is the SAME
- * generate-first capability as the "other college" case above, not a special
- * exemption from a gate — there is no PC-submission gate to be exempt from.
- *
- * ┌────────────────────────────────────┬────────────────────────────────────────┐
- * │ Role / Status / Schedule           │ Visible Buttons / Banner                │
- * ├────────────────────────────────────┼────────────────────────────────────────┤
- * │ SUPER_ADMIN + DRAFT (own CAS)      │ Generate → Publish info banner          │
- * │ SUPER_ADMIN + DRAFT (other college)│ Generate → Publish info banner          │
- * │ SUPER_ADMIN + PENDING              │ [Approve ✓]  [Reject ✗]                 │
- * │ SUPER_ADMIN + PUBLISHED            │ Published banner                        │
- * │ ADMIN + DRAFT                      │ [Submit for Review]                     │
- * │ ADMIN + PENDING_APPROVAL           │ Locked banner — "Awaiting dept. review" │
- * └────────────────────────────────────┴────────────────────────────────────────┘
+ * The Department Chairperson's own CAS schedule has no Program Chairpersons; they
+ * publish it directly with Publish Schedule in the toolbar.
  */
 
 import * as React from 'react'
-import { CheckCircle2, SendHorizontal, XCircle, Clock, ShieldCheck, AlertTriangle, RotateCcw } from 'lucide-react'
+import {
+  CheckCircle2, Circle, SendHorizontal, XCircle, Clock, ShieldCheck, AlertTriangle, RotateCcw, Users, Loader2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -47,40 +36,51 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
 export interface WorkflowActionsProps {
   scheduleId: string
   status: string          // current ScheduleStatus
-  userRole: string        // 'SUPER_ADMIN' | 'ADMIN' | 'FACULTY'
+  userRole: string        // 'DEAN' | 'SUPER_ADMIN' | 'ADMIN' | …
   departmentName?: string
   /**
-   * True when this is the Dept Chair's own (CAS) schedule — false when they're
-   * viewing another college's Program Chair schedule. Under the current workflow
-   * order (spec Section 2) the Dept Chair generates/injects GEC FIRST for either
-   * kind of schedule — there is no longer a "Program Chair must submit first" gate.
-   * This flag now only distinguishes own-vs-injecting for scoping/labelling.
+   * The schedule belongs to the signed-in user's own department (a Program
+   * Chairperson's or Dean's department; for a Department Chairperson, their own
+   * CAS schedule). Program Chairpersons and Deans act only on their own.
    */
   isOwnSchedule?: boolean
-  /**
-   * False while the schedule has no GEC/GEL entries yet (the Dept Chair has
-   * not plotted them). A Program Chair cannot submit before that — Workflow
-   * Guide steps 4–5; the server refuses it too.
-   */
+  /** All three CAS department heads have finalized GEC/GEL for this schedule. */
   gecReady?: boolean
+  /** The signed-in Program Chairperson's program — their row in the list. */
+  myProgramId?: string | null
   /**
    * Count of unresolved, blocking ConflictLog rows (LOAD_EXCEEDED warnings
-   * excluded, matching what the server allows through on approve). When > 0,
-   * the Approve button on a PENDING_APPROVAL schedule is disabled so the Dept
-   * Chair resolves conflicts before publishing.
+   * excluded). While > 0 the Dean's Approve button is disabled; the server runs
+   * the full term-wide check again on approve.
    */
   unresolvedConflictCount?: number
   onStatusChange?: (newStatus: string) => void
 }
 
-// ── API helper ────────────────────────────────────────────────────────────
+interface ProgramRow {
+  programId: string
+  abbreviation: string
+  name: string
+  chairs: { id: string; name: string }[]
+  finalized: boolean
+  finalizedBy: string | null
+  finalizedAt: string | null
+}
+interface ProgramStatus {
+  programs: ProgramRow[]
+  done: number
+  total: number
+  allFinalized: boolean
+}
+
+// ── API helpers ───────────────────────────────────────────────────────────
 
 async function callWorkflow(
   scheduleId: string,
@@ -97,6 +97,53 @@ async function callWorkflow(
   return json.data
 }
 
+// Keyed under ["schedules", id] on purpose: every entry mutation already
+// invalidates that prefix, so a Program Chairperson's edit (which reopens their
+// "done" mark on the server) refreshes this list too.
+export function programFinalizationKey(scheduleId: string) {
+  return ['schedules', scheduleId, 'program-finalization'] as const
+}
+
+function formatShortDate(iso: string | null): string {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+// ── Program list ──────────────────────────────────────────────────────────
+
+function ProgramProgressList({ programs, myProgramId }: { programs: ProgramRow[]; myProgramId?: string | null }) {
+  return (
+    <ul className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 xl:grid-cols-3">
+      {programs.map((p) => {
+        const chair = p.chairs[0]?.name
+        const mine = p.programId === myProgramId
+        return (
+          <li
+            key={p.programId}
+            className="flex min-w-0 items-center gap-1.5 text-xs"
+            title={`${p.name}${chair ? ` — ${chair}` : ''}${p.finalized ? ` · marked done${p.finalizedBy ? ` by ${p.finalizedBy}` : ''}${p.finalizedAt ? `, ${formatShortDate(p.finalizedAt)}` : ''}` : ' · still plotting'}`}
+          >
+            {p.finalized ? (
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-600" />
+            ) : (
+              <Circle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+            )}
+            {/* Fixed-width code column so "done / still plotting" lines up row to row. */}
+            <span className="flex w-28 shrink-0 items-center gap-1">
+              <span className={`truncate font-semibold ${mine ? 'text-[#1B4332]' : ''}`}>{p.abbreviation}</span>
+              {mine && <span className="shrink-0 rounded bg-[#1B4332]/10 px-1 text-[10px] font-medium text-[#1B4332]">you</span>}
+            </span>
+            <span className={`min-w-0 truncate ${p.finalized ? 'text-green-700' : 'text-muted-foreground'}`}>
+              {p.finalized ? 'done' : 'still plotting'}
+              {chair ? ` · ${chair}` : ''}
+            </span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 export function WorkflowActions({
@@ -105,13 +152,32 @@ export function WorkflowActions({
   userRole,
   departmentName,
   isOwnSchedule = true,
-  unresolvedConflictCount = 0,
   gecReady,
+  myProgramId,
+  unresolvedConflictCount = 0,
   onStatusChange,
 }: WorkflowActionsProps) {
   const queryClient = useQueryClient()
   const [rejectOpen, setRejectOpen] = React.useState(false)
   const [reviewNote, setReviewNote] = React.useState('')
+
+  const isAdmin = userRole === 'ADMIN'
+  const isDean = userRole === 'DEAN'
+  const showsProgress = (isAdmin || isDean) && isOwnSchedule && status === 'DRAFT'
+
+  const { data: progress, isLoading: progressLoading } = useQuery<ProgramStatus>({
+    queryKey: programFinalizationKey(scheduleId),
+    queryFn: async () => {
+      const res = await fetch(`/api/schedules/${scheduleId}/program-finalize`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to load who is done')
+      return json.data
+    },
+    enabled: showsProgress,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  })
 
   // Shared mutation invalidator
   function invalidate(newStatus: string) {
@@ -120,42 +186,75 @@ export function WorkflowActions({
     onStatusChange?.(newStatus)
   }
 
+  // ── Mark my subjects done / reopen (ADMIN, DRAFT) ──────────────────────
+  const finalizeMutation = useMutation({
+    mutationFn: async (action: 'finalize' | 'unfinalize') => {
+      const res = await fetch(`/api/schedules/${scheduleId}/program-finalize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.details?.[0] ?? json.error ?? 'Request failed')
+      return json.data as ProgramStatus
+    },
+    onSuccess: (data, action) => {
+      queryClient.setQueryData(programFinalizationKey(scheduleId), data)
+      if (action === 'unfinalize') {
+        toast.info('Reopened — your subjects are editable again.')
+      } else if (data.allFinalized) {
+        toast.success('Marked as done — everyone is done now.', {
+          description: 'Submit the schedule for the Dean\'s approval.',
+        })
+      } else {
+        const left = data.total - data.done
+        toast.success('Your subjects are marked as done.', {
+          description: `Waiting for ${left} more Program Chairperson${left === 1 ? '' : 's'} before the schedule can be submitted.`,
+        })
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
   // ── Submit (ADMIN: DRAFT → PENDING_APPROVAL) ───────────────────────────
   const submitMutation = useMutation({
     mutationFn: () => callWorkflow(scheduleId, 'submit'),
-    onSuccess: (data) => {
-      toast.success('Schedule submitted for review', {
-        description: 'The Department Chairperson has been notified.',
+    onSuccess: () => {
+      toast.success('Submitted for approval', {
+        description: 'The Dean has been notified. The schedule is locked until the Dean decides.',
         duration: 5000,
       })
       invalidate('PENDING_APPROVAL')
     },
     onError: (err: Error) => {
-      toast.error('Submission failed', { description: err.message })
+      toast.error('Could not submit', { description: err.message })
+      queryClient.invalidateQueries({ queryKey: programFinalizationKey(scheduleId) })
     },
   })
 
-  // ── Approve (SUPER_ADMIN: PENDING_APPROVAL → PUBLISHED) ───────────────
+  // ── Approve (DEAN: PENDING_APPROVAL → PUBLISHED) ───────────────────────
   const approveMutation = useMutation({
     mutationFn: () => callWorkflow(scheduleId, 'approve'),
     onSuccess: () => {
       toast.success('Schedule approved and published', {
-        description: 'The schedule is now live on the master calendar.',
+        description: 'The Program Chairpersons have been notified.',
         duration: 5000,
       })
       invalidate('PUBLISHED')
     },
     onError: (err: Error) => {
-      toast.error('Approval failed', { description: err.message })
+      toast.error('Could not approve', { description: err.message, duration: 8000 })
+      // A failed approve records the conflicts it found — show them.
+      queryClient.invalidateQueries({ queryKey: ['schedules', scheduleId] })
     },
   })
 
-  // ── Reject (SUPER_ADMIN: PENDING_APPROVAL → DRAFT) ────────────────────
+  // ── Return for revision (DEAN: PENDING_APPROVAL → DRAFT) ───────────────
   const rejectMutation = useMutation({
     mutationFn: () => callWorkflow(scheduleId, 'reject', reviewNote),
     onSuccess: () => {
       toast.info('Schedule returned for revision', {
-        description: 'The Program Chairperson has been notified.',
+        description: 'The Program Chairpersons have been notified with your note.',
         duration: 5000,
       })
       setRejectOpen(false)
@@ -163,7 +262,7 @@ export function WorkflowActions({
       invalidate('DRAFT')
     },
     onError: (err: Error) => {
-      toast.error('Rejection failed', { description: err.message })
+      toast.error('Could not return the schedule', { description: err.message })
     },
   })
 
@@ -172,7 +271,7 @@ export function WorkflowActions({
     mutationFn: () => callWorkflow(scheduleId, 'reset'),
     onSuccess: () => {
       toast.info('Schedule reset to Draft', {
-        description: 'The Program Chairperson can now regenerate and resubmit.',
+        description: 'The Program Chairpersons can update it and submit it again.',
         duration: 5000,
       })
       invalidate('DRAFT')
@@ -182,45 +281,101 @@ export function WorkflowActions({
     },
   })
 
-  const isBusy = submitMutation.isPending || approveMutation.isPending || rejectMutation.isPending || resetMutation.isPending
+  const isBusy =
+    submitMutation.isPending || approveMutation.isPending || rejectMutation.isPending ||
+    resetMutation.isPending || finalizeMutation.isPending
 
-  // ── ADMIN view ────────────────────────────────────────────────────────
+  // ── ADMIN (Program Chairperson) ───────────────────────────────────────
 
-  if (userRole === 'ADMIN') {
+  if (isAdmin) {
+    if (!isOwnSchedule) return null
+
     if (status === 'DRAFT') {
-      const blockedByGec = gecReady === false
+      const programs = progress?.programs ?? []
+      const mine = programs.find((p) => p.programId === myProgramId) ?? null
+      const everyoneDone = !!progress?.allFinalized
+      const waitingOn = programs.filter((p) => !p.finalized)
+      const canSubmit = !!gecReady && everyoneDone
+
+      const hint = !gecReady
+        ? 'Marking your subjects as done and submitting unlock once all three CAS department heads have finalized GEC/GEL.'
+        : !mine
+          ? 'Your account is not linked to one of these programs — ask your Dean to assign your program.'
+          : !mine.finalized
+            ? 'When your program’s classes are complete, mark them as done. Adding, editing or removing a class later reopens it automatically.'
+            : everyoneDone
+              ? 'Everyone is done — submit the schedule for the Dean’s approval. It stays locked while the Dean reviews it.'
+              : `Submit unlocks when everyone is done — still plotting: ${waitingOn.map((p) => p.abbreviation).join(', ')}.`
+
       return (
-        <div className="flex items-center gap-3">
-          <Button
-            onClick={() => submitMutation.mutate()}
-            disabled={isBusy || blockedByGec}
-            title={blockedByGec ? "Submit unlocks once the Department Chairperson has generated GEC/GEL into this schedule" : undefined}
-            className="bg-[#1B4332] hover:bg-[#2D6A4F] text-white gap-2"
-          >
-            {submitMutation.isPending ? (
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-            ) : (
-              <SendHorizontal className="h-4 w-4" />
-            )}
-            Submit for Review
-          </Button>
-          <p className="text-xs text-muted-foreground hidden sm:block">
-            {blockedByGec
-              ? "Waiting for the Department Chair's GEC/GEL before this can be submitted."
-              : "Locks the schedule and sends it to the Department Chair for approval."}
-          </p>
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <p className="flex flex-wrap items-center gap-x-2 font-medium">
+                <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+                Program Chairpersons — done plotting
+                {progress && (
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${everyoneDone ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
+                    {progress.done} of {progress.total} done
+                  </span>
+                )}
+              </p>
+              {progressLoading ? (
+                <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking who is done…
+                </p>
+              ) : (
+                <ProgramProgressList programs={programs} myProgramId={myProgramId} />
+              )}
+              <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {mine && (
+                <Button
+                  variant={mine.finalized ? 'outline' : 'default'}
+                  onClick={() => finalizeMutation.mutate(mine.finalized ? 'unfinalize' : 'finalize')}
+                  disabled={isBusy || (!mine.finalized && !gecReady)}
+                  title={!mine.finalized && !gecReady ? 'Unlocks once GEC/GEL is finalized' : undefined}
+                  className={mine.finalized ? 'gap-2' : 'gap-2 bg-[#1B4332] text-white hover:bg-[#2D6A4F]'}
+                >
+                  {finalizeMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : mine.finalized ? (
+                    <RotateCcw className="h-4 w-4" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  {mine.finalized ? `Reopen ${mine.abbreviation}` : 'Mark my subjects as done'}
+                </Button>
+              )}
+              <Button
+                onClick={() => submitMutation.mutate()}
+                disabled={isBusy || !canSubmit}
+                title={canSubmit ? 'Send the schedule to the Dean for approval' : 'Unlocks when every Program Chairperson in the department is done'}
+                className="gap-2 bg-[#D4AF37] text-[#1B4332] hover:bg-[#C9A42F] disabled:bg-muted disabled:text-muted-foreground"
+              >
+                {submitMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <SendHorizontal className="h-4 w-4" />
+                )}
+                Submit for Approval
+              </Button>
+            </div>
+          </div>
         </div>
       )
     }
 
     if (status === 'PENDING_APPROVAL') {
       return (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-          <Clock className="h-4 w-4 shrink-0 text-amber-600" />
-          <div>
-            <span className="font-semibold">Awaiting approval</span>
-            <span className="ml-1 text-amber-700">— This schedule has been submitted and is locked pending the Department Chair's review.</span>
-          </div>
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <p>
+            <span className="font-semibold">Waiting for the Dean&apos;s approval</span>
+            <span className="ml-1 text-amber-700">— the schedule is locked until the Dean approves it or returns it with a note.</span>
+          </p>
         </div>
       )
     }
@@ -228,56 +383,69 @@ export function WorkflowActions({
     return null
   }
 
-  // ── SUPER_ADMIN view ──────────────────────────────────────────────────
+  // ── DEAN ──────────────────────────────────────────────────────────────
 
-  if (userRole === 'SUPER_ADMIN') {
+  if (isDean) {
+    if (!isOwnSchedule) return null
+
     if (status === 'DRAFT') {
-      // Own (CAS) schedule: no Program Chair to wait on — generate cluster
-      // majors/GEC and publish directly, same as before.
-      // Own (CAS) schedule: nothing to announce. The banner that used to sit here
-      // only restated what the Generate Schedule / Publish Schedule buttons in the
-      // toolbar already say, so it was pure vertical noise above the schedule.
-      if (isOwnSchedule) {
-        return null
-      }
-      // Another college's schedule. The banner that used to sit here only
-      // restated the Generate Schedule / Publish Schedule buttons already in
-      // the toolbar, so it was vertical noise pushing the schedule down.
-      return null
+      const programs = progress?.programs ?? []
+      if (!progressLoading && programs.length === 0) return null
+      return (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm">
+          <p className="flex flex-wrap items-center gap-x-2 font-medium">
+            <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
+            Program Chairpersons — done plotting
+            {progress && (
+              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${progress.allFinalized ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
+                {progress.done} of {progress.total} done
+              </span>
+            )}
+          </p>
+          {progressLoading ? (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking who is done…
+            </p>
+          ) : (
+            <ProgramProgressList programs={programs} />
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Once every Program Chairperson is done, they submit the schedule and it comes to you for approval.
+          </p>
+        </div>
+      )
     }
 
     if (status === 'PENDING_APPROVAL') {
       const hasBlockingConflicts = unresolvedConflictCount > 0
       return (
         <>
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            {/* Context banner */}
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
             {hasBlockingConflicts ? (
-              <div className="flex-1 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              <div className="flex flex-1 items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
                 <span>
-                  <strong>{unresolvedConflictCount}</strong> unresolved conflict{unresolvedConflictCount === 1 ? '' : 's'} must be resolved before this schedule can be approved.
+                  <strong>{unresolvedConflictCount}</strong> unresolved conflict{unresolvedConflictCount === 1 ? '' : 's'} — return the schedule so the Program Chairpersons can fix {unresolvedConflictCount === 1 ? 'it' : 'them'}.
                 </span>
               </div>
             ) : (
-              <div className="flex-1 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-                <AlertTriangle className="h-4 w-4 shrink-0 text-blue-600" />
+              <div className="flex flex-1 items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                <ShieldCheck className="h-4 w-4 shrink-0 text-blue-600" />
                 <span>
-                  <strong>{departmentName ?? 'This department'}</strong> has submitted a schedule for your review.
+                  <strong>{departmentName ?? 'Your department'}</strong> submitted this schedule for your approval — every Program Chairperson has marked their subjects as done.
                 </span>
               </div>
             )}
 
-            {/* Action buttons */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex shrink-0 items-center gap-2">
               <Button
                 onClick={() => approveMutation.mutate()}
                 disabled={isBusy || hasBlockingConflicts}
-                title={hasBlockingConflicts ? 'Resolve all blocking conflicts before approving' : undefined}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
+                title={hasBlockingConflicts ? 'Conflicts must be fixed first — return the schedule for revision' : 'Approve and publish this schedule'}
+                className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
               >
                 {approveMutation.isPending ? (
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <CheckCircle2 className="h-4 w-4" />
                 )}
@@ -288,15 +456,15 @@ export function WorkflowActions({
                 variant="outline"
                 onClick={() => setRejectOpen(true)}
                 disabled={isBusy}
-                className="border-red-300 text-red-700 hover:bg-red-50 gap-2"
+                className="gap-2 border-red-300 text-red-700 hover:bg-red-50"
               >
                 <XCircle className="h-4 w-4" />
-                Reject
+                Return for Revision
               </Button>
             </div>
           </div>
 
-          {/* Reject dialog */}
+          {/* Return-for-revision dialog */}
           <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
@@ -308,24 +476,24 @@ export function WorkflowActions({
 
               <div className="space-y-4 py-2">
                 <p className="text-sm text-muted-foreground">
-                  The schedule will be sent back to{' '}
-                  <strong>{departmentName ?? 'the Program Chair'}</strong> as a{' '}
-                  <strong>DRAFT</strong> and they will be notified with your feedback.
+                  The schedule goes back to the Program Chairpersons of{' '}
+                  <strong>{departmentName ?? 'the department'}</strong> as a <strong>Draft</strong>, with your note.
+                  They fix it and submit it again.
                 </p>
                 <div className="space-y-1.5">
                   <Label htmlFor="review-note" className="text-sm font-medium">
-                    Rejection Reason <span className="text-red-500">*</span>
+                    Reason <span className="text-red-500">*</span>
                   </Label>
                   <textarea
                     id="review-note"
                     value={reviewNote}
                     onChange={(e) => setReviewNote(e.target.value)}
-                    placeholder="e.g., Faculty availability conflicts detected in Year 3 slots. Please review Wednesday 1–3 PM assignments."
+                    placeholder="e.g., BSIT 2-A has two classes in the same room on Wednesday 1–3 PM."
                     rows={4}
                     className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                   <p className="text-[11px] text-muted-foreground">
-                    This message will be sent to all Program Chairs in the department.
+                    Every Program Chairperson of the department receives this note.
                   </p>
                 </div>
               </div>
@@ -341,10 +509,10 @@ export function WorkflowActions({
                 <Button
                   onClick={() => rejectMutation.mutate()}
                   disabled={rejectMutation.isPending || !reviewNote.trim()}
-                  className="bg-red-600 hover:bg-red-700 text-white gap-2"
+                  className="gap-2 bg-red-600 text-white hover:bg-red-700"
                 >
                   {rejectMutation.isPending ? (
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <XCircle className="h-4 w-4" />
                   )}
@@ -359,8 +527,42 @@ export function WorkflowActions({
 
     if (status === 'PUBLISHED') {
       return (
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-          <div className="flex-1 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
+          <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span>
+            <span className="font-semibold">Approved and published</span>
+            <span className="ml-1 text-emerald-700">— this schedule is live.</span>
+          </span>
+        </div>
+      )
+    }
+
+    return null
+  }
+
+  // ── SUPER_ADMIN (Department Chairperson) ──────────────────────────────
+
+  if (userRole === 'SUPER_ADMIN') {
+    // DRAFT: nothing to announce — Generate / Publish (own CAS schedule) are in
+    // the toolbar, and the GEC/GEL finalization card sits right below.
+    if (status === 'PENDING_APPROVAL') {
+      return (
+        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm text-blue-800">
+          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+          <p>
+            <span className="font-semibold">Submitted — waiting for the Dean</span>
+            <span className="ml-1 text-blue-700">
+              — the Program Chairpersons of {departmentName ?? 'this department'} submitted it; their Dean approves or returns it.
+            </span>
+          </p>
+        </div>
+      )
+    }
+
+    if (status === 'PUBLISHED') {
+      return (
+        <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+          <div className="flex flex-1 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
             <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
             <span>
               <span className="font-semibold">Published</span>
@@ -371,10 +573,10 @@ export function WorkflowActions({
             variant="outline"
             onClick={() => resetMutation.mutate()}
             disabled={isBusy}
-            className="shrink-0 border-amber-300 text-amber-700 hover:bg-amber-50 gap-2"
+            className="shrink-0 gap-2 border-amber-300 text-amber-700 hover:bg-amber-50"
           >
             {resetMutation.isPending ? (
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-amber-600 border-t-transparent" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <RotateCcw className="h-4 w-4" />
             )}

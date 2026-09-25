@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
+import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { detectTermConflicts } from "@/lib/services/term-conflicts"
 import { apiResponse, apiError } from "@/lib/api-helpers"
@@ -43,13 +43,22 @@ export async function POST(
       return NextResponse.json(apiError("Schedule not found"), { status: 404 })
     }
 
-    // ADMIN (Program Chair) can only notify on an already-PUBLISHED schedule
-    // SUPER_ADMIN (Dept Chair) can publish from DRAFT or PENDING_APPROVAL
+    // ADMIN (Program Chair) can only notify on an already-PUBLISHED schedule.
+    // SUPER_ADMIN (Dept Chair) publishes only their OWN (CAS) schedule, which has
+    // no Program Chairpersons to submit it. Every other department's schedule is
+    // submitted by its Program Chairpersons and approved by its Dean
+    // (../workflow) — publishing it from here would skip the Dean.
     if (dbUser.role === "ADMIN") {
       if (schedule.status !== "PUBLISHED") {
         return NextResponse.json(apiError("Program Chairs can only notify faculty on published schedules"), { status: 400 })
       }
     } else {
+      if (schedule.departmentId !== getUserDepartmentId(dbUser)) {
+        return NextResponse.json(
+          apiError(`The ${schedule.department?.abbreviation ?? "department's"} schedule is approved by its Dean once its Program Chairpersons submit it.`),
+          { status: 403 }
+        )
+      }
       if (schedule.status !== "DRAFT" && schedule.status !== "PENDING_APPROVAL") {
         return NextResponse.json(apiError("Schedule must be in DRAFT or PENDING_APPROVAL status"), { status: 400 })
       }

@@ -866,7 +866,7 @@ export default function AvailabilityPage() {
   const [addOpen, setAddOpen] = useState(false)
   // Regular (21 units) / COSI (40 units): the unit cap follows the type; hours
   // start at the type's default and stay editable.
-  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", employeeId: "", employmentType: "REGULAR" as FacultyType, maxHoursPerWeek: 30 as number | string })
+  const [addForm, setAddForm] = useState({ firstName: "", lastName: "", employmentType: "REGULAR" as FacultyType, maxHoursPerWeek: 30 as number | string })
 
   // Edit faculty dialog
   const [editOpen, setEditOpen] = useState(false)
@@ -975,7 +975,7 @@ export default function AvailabilityPage() {
 
   // ── Add faculty handler ──
   async function handleAddFaculty() {
-    const { firstName, lastName, employeeId, employmentType, maxHoursPerWeek } = addForm
+    const { firstName, lastName, employmentType, maxHoursPerWeek } = addForm
     if (!firstName.trim()) return toast.error("First name is required")
     if (!lastName.trim()) return toast.error("Last name is required")
 
@@ -986,13 +986,12 @@ export default function AvailabilityPage() {
       await createFaculty.mutateAsync({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        ...(employeeId.trim() ? { employeeId: employeeId.trim() } : {}),
         departmentId,
         employmentType,
         maxHoursPerWeek: Number(maxHoursPerWeek) || 30,
       })
       setAddOpen(false)
-      setAddForm({ firstName: "", lastName: "", employeeId: "", employmentType: "REGULAR", maxHoursPerWeek: 30 })
+      setAddForm({ firstName: "", lastName: "", employmentType: "REGULAR", maxHoursPerWeek: 30 })
     } catch (err: any) {
       toast.error(err.message)
     }
@@ -1222,17 +1221,6 @@ export default function AvailabilityPage() {
                   onKeyDown={(e) => e.key === "Enter" && handleAddFaculty()}
                 />
               </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>
-                Employee ID
-                <span className="ml-1.5 text-xs font-normal text-muted-foreground">(optional — auto-generated if blank)</span>
-              </Label>
-              <Input
-                placeholder="e.g. FAC-2024-001"
-                value={addForm.employeeId}
-                onChange={(e) => setAddForm(f => ({ ...f, employeeId: e.target.value }))}
-              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">

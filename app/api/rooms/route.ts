@@ -3,7 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, canManageBuilding } from "@/lib/a
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
-import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
+import { GYM_ROOM_CODE, TBA_ROOM_CODE } from "@/lib/sentinels"
 
 export async function GET(req: Request) {
   try {
@@ -48,20 +48,21 @@ export async function GET(req: Request) {
         : (type as any)
       : undefined
 
-    // The placeholder rooms — "TBA" (manual resolution of an Unassigned Queue
-    // item when no real room is available) and "GYM" (where every PATHFIT class
-    // is held) — are included regardless of the type/building/department
-    // filters above, so they are always selectable in Add/Edit Entry.
+    // The "GYM" placeholder (where every PATHFIT class is held) is included
+    // regardless of the type/building/department filters above, so it is always
+    // selectable in Add/Edit Entry. The "TBA" placeholder room is hidden
+    // everywhere.
     const rooms = await db.room.findMany({
       where: {
         OR: [
           {
             isActive: true,
+            code: { not: TBA_ROOM_CODE },
             ...(typeFilter ? { type: typeFilter } : {}),
             ...(buildingId ? { buildingId } : {}),
             ...(allowedBuildingIds ? { buildingId: { in: allowedBuildingIds } } : {}),
           },
-          { code: { in: [...PLACEHOLDER_ROOM_CODES] } },
+          { code: GYM_ROOM_CODE },
         ],
       },
       select: {

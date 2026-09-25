@@ -6,7 +6,7 @@ import { validateEntry, validateEntryCapacity, isHardConflict, stripConflictMark
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 import { isGeUnitRole, isNstpCode } from "@/lib/roles"
-import { reopenGecIfStale } from "@/lib/services/workflow-gates"
+import { reopenGecIfStale, reopenProgramIfStale } from "@/lib/services/workflow-gates"
 import { recordAudit } from "@/lib/audit"
 
 const entryInclude = {
@@ -300,6 +300,7 @@ export async function PATCH(
     await Promise.all([...affectedFacultyIds].map(fid => syncFacultySpecializations(fid).catch(() => {})))
 
     await reopenGecIfStale(id, updated.subject?.code, dbUser)
+    await reopenProgramIfStale(id, dbUser)
 
     // Section names of the whole class, for the log line.
     const finalRows = updated.mergeGroupId || mergeRows.length
@@ -417,6 +418,7 @@ export async function DELETE(
     }
 
     await reopenGecIfStale(id, removed.subject?.code, dbUser)
+    await reopenProgramIfStale(id, dbUser)
 
     const sectionLabel = removedSections.length
       ? [...new Set(removedSections.map((r) => r.section?.name).filter(Boolean))].join(" + ")

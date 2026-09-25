@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo, useCallback, useRef, useEffect } from "react"
+import { useState, useMemo, useCallback, useRef, useEffect, Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import { PageHeader } from "@/components/shared/page-header"
 import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
@@ -166,6 +167,26 @@ const TIME_OPTIONS = Array.from({ length: 26 }, (_, i) => {
   return `${h}:${m}`
 })
 
+/**
+ * Opens the schedule named by ?schedule=<id> — the link every workflow
+ * notification (submitted / approved / returned / everyone done) and the Dean's
+ * dashboard use. The parameter is dropped once applied, so choosing another
+ * schedule and reloading doesn't jump back. Lives in its own Suspense-wrapped
+ * component because useSearchParams needs one.
+ */
+function ScheduleDeepLink({ onOpen }: { onOpen: (scheduleId: string) => void }) {
+  const searchParams = useSearchParams()
+  const scheduleId = searchParams.get("schedule")
+  useEffect(() => {
+    if (!scheduleId) return
+    onOpen(scheduleId)
+    const url = new URL(window.location.href)
+    url.searchParams.delete("schedule")
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash)
+  }, [scheduleId])
+  return null
+}
+
 function ScheduleStatusBadge({ status }: { status?: string }) {
   if (!status) return null
   const variants: Record<string, { label: string; className: string }> = {
@@ -307,7 +328,9 @@ export default function SchedulesPage() {
   const userRole = (currentUser?.role ?? "FACULTY") as string
   const isSuperAdmin = userRole === "SUPER_ADMIN"
   const isAdmin = userRole === "ADMIN"
-  // DEAN is read-only: none of the permission flags below ever turn on for them.
+  // DEAN: read-only everywhere except the approval strip (Approve / Return for
+  // revision on their department's submitted schedule — WorkflowActions).
+  const isDean = userRole === "DEAN"
   // PATHFIT / NSTP Directors: their own subject family, in every college.
   const isGeUnit = isGeUnitRole(userRole)
 
@@ -1245,15 +1268,14 @@ export default function SchedulesPage() {
   const isPublished = selectedSchedule?.status === "PUBLISHED"
   // ── Permission model ──────────────────────────────────────────────────────
   // Dept Chair (SUPER_ADMIN):
-  //   - Can add/edit/generate entries on PENDING_APPROVAL and PUBLISHED
-  //   - Can approve/reject on PENDING_APPROVAL, unpublish on PUBLISHED
+  //   - Plots and finalizes GEC/GEL in every department's schedule (any stage)
+  //   - Publishes only their own CAS schedule; unpublish / reset on PUBLISHED
   // Program Chair (ADMIN):
-  //   - Owns the DRAFT: adds entries and submits for review
-  //   - After submission, schedule is locked until Dept Chair acts
-  // ── Three-step scheduling workflow ───────────────────────────────────────
-  // Step 1 (Dept Chair): Initializes schedule framework, sets room availability.
-  // Step 2 (Program Chair): Generates/manually adds major subjects. Submits for review.
-  // Step 3 (Dept Chair): Reviews submitted majors, then generates GEC/minor subjects.
+  //   - Owns the DRAFT: adds their majors, marks them done, and — once every
+  //     Program Chairperson of the department is done — submits for approval
+  //   - After submission, schedule is locked until the Dean acts
+  // Dean:
+  //   - Approves or returns (with a note) their department's submitted schedule
   //
   // SUPER_ADMIN also has full visibility of all Program Chair schedules to detect
   // room conflicts across colleges.
@@ -1271,6 +1293,11 @@ export default function SchedulesPage() {
   // (their cluster's territory even when injected into another schedule) stay
   // editable regardless of whose schedule they sit in.
   const isSuperAdminOwnSchedule = !isSuperAdmin || !selectedSchedule || (
+    (selectedSchedule?.departmentId ?? selectedSchedule?.department?.id) === currentUser?.departmentId
+  )
+  // The Dean approves only their own department's schedule (the list is already
+  // scoped to it server-side; this keeps the strip honest regardless).
+  const isDeanOwnSchedule = !isDean || !selectedSchedule || (
     (selectedSchedule?.departmentId ?? selectedSchedule?.department?.id) === currentUser?.departmentId
   )
   const GENED_OR_MANUAL_CODE_RE = /^(GEC|GEL|NSTP|NST|PATHFIT)/i
@@ -1342,9 +1369,13 @@ export default function SchedulesPage() {
     (isSuperAdmin) ||
     userRole === "PATHFIT" ||
     (isAdmin && isOwnSchedule && isDraft && (gecReady || chairIsCit))
-  // SUPER_ADMIN: publish from PENDING_APPROVAL (approve ADMIN submission). Can also directly publish DRAFT.
+  // SUPER_ADMIN: publishes only their OWN (CAS) schedule — it has no Program
+  //   Chairpersons to submit it. Every other department's schedule is submitted by
+  //   its Program Chairpersons and approved by its Dean (WorkflowActions).
   // ADMIN: "Notify Faculty" action on an already-PUBLISHED schedule (does not change status)
-  const canPublish = (isSuperAdmin && (isDraft || isPendingApproval)) || (isAdmin && isOwnSchedule && isPublished)
+  const canPublish =
+    (isSuperAdmin && isSuperAdminOwnSchedule && (isDraft || isPendingApproval)) ||
+    (isAdmin && isOwnSchedule && isPublished)
   const canUnpublish = isSuperAdmin && isPublished
   // Archive & Delete: the Dept Chair on any schedule; a Program Chair only on a
   // schedule in their OWN department (isOwnSchedule). Enforced server-side too.
@@ -2221,6 +2252,9 @@ export default function SchedulesPage() {
 
   return (
     <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "DEAN", "PATHFIT", "NSTP"]}>
+    <Suspense fallback={null}>
+      <ScheduleDeepLink onOpen={(id) => { setTab("active"); setSelectedScheduleId(id) }} />
+    </Suspense>
 
     {/* ── Full-page loading overlay shown while a new schedule is being created ── */}
     {createSchedule.isPending && (
@@ -2378,8 +2412,9 @@ export default function SchedulesPage() {
       />
 
       {/* ── Workflow Action Strip ─────────────────────────────────────────────
-          Shows "Submit for Review" (ADMIN on DRAFT) or "Approve / Reject"
-          (SUPER_ADMIN on PENDING_APPROVAL) for the currently selected schedule.
+          Program Chairperson on DRAFT: who is done plotting, "Mark my subjects as
+          done" and "Submit for Approval" (unlocks once everyone is done). Dean on
+          PENDING_APPROVAL: Approve / Return for Revision.
       ── */}
       {selectedScheduleId && selectedSchedule && (
         <WorkflowActions
@@ -2387,7 +2422,8 @@ export default function SchedulesPage() {
           status={selectedSchedule.status}
           userRole={userRole}
           departmentName={selectedSchedule.department?.name}
-          isOwnSchedule={isSuperAdminOwnSchedule}
+          isOwnSchedule={isAdmin ? isOwnSchedule : isDean ? isDeanOwnSchedule : isSuperAdminOwnSchedule}
+          myProgramId={isAdmin ? ((currentUser as any)?.programHead?.programId ?? null) : null}
           unresolvedConflictCount={blockingConflictCount}
           gecReady={gecReady}
           onStatusChange={() => {
@@ -2410,7 +2446,7 @@ export default function SchedulesPage() {
         <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-red-600" />
           <div className="flex-1 min-w-0">
-            <p className="font-medium">Schedule Rejected — Revision Requested</p>
+            <p className="font-medium">Returned by the Dean — Revision Requested</p>
             <p className="mt-0.5 text-red-700">{selectedSchedule.rejectionReason}</p>
           </div>
           <button
@@ -4339,7 +4375,7 @@ export default function SchedulesPage() {
                     ? "Places a PATHFit class for every section of this department — one continuous block in the GYM, faculty TBA. Existing PATHFit entries in this schedule will be replaced; nothing else is touched."
                     : isSuperAdmin
                     ? "Places the general education subjects under your area. PATHFit is generated by the PATHFit Director and NSTP is added by hand by the NSTP Director. Existing entries for your subjects will be replaced."
-                    : "Places your program's major subjects. Check that faculty availability and subject data are up to date, then submit the schedule for the Department Chair's review."}
+                    : "Places your program's major subjects. Check that faculty availability and subject data are up to date. When your classes are complete, mark your subjects as done — the schedule goes to the Dean once every Program Chairperson is done. Regenerating reopens your done mark."}
                 </p>
               </div>
             </div>
