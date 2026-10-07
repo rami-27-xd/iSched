@@ -50,7 +50,7 @@ const SCHEDULES_HELP: RoleHelpMap = {
   PATHFIT: {
     title: "Manage Schedules — PATHFit Director",
     tips: [
-      "Generate places one continuous PATHFit block per section, faculty \"TBA\" and room \"GYM\" — those placeholders are exempt from double-booking checks.",
+      "Generate places one continuous PATHFit block per section with one of your PATHFit instructors, in the Gymnasium (4 classes at a time), Covered Court (4) or Field (2). Add your instructors on the Faculty page first.",
       "You can add, edit or delete PATHFit entries in any college's schedule.",
     ],
   },
@@ -58,7 +58,7 @@ const SCHEDULES_HELP: RoleHelpMap = {
     title: "Manage Schedules — NSTP Director",
     tips: [
       "NSTP is never auto-generated — add each class by hand with Add Entry.",
-      "To merge two or more sections into one class, tick \"Merge with other sections\" — they show as one row with a Merged badge.",
+      "Each section's NSTP class is added on its own — merging sections is turned off. Add your instructors on the Faculty page first.",
       "You can add, edit or delete NSTP entries in any college's schedule.",
     ],
   },

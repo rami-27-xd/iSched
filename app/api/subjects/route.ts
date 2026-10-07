@@ -53,6 +53,11 @@ export async function GET(req: Request) {
       }
     }
 
+    // PATHFit / NSTP Directors only ever work with their own subject family.
+    if (dbUser?.role === "PATHFIT" || dbUser?.role === "NSTP") {
+      where.code = { startsWith: dbUser.role === "PATHFIT" ? "PATHFIT" : "NST", mode: "insensitive" }
+    }
+
     // Type filter
     if (type) where.type = type
 

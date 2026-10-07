@@ -202,14 +202,14 @@ const DEAN: RoleManual = {
 
 const PATHFIT: RoleManual = {
   role: "PATHFIT",
-  heading: "PATHFit Director — one block per section, in the GYM",
+  heading: "PATHFit Director — one block per section, in the Gymnasium, Covered Court or Field",
   summary: "You generate PATHFit for every department's schedule and adjust individual classes when needed. Nothing else in the schedule is yours to edit.",
   nodes: [
     { id: "start", kind: "start", title: "Sign in as PATHFit Director (approved automatically; one account for the university)", col: 0, row: 0 },
     { id: "college", kind: "step", title: "Pick a college and open its schedule", detail: "Use the college switcher at the top, then select the term's schedule.", where: "Manage Schedules", href: "/dashboard/schedules", col: 0, row: 1 },
-    { id: "generate", kind: "step", title: "Generate PATHFit", detail: "Every section receives one continuous block in the GYM with faculty TBA. Only PATHFit classes are replaced.", where: "Manage Schedules → Generate", href: "/dashboard/schedules", enforced: true, col: 0, row: 2 },
-    { id: "adjust", kind: "decision", title: "A class needs a real instructor or another time?", col: 0, row: 3 },
-    { id: "edit", kind: "step", title: "Edit, add or remove the class", detail: "Assign a tagged instructor, move the block, or add a class by hand with Add Entry.", where: "List / Table view → Edit", href: "/dashboard/schedules", col: 1, row: 3 },
+    { id: "generate", kind: "step", title: "Generate PATHFit", detail: "Every section receives one continuous block with one of your PATHFit instructors, in the Gymnasium (4 classes at once), Covered Court (4) or Field (2). Only PATHFit classes are replaced.", where: "Manage Schedules → Generate", href: "/dashboard/schedules", enforced: true, col: 0, row: 2 },
+    { id: "adjust", kind: "decision", title: "A class needs another instructor, venue or time?", col: 0, row: 3 },
+    { id: "edit", kind: "step", title: "Edit, add or remove the class", detail: "Assign a tagged instructor, pick Gymnasium / Covered Court / Field, move the block, or add a class by hand with Add Entry.", where: "List / Table view → Edit", href: "/dashboard/schedules", col: 1, row: 3 },
     { id: "next", kind: "decision", title: "Another college to do?", col: 0, row: 4 },
     { id: "end", kind: "end", title: "PATHFit placed in every college", col: 0, row: 5 },
   ],
@@ -228,8 +228,8 @@ const PATHFIT: RoleManual = {
   ],
   rules: [
     "Only the PATHFit Director may add, edit or delete PATHFit classes; you cannot touch any other subject.",
-    "Generated PATHFit uses the GYM and the TBA placeholder — both are shared and exempt from double-booking checks.",
-    "A real instructor you assign must be tagged for PATHFit and available at that time in that term.",
+    "PATHFit is held only in the Gymnasium (max 4 classes at once), Covered Court (max 4) or Field (max 2). There is no TBA instructor or room.",
+    "Add your instructors under Faculty (tag them for PATHFit) and mark their hours under Faculty Availability — generation and Add Entry use only them.",
   ],
 }
 
@@ -237,27 +237,22 @@ const PATHFIT: RoleManual = {
 
 const NSTP: RoleManual = {
   role: "NSTP",
-  heading: "NSTP Director — placed by hand, sections may be merged",
-  summary: "NSTP is never generated. You add each NSTP class yourself — for one section, or for two or more sections taught together — in every college's schedule.",
+  heading: "NSTP Director — placed by hand, one section at a time",
+  summary: "NSTP is never generated. You add each NSTP class yourself, one section at a time, in every college's schedule.",
   nodes: [
     { id: "start", kind: "start", title: "Sign in as NSTP Director (approved automatically; one account for the university)", col: 0, row: 0 },
     { id: "college", kind: "step", title: "Pick a college and open its schedule", detail: "Use the college switcher at the top, then select the term's schedule.", where: "Manage Schedules", href: "/dashboard/schedules", col: 0, row: 1 },
     { id: "add", kind: "step", title: "Add Entry → section → NSTP subject", detail: "Then the instructor (tagged for NSTP), room, day — Saturday is allowed for NSTP — and time.", where: "⋯ menu → Add Entry", href: "/dashboard/schedules", col: 0, row: 2 },
-    { id: "merge", kind: "decision", title: "Do several sections take this class together?", col: 0, row: 3 },
-    { id: "tick", kind: "step", title: "Tick the other sections under \"Merge with other sections\"", detail: "One class, one room, one instructor for all of them. Each section's own timetable is still checked; the room and instructor count once.", enforced: true, col: 1, row: 3 },
-    { id: "save", kind: "step", title: "Save", detail: "Merged classes show one line with every section and a \"Merged\" badge.", col: 0, row: 4 },
-    { id: "change", kind: "decision", title: "Need to change something later?", col: 0, row: 5 },
-    { id: "edit", kind: "step", title: "Edit the class", detail: "Move it, change the instructor or room, or add / remove sections from the merged class. Delete removes it for every section.", where: "List / Table view → Edit", href: "/dashboard/schedules", col: 1, row: 5 },
-    { id: "next", kind: "decision", title: "More NSTP classes or another college?", col: 0, row: 6 },
-    { id: "end", kind: "end", title: "NSTP placed in every college", col: 0, row: 7 },
+    { id: "save", kind: "step", title: "Save", detail: "Each section gets its own class; the room and instructor are checked for double-booking.", col: 0, row: 3 },
+    { id: "change", kind: "decision", title: "Need to change something later?", col: 0, row: 4 },
+    { id: "edit", kind: "step", title: "Edit the class", detail: "Move it or change the instructor or room.", where: "List / Table view → Edit", href: "/dashboard/schedules", col: 1, row: 4 },
+    { id: "next", kind: "decision", title: "More NSTP classes or another college?", col: 0, row: 5 },
+    { id: "end", kind: "end", title: "NSTP placed in every college", col: 0, row: 6 },
   ],
   edges: [
     { from: "start", to: "college" },
     { from: "college", to: "add" },
-    { from: "add", to: "merge" },
-    { from: "merge", to: "tick", label: "yes" },
-    { from: "tick", to: "save" },
-    { from: "merge", to: "save", label: "no" },
+    { from: "add", to: "save" },
     { from: "save", to: "change" },
     { from: "change", to: "edit", label: "yes" },
     { from: "edit", to: "change" },
@@ -266,11 +261,11 @@ const NSTP: RoleManual = {
     { from: "next", to: "end", label: "no" },
   ],
   places: [
-    { title: "Manage Schedules", body: "College switcher, Add Entry with the merge picker, edit (add / remove sections) or remove NSTP classes in any college.", href: "/dashboard/schedules" },
+    { title: "Manage Schedules", body: "College switcher, Add Entry, edit or remove NSTP classes in any college.", href: "/dashboard/schedules" },
   ],
   rules: [
     "Only the NSTP Director may add, edit or delete NSTP classes; you cannot touch any other subject.",
-    "Only NSTP classes can be merged across sections.",
+    "Merging sections is turned off — each section's class is its own. Add your instructors under Faculty and mark their hours under Faculty Availability.",
     "NSTP may be held on Saturdays; the instructor must be tagged for NSTP and available at that time in that term.",
   ],
 }

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
-import { getGecFinalizationStatus } from "@/lib/services/workflow-gates"
+import { getGecFinalizationStatus, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { createNotification } from "@/lib/notifications"
 import { recordAudit } from "@/lib/audit"
 
@@ -108,6 +108,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         summary: `${clusterRow.name} reopened GEC/GEL for ${schedule.department?.abbreviation ?? "this schedule"}`,
       })
       return NextResponse.json(apiResponse({ finalized: false }))
+    }
+
+    // Phase 2 follows Phase 1: a CIT schedule needs its laboratories plotted first.
+    if (!(await isCitLabPhaseDone(id))) {
+      return NextResponse.json(apiError(CIT_LABS_FIRST_MESSAGE), { status: 409 })
     }
 
     await db.gecFinalization.upsert({

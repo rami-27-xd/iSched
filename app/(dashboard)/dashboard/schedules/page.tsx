@@ -92,12 +92,12 @@ import { isGeUnitRole, geUnitOwnsCode, isNstpCode } from "@/lib/roles"
 // Same matcher the server validates with, so the picker never offers a faculty
 // member that saving would then reject. See lib/specialization-match.ts.
 import { facultyMatchesSubject } from "@/lib/specialization-match"
-import { GYM_ROOM_CODE, PATHFIT_FACULTY_LABEL, isPathfitCode, isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
+import { isPathfitCode, isPathfitVenueCode, isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
 import { roomTypeAllowedForSubject } from "@/lib/room-type-rules"
 // Per-day session cap (GEC/GEL 1h / 1h 30min) — same rule the server and the
 // generator enforce, so the End Time picker never offers a length the save
 // would reject. See lib/session-rules.ts.
-import { resolveMaxMinutesPerDay, formatMinutes } from "@/lib/session-rules"
+import { resolveMaxMinutesPerDay, formatMinutes, LAB_BLOCK_MINUTES } from "@/lib/session-rules"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { WorkflowActions } from "@/components/schedule/workflow-actions"
 
@@ -265,10 +265,8 @@ export default function SchedulesPage() {
   // Merged NSTP class — extra sections that take this class together with the
   // primary Section above (same faculty, room, day and time). Sent to the POST
   // route as `sectionIds`; every row shares a mergeGroupId server-side.
-  const [mergeSectionIds, setMergeSectionIds] = useState<string[]>([])
   // Edit dialog: the full section list of a merged NSTP class (add / remove).
   const [editMergeSectionIds, setEditMergeSectionIds] = useState<string[]>([])
-  const [editMergeAddId, setEditMergeAddId] = useState("")
   // Controls the faculty autocomplete dropdown visibility
   const [facultySearch, setFacultySearch] = useState("")
   const [facultyDropdownOpen, setFacultyDropdownOpen] = useState(false)
@@ -516,6 +514,14 @@ export default function SchedulesPage() {
     if (free.length === 1) setEntryForm((f) => ({ ...f, set: free[0] }))
   }, [selectedSubjectForEntry, placedSetsForEntry, entryForm.set])
 
+  // Set A and Set B always go in together: a laboratory with neither set placed
+  // is added through the paired Set A / Set B form; once one exists, the other
+  // is added on its own (it is the remaining half).
+  useEffect(() => {
+    const isLab = selectedSubjectForEntry?.type === "LABORATORY"
+    setSplitLabSets(isLab && placedSetsForEntry.size === 0)
+  }, [selectedSubjectForEntry, placedSetsForEntry])
+
   const filteredSubjects = useMemo(() => {
     let pool = subjects
 
@@ -649,17 +655,8 @@ export default function SchedulesPage() {
     )
   }
 
-  // The placeholder rooms ("TBA" — manual resolution of an Unassigned Queue
-  // item; "GYM" — where PATHFIT is held) are always valid picks, but the
-  // subject-type filter below would otherwise exclude them whenever their own
-  // room type doesn't happen to match. Always keep them in a filtered room
-  // list, appended from the unfiltered pool if the filter dropped them.
-  function ensureTbaRoom(filtered: any[], pool: any[]): any[] {
-    const missing = pool.filter(
-      (r: any) => isPlaceholderRoomCode(r.code) && !filtered.some((f: any) => f.id === r.id)
-    )
-    return missing.length > 0 ? [...filtered, ...missing] : filtered
-  }
+  // (2026-10-07: TBA is retired. The only special rooms left are the three
+  // PATHFit venues — Gymnasium, Covered Court, Field — offered to PATHFit only.)
 
   // Rooms a subject may use — the same rule the engine and the server
   // validator apply (lib/room-type-rules.ts): explicit Subject.requiredRoomType,
@@ -667,15 +664,12 @@ export default function SchedulesPage() {
   // lectures → lecture rooms. Kept strict (no "fall back to every room") so the
   // picker never offers a room the save would then reject.
   function roomsForSubject(pool: any[], subject: any): any[] {
-    if (!subject) return ensureTbaRoom(pool, pool)
+    if (!subject) return pool.filter((r: any) => !isPlaceholderRoomCode(r.code))
     if (isPathfitCode(subject.code)) {
-      // PATHFIT is held in the GYM; keep the lecture rooms available as a fallback.
-      const gym = pool.filter((r: any) => r.code === GYM_ROOM_CODE)
-      const rest = pool.filter((r: any) => r.code !== GYM_ROOM_CODE && roomTypeAllowedForSubject(r.type, subject))
-      return ensureTbaRoom([...gym, ...rest], pool)
+      // PATHFit is held in exactly three places: Gymnasium, Covered Court, Field.
+      return pool.filter((r: any) => isPathfitVenueCode(r.code))
     }
-    const matching = pool.filter((r: any) => !isPlaceholderRoomCode(r.code) && roomTypeAllowedForSubject(r.type, subject))
-    return ensureTbaRoom(matching, pool)
+    return pool.filter((r: any) => !isPlaceholderRoomCode(r.code) && roomTypeAllowedForSubject(r.type, subject))
   }
 
   // Filter rooms by subject type AND department-building restriction.
@@ -785,31 +779,6 @@ export default function SchedulesPage() {
     }
     return result
   }, [sections, entryForm.subjectId, selectedSubjectForEntry, sectionSearch, scheduleDeptId, scheduleSemesterType, isAdmin, adminProgramId])
-
-  // Sections an NSTP class can be merged with: the schedule's department, minus
-  // the primary section and any section that already has this subject.
-  // Same-year sections of the same program come first (the usual merge).
-  const mergeCandidateSections = useMemo(() => {
-    if (!entryForm.sectionId || !selectedSubjectForEntry || !isNstpCode(selectedSubjectForEntry.code)) return []
-    const code = (selectedSubjectForEntry.code ?? "").toLowerCase()
-    const already = new Set(
-      (selectedSchedule?.entries ?? [])
-        .filter((e: any) => (e.subject?.code ?? "").toLowerCase() === code)
-        .map((e: any) => e.sectionId ?? e.section?.id)
-    )
-    const primary = selectedSectionForEntry
-    const pool = (sections as any[]).filter((s: any) =>
-      s.id !== entryForm.sectionId &&
-      !already.has(s.id) &&
-      (!scheduleDeptId || s.yearLevel?.program?.departmentId === scheduleDeptId)
-    )
-    const rank = (s: any) => {
-      const sameProgram = (s.yearLevel?.programId ?? s.yearLevel?.program?.id) === (primary?.yearLevel?.programId ?? primary?.yearLevel?.program?.id)
-      const sameYear = s.yearLevel?.level === primary?.yearLevel?.level
-      return (sameProgram && sameYear ? 0 : sameYear ? 1 : sameProgram ? 2 : 3)
-    }
-    return pool.sort((a: any, b: any) => rank(a) - rank(b) || a.name.localeCompare(b.name))
-  }, [entryForm.sectionId, selectedSubjectForEntry, selectedSectionForEntry, sections, selectedSchedule?.entries, scheduleDeptId])
 
   // Filter days by faculty availability — only show days where faculty has availability set.
   // Saturday is excluded unless the subject is NSTP or the section belongs to CAM.
@@ -1263,6 +1232,29 @@ export default function SchedulesPage() {
       .map((t) => ({ time: t, available: true }))
   }, [entryForm.startTime, availableTimeOptions, occupiedSlots, selectedSubjectForEntry])
 
+  // A laboratory set is ONE continuous 3-hour block: choosing a start time fills
+  // in the end time (start + 3 hours) for the single form and for both set panels.
+  const labEndFor = (start: string) => {
+    const m = toMinsHelper(start) + LAB_BLOCK_MINUTES
+    return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`
+  }
+  useEffect(() => {
+    if (selectedSubjectForEntry?.type !== "LABORATORY" || splitLabSets || !entryForm.startTime) return
+    const end = labEndFor(entryForm.startTime)
+    if (entryForm.endTime !== end) setEntryForm((f) => ({ ...f, endTime: end }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSubjectForEntry, splitLabSets, entryForm.startTime, entryForm.endTime])
+  useEffect(() => {
+    if (!splitLabSets) return
+    if (setAEntry.startTime && setAEntry.endTime !== labEndFor(setAEntry.startTime)) {
+      setSetAEntry((s) => ({ ...s, endTime: labEndFor(s.startTime) }))
+    }
+    if (setBEntry.startTime && setBEntry.endTime !== labEndFor(setBEntry.startTime)) {
+      setSetBEntry((s) => ({ ...s, endTime: labEndFor(s.startTime) }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitLabSets, setAEntry.startTime, setAEntry.endTime, setBEntry.startTime, setBEntry.endTime])
+
   const isDraft = selectedSchedule?.status === "DRAFT"
   const isPendingApproval = selectedSchedule?.status === "PENDING_APPROVAL"
   const isPublished = selectedSchedule?.status === "PUBLISHED"
@@ -1452,27 +1444,6 @@ export default function SchedulesPage() {
   }
 
   // Apply entry filters (shared across list + calendar views)
-  // Sections an NSTP class being edited can still merge with: the schedule's
-  // department, minus those already in the class and those that already have
-  // this subject elsewhere in the schedule.
-  const editMergeCandidates = useMemo(() => {
-    if (!isNstpCode(editSelectedSubject?.code)) return []
-    const code = (editSelectedSubject?.code ?? "").toLowerCase()
-    const editing = entries.find((e: any) => e.id === editEntryId)
-    const already = new Set(
-      entries
-        .filter((e: any) => (e.subject?.code ?? "").toLowerCase() === code && !(editing?.mergeGroupId && e.mergeGroupId === editing.mergeGroupId) && e.id !== editEntryId)
-        .map((e: any) => e.sectionId ?? e.section?.id)
-    )
-    return (sections as any[])
-      .filter((s: any) =>
-        !editMergeSectionIds.includes(s.id) &&
-        !already.has(s.id) &&
-        (!scheduleDeptId || s.yearLevel?.program?.departmentId === scheduleDeptId)
-      )
-      .sort((a: any, b: any) => a.name.localeCompare(b.name))
-  }, [editSelectedSubject, entries, editEntryId, sections, editMergeSectionIds, scheduleDeptId])
-
   // A merged NSTP class is stored as one row per (section, day) sharing a
   // mergeGroupId. For display, the rows of one session collapse into a single
   // line carrying every section (`__mergedSections`) and every row id
@@ -1703,7 +1674,7 @@ export default function SchedulesPage() {
         ? "General education subjects aren't in yet, so only laboratory subjects were placed. "
         : ""
       const pathfitNote = genResult?.pathfitPlaced > 0
-        ? ` ${genResult.pathfitPlaced} PATHFIT classes placed in the GYM (faculty TBA).`
+        ? ` ${genResult.pathfitPlaced} PATHFit classes placed.`
         : ""
       if (genResult?.unassignedCount > 0) {
         toast.warning(
@@ -1857,7 +1828,6 @@ export default function SchedulesPage() {
       }
     }
 
-    const mergedIds = mergeSectionIds.length > 0 ? [sectionId, ...mergeSectionIds.filter((x) => x !== sectionId)] : undefined
     try {
       await createEntry.mutateAsync({
         scheduleId: selectedScheduleId,
@@ -1865,17 +1835,12 @@ export default function SchedulesPage() {
           ...entryForm,
           day: patternDays[0],
           days: patternDays.length > 1 ? patternDays : undefined,
-          sectionIds: mergedIds,
           facultyName: entryForm.facultyName?.trim() || null,
         },
       })
       setAddEntryOpen(false)
       resetEntryForm()
-      toast.success(
-        mergedIds
-          ? `Merged class added for ${mergedIds.length} sections${patternDays.length > 1 ? ` on ${patternDays.length} days` : ""}`
-          : patternDays.length > 1 ? `Entry added on ${patternDays.length} days` : "Entry added"
-      )
+      toast.success(patternDays.length > 1 ? `Entry added on ${patternDays.length} days` : "Entry added")
     } catch (err: any) {
       // Detect conflict errors — offer soft-validation override instead of hard-blocking
       // (e.g. a specialization mismatch: allowed manually with a warning, never on
@@ -1887,7 +1852,6 @@ export default function SchedulesPage() {
           ...entryForm,
           day: patternDays[0],
           days: patternDays.length > 1 ? patternDays : undefined,
-          sectionIds: mergedIds,
           facultyName: entryForm.facultyName?.trim() || null,
         })
       } else {
@@ -1934,7 +1898,7 @@ export default function SchedulesPage() {
       // Sequential, not parallel: if Set A fails, nothing is created and the error
       // is unambiguous. If Set A succeeds and Set B then fails, the message below
       // says so explicitly rather than leaving the chair to guess which half exists.
-      await createEntry.mutateAsync({
+      const createdA: any = await createEntry.mutateAsync({
         scheduleId: selectedScheduleId,
         entry: { ...shared, ...setAEntry, set: "A" },
       })
@@ -1944,7 +1908,13 @@ export default function SchedulesPage() {
           entry: { ...shared, ...setBEntry, set: "B" },
         })
       } catch (err: any) {
-        toast.error(`Set A was added, but Set B failed: ${err.message}`)
+        // Set A and Set B always go in together — take Set A back out so a
+        // lone Set A is never left on the schedule.
+        const firstA = Array.isArray(createdA) ? createdA[0] : createdA
+        if (firstA?.id) {
+          await deleteEntry.mutateAsync({ scheduleId: selectedScheduleId, entryId: firstA.id }).catch(() => {})
+        }
+        toast.error(`Set B could not be added (${err.message}), so Set A was not kept — both sets must be scheduled together.`)
         return
       }
       setAddEntryOpen(false)
@@ -1995,7 +1965,6 @@ export default function SchedulesPage() {
     setSplitLabSets(false)
     setSetAEntry({ roomId: "", day: "", startTime: "", endTime: "" })
     setSetBEntry({ roomId: "", day: "", startTime: "", endTime: "" })
-    setMergeSectionIds([])
     setEntryMissing([])
   }
 
@@ -2019,7 +1988,6 @@ export default function SchedulesPage() {
       ? [...new Set(entries.filter((e: any) => e.mergeGroupId === entry.mergeGroupId).map((e: any) => e.sectionId ?? e.section?.id))]
       : [entry.sectionId ?? entry.section?.id]
     setEditMergeSectionIds(groupSections.filter(Boolean) as string[])
-    setEditMergeAddId("")
     setEditSectionSearch("")
     setEditMissing([])
     setEditEntryOpen(true)
@@ -3487,20 +3455,11 @@ export default function SchedulesPage() {
                   onChange={(e) => {
                     const subjectId = e.target.value
                     const picked = (subjects as any[]).find((s: any) => s.id === subjectId)
-                    // PATHFIT defaults: venue = GYM, faculty = TBA (same as auto-generation).
-                    const pathfitDefaults = picked && isPathfitCode(picked.code)
-                      ? (() => {
-                          const gym = (departmentRooms as any[]).find((r: any) => r.code === GYM_ROOM_CODE)
-                          const tba = (facultyList as any[]).find((f: any) => isTbaFacultyEmployeeId(f.employeeId))
-                          return {
-                            ...(gym ? { roomId: gym.id } : {}),
-                            ...(tba ? { facultyId: tba.id, facultyName: PATHFIT_FACULTY_LABEL } : {}),
-                          }
-                        })()
-                      : {}
-                    setEntryForm((f) => ({ ...f, subjectId, set: "", ...pathfitDefaults }))
-                    if ("facultyId" in pathfitDefaults) setFacultySearch("")
-                    setSplitLabSets(false)
+                    // A different subject can need a different room (PATHFit → one of
+                    // the three venues), so the previous room is cleared.
+                    setEntryForm((f) => ({ ...f, subjectId, set: "", roomId: "" }))
+                    // Lab sets always go in together: default the paired Set A / Set B form on.
+                    setSplitLabSets(picked?.type === "LABORATORY")
                     setEntryMissing((m) => m.filter((x) => x !== "subject"))
                   }}
                   className={`w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring${missingRing(entryMissing, "subject")}`}
@@ -3524,31 +3483,14 @@ export default function SchedulesPage() {
                     exists, the single Set picker below (unaffected by this toggle)
                     is how the remaining one gets added. */}
                 {placedSetsForEntry.size === 0 && (
-                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-input bg-muted/30 px-3 py-2.5">
-                    <span className="flex items-center gap-2 text-sm font-medium">
-                      <Users className="h-4 w-4 text-[#1B4332]" />
-                      Split into lab sets
-                    </span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={splitLabSets}
-                      onClick={() => setSplitLabSets((v) => !v)}
-                      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                        splitLabSets ? "bg-[#1B4332]" : "bg-input"
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                          splitLabSets ? "translate-x-4" : "translate-x-0.5"
-                        }`}
-                      />
-                    </button>
-                  </label>
+                  <div className="flex items-center gap-2 rounded-lg border border-input bg-muted/30 px-3 py-2.5 text-sm font-medium">
+                    <Users className="h-4 w-4 shrink-0 text-[#1B4332]" />
+                    Set A and Set B are scheduled together
+                  </div>
                 )}
                 {splitLabSets ? (
                   <p className="text-[10px] text-muted-foreground">
-                    Set A and Set B will both be created from this one form — each with its own Room, Day and Time below.
+                    Each set is one continuous 3-hour class. Both will be created from this form — each with its own Room, Day and Time below.
                   </p>
                 ) : (
                   <div className="grid gap-2">
@@ -3572,57 +3514,6 @@ export default function SchedulesPage() {
                     </p>
                   </div>
                 )}
-              </div>
-            )}
-            {/* Merged NSTP sections — an NSTP class routinely combines two or
-                more sections into one class (same faculty, room, day and time).
-                Pick the extra sections here; each gets its own row sharing a
-                mergeGroupId, and the views show them as one line. NSTP only. */}
-            {entryForm.sectionId && selectedSubjectForEntry && isNstpCode(selectedSubjectForEntry.code) && (
-              <div className="grid gap-2 rounded-lg border border-input bg-muted/30 px-3 py-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 text-sm font-medium">
-                    <Users className="h-4 w-4 text-[#1B4332]" />
-                    Merge with other sections
-                    <span className="text-[10px] font-normal text-muted-foreground">(optional)</span>
-                  </span>
-                  {mergeSectionIds.length > 0 && (
-                    <button type="button" onClick={() => setMergeSectionIds([])} className="text-[10px] text-muted-foreground underline underline-offset-2">
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
-                  {mergeCandidateSections.length === 0 ? (
-                    <p className="text-[10px] text-muted-foreground">No other sections available in this department.</p>
-                  ) : mergeCandidateSections.map((s: any) => {
-                    const checked = mergeSectionIds.includes(s.id)
-                    return (
-                      <label
-                        key={s.id}
-                        className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
-                          checked ? "bg-[#1B4332]/10 border-[#1B4332] text-[#1B4332]" : "border-input text-muted-foreground hover:bg-muted"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => setMergeSectionIds((prev) => checked ? prev.filter((x) => x !== s.id) : [...prev, s.id])}
-                          className="rounded border-input"
-                        />
-                        {s.name}
-                        {s.yearLevel?.program?.abbreviation && (
-                          <span className="text-[10px] font-normal text-muted-foreground">({s.yearLevel.program.abbreviation} Y{s.yearLevel?.level})</span>
-                        )}
-                      </label>
-                    )
-                  })}
-                </div>
-                <p className="text-[10px] text-muted-foreground">
-                  {mergeSectionIds.length > 0
-                    ? `One class for ${mergeSectionIds.length + 1} sections — ${[selectedSectionForEntry?.name, ...mergeSectionIds.map((id) => sections.find((x: any) => x.id === id)?.name)].filter(Boolean).join(" + ")}. Each section's timetable is checked; the shared room and faculty count once.`
-                    : "Sections that take this NSTP class together, in the same room at the same time."}
-                </p>
               </div>
             )}
             {/* Faculty (text autocomplete) & Room (department-restricted). Room drops
@@ -4126,27 +4017,11 @@ export default function SchedulesPage() {
                       )
                     })}
                   </div>
-                  <select
-                    value={editMergeAddId}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      if (v) setEditMergeSectionIds((prev) => prev.includes(v) ? prev : [...prev, v])
-                      setEditMergeAddId("")
-                    }}
-                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  >
-                    <option value="">+ Merge another section…</option>
-                    {editMergeCandidates.map((s: any) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}{s.yearLevel?.program?.abbreviation ? ` (${s.yearLevel.program.abbreviation} Y${s.yearLevel?.level})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[10px] text-muted-foreground">
-                    {editMergeSectionIds.length > 1
-                      ? "One NSTP class for all of these sections — same faculty, room and time. Changes below apply to every section."
-                      : "Add sections to merge them into this NSTP class."}
-                  </p>
+                  {editMergeSectionIds.length > 1 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      This class was merged earlier. Merging is turned off — remove a section to split it back; changes apply to every section left in it.
+                    </p>
+                  )}
                 </div>
               ) : (
               <div className="space-y-1.5">
@@ -4372,7 +4247,7 @@ export default function SchedulesPage() {
                 <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
                 <p className="text-xs text-amber-800">
                   {userRole === "PATHFIT"
-                    ? "Places a PATHFit class for every section of this department — one continuous block in the GYM, faculty TBA. Existing PATHFit entries in this schedule will be replaced; nothing else is touched."
+                    ? "Places a PATHFit class for every section of this department — one continuous block with one of your PATHFit instructors, in the Gymnasium, Covered Court or Field. Existing PATHFit entries in this schedule will be replaced; nothing else is touched."
                     : isSuperAdmin
                     ? "Places the general education subjects under your area. PATHFit is generated by the PATHFit Director and NSTP is added by hand by the NSTP Director. Existing entries for your subjects will be replaced."
                     : "Places your program's major subjects. Check that faculty availability and subject data are up to date. When your classes are complete, mark your subjects as done — the schedule goes to the Dean once every Program Chairperson is done. Regenerating reopens your done mark."}

@@ -477,3 +477,29 @@ PUBLISHED ──(SUPER_ADMIN reset / unpublish)──► DRAFT        CAS schedu
   than hand-editing the map. GEC/GEL/PATHFit/NSTP are never created outside CAS; the three GE electives these curricula
   introduced (GEL04 Living in the IT Era, GEL05 The Entrepreneurial Mind, GEL08 Human Reproduction) are upserted into CAS
   and owned by the MNS department head. CEN and CAM documents cover the 2nd semester only.
+
+---
+
+## Update 2026-10-07 (panel round)
+
+- **Durations** (`lib/session-rules.ts`): a laboratory set is ALWAYS one continuous 3-hour block (`LAB_BLOCK_MINUTES`, whatever
+  the unit count — engine `getSessionDayGroups` + `sessionLengthViolation` in `validateEntry`, [HARD]); a lecture is never a
+  single 3-hour block (single-session fallback only for lectures under 3 h). PATHFit / NSTP are exempt. Add Entry fills the
+  end time (start + 3 h) for labs.
+- **Set A / Set B pairing**: `SchedulingEngine.generate()` drops a lone set (and empty-domain siblings never run) and reports
+  both; Add Entry creates both sets from one form and rolls Set A back if Set B fails (the "split" toggle is gone — pairing is
+  not optional; once one set exists the other is added on its own).
+- **CIT three phases** (`workflow-gates.ts`: `isCitLabPhaseDone`): Phase 1 CIT PC = laboratories only → Phase 2 Department
+  Chairpersons plot/finalize GEC for CIT (blocked until labs exist: generate, entries POST, gec-finalize) → Phase 3 CIT PC =
+  lectures only (generate + entries POST).
+- **Faculty specializations persist**: `syncFacultySpecializations` now MERGES `sectionCounts` (max of saved and actual) instead
+  of replacing them; the Faculty edit dialog carries over tags outside the picker (other program / GEC code tags).
+- **PATHFit / NSTP Directors** may Add Faculty (Faculty + Faculty Availability pages, `lib/services/unit-faculty.ts`): their
+  faculty = CAS faculty tagged for their subjects (≥ 1 tag required on create). `GET /api/subjects` is limited to their family.
+- **TBA is retired**: no TBA instructor/room offered or created. PATHFit venues are exactly Gymnasium (`GYM`, 4 at once),
+  Covered Court (`COVERED_COURT`, 4) and Field (`FIELD`, 2) — `PATHFIT_VENUES` in `lib/sentinels.ts`, created on demand by
+  `ensurePathfitVenues()`. `pathfit-generation.ts` assigns real PATHFit instructors (availability, hours cap, no double-booking)
+  and a venue with a free place; `validateEntry` enforces venue-only rooms for PATHFit and the concurrency limit ([HARD]).
+  Old TBA entries already in the DB are left as they are.
+- **NSTP merging is off**: POST/PATCH refuse adding sections; the Add dialog picker is gone; already-merged classes still
+  display and can be split by removing sections.

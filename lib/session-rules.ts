@@ -12,6 +12,34 @@
 
 export const DEFAULT_GEC_MAX_MINUTES_PER_DAY = 90
 
+/**
+ * Laboratory sessions are always ONE continuous 3-hour block per set/section,
+ * whatever the subject's unit count says (a 1-unit lab is still 3 hours of lab
+ * time). Lectures are the opposite: spread over several days, never one 3-hour
+ * block. PATHFit and NSTP keep their own shapes and are exempt from both.
+ */
+export const LAB_BLOCK_MINUTES = 180
+
+export function isPathfitOrNstpCode(code: string | null | undefined): boolean {
+  const c = (code ?? "").toUpperCase()
+  return c.startsWith("PATHFIT") || c.startsWith("NST")
+}
+
+/** Breaks the lab-block / lecture-split rule for a manually placed session; null when it is fine. */
+export function sessionLengthViolation(
+  subject: { code?: string | null; type?: string | null },
+  sessionMinutes: number
+): string | null {
+  if (isPathfitOrNstpCode(subject.code)) return null
+  if (subject.type === "LABORATORY" && sessionMinutes !== LAB_BLOCK_MINUTES) {
+    return `${subject.code} is a laboratory subject — each set must be one continuous 3-hour block (this session is ${formatMinutes(sessionMinutes)}).`
+  }
+  if (subject.type !== "LABORATORY" && sessionMinutes >= LAB_BLOCK_MINUTES) {
+    return `${subject.code} is a lecture subject — it cannot be one ${formatMinutes(sessionMinutes)} block. Spread its hours over several days (for example MWF or TTh).`
+  }
+  return null
+}
+
 /** The choices offered on the Subjects page. */
 export const SESSION_CAP_OPTIONS: { minutes: number; label: string }[] = [
   { minutes: 60, label: "1 hour" },

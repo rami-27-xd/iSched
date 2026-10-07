@@ -3,7 +3,8 @@ import { getAuthenticatedUser, getCurrentUser, canManageBuilding } from "@/lib/a
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
-import { GYM_ROOM_CODE, TBA_ROOM_CODE } from "@/lib/sentinels"
+import { PATHFIT_VENUE_CODES, TBA_ROOM_CODE } from "@/lib/sentinels"
+import { ensurePathfitVenues } from "@/lib/services/sentinels"
 
 export async function GET(req: Request) {
   try {
@@ -52,6 +53,9 @@ export async function GET(req: Request) {
     // regardless of the type/building/department filters above, so it is always
     // selectable in Add/Edit Entry. The "TBA" placeholder room is hidden
     // everywhere.
+    // The three PATHFit venues (Gymnasium, Covered Court, Field) are created on
+    // demand for the PATHFit Director so they can always be chosen.
+    if (dbUser?.role === "PATHFIT") await ensurePathfitVenues()
     const rooms = await db.room.findMany({
       where: {
         OR: [
@@ -62,7 +66,7 @@ export async function GET(req: Request) {
             ...(buildingId ? { buildingId } : {}),
             ...(allowedBuildingIds ? { buildingId: { in: allowedBuildingIds } } : {}),
           },
-          { code: GYM_ROOM_CODE },
+          { code: { in: [...PATHFIT_VENUE_CODES] } },
         ],
       },
       select: {

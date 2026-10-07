@@ -59,9 +59,15 @@ export async function syncFacultySpecializations(facultyId: string): Promise<voi
     totalMinutes += eh * 60 + em - (sh * 60 + sm)
   }
 
-  const sectionCounts: Record<string, number> = {}
+  // MERGE into what the chair saved — never replace it. Replacing wiped every
+  // tagged subject that had no class yet, so the next Edit showed (and re-saved)
+  // only the subjects already scheduled and the specializations "disappeared".
+  const current = await db.faculty.findUnique({ where: { id: facultyId }, select: { sectionCounts: true } })
+  const sectionCounts: Record<string, number> = {
+    ...((current?.sectionCounts as Record<string, number> | null) ?? {}),
+  }
   for (const [title, sections] of map) {
-    sectionCounts[title] = sections.size
+    sectionCounts[title] = Math.max(sectionCounts[title] ?? 0, sections.size)
   }
 
   await db.faculty.update({

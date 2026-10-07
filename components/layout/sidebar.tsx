@@ -60,8 +60,8 @@ export interface SidebarProps {
 const navItems: NavItem[] = [
   { title: 'Dashboard',            href: '/dashboard',              icon: LayoutDashboard, roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP', 'FACULTY'], group: 'menu' },
   { title: 'Manage Schedules',     href: '/dashboard/schedules',    icon: CalendarDays,    roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'], group: 'menu' },
-  { title: 'Faculty Availability', href: '/dashboard/availability', icon: Clock,           roles: ['SUPER_ADMIN', 'ADMIN'], group: 'menu' },
-  { title: 'Faculty',              href: '/dashboard/faculty',      icon: Users,           roles: ['SUPER_ADMIN', 'ADMIN'], group: 'menu' },
+  { title: 'Faculty Availability', href: '/dashboard/availability', icon: Clock,           roles: ['SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'], group: 'menu' },
+  { title: 'Faculty',              href: '/dashboard/faculty',      icon: Users,           roles: ['SUPER_ADMIN', 'ADMIN', 'PATHFIT', 'NSTP'], group: 'menu' },
   { title: 'Departments',          href: '/dashboard/subjects',     icon: BookOpen,        roles: ['DEAN', 'SUPER_ADMIN', 'ADMIN'], group: 'menu' },
   { title: 'Buildings',            href: '/dashboard/rooms',        icon: Building2,       roles: ['SUPER_ADMIN', 'ADMIN'], group: 'menu' },
   { title: 'User Management',      href: '/dashboard/users',        icon: Users,           roles: ['DEAN'], group: 'others' },

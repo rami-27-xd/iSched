@@ -1,7 +1,6 @@
 /**
- * Seeds every placeholder resource the scheduler relies on:
- *   - "TBA" faculty + "TBA" room (manual resolution of unassigned items)
- *   - "GYM" building + room       (venue of every auto-generated PATHFIT class)
+ * Creates the three PATHFit venues (Gymnasium, Covered Court, Field):
+ *   (TBA faculty and room are retired.)
  *
  * All upserts — safe to re-run. The generate route calls the same helpers on
  * every Dept Chair run, so this script is only needed to pre-create the rows
@@ -10,14 +9,13 @@
  * Run:  npx tsx --env-file=.env prisma/seed-sentinels.ts
  */
 import { db } from "../lib/db"
-import { ensureTbaFaculty, ensureTbaRoom, ensureGymRoom } from "../lib/services/sentinels"
+import { ensurePathfitVenues } from "../lib/services/sentinels"
 
 async function main() {
-  const [tbaFaculty, tbaRoom, gym] = await Promise.all([ensureTbaFaculty(), ensureTbaRoom(), ensureGymRoom()])
-  console.log("Placeholders ready:")
-  console.log(`  TBA faculty: ${tbaFaculty.id}`)
-  console.log(`  TBA room:    ${tbaRoom.id}`)
-  console.log(`  GYM room:    ${gym.id} (building ${gym.buildingId})`)
+  // TBA faculty / room are retired — only the three PATHFit venues are created.
+  const venues = await ensurePathfitVenues()
+  console.log("PATHFit venues ready:")
+  for (const [code, id] of Object.entries(venues)) console.log(`  ${code.padEnd(14)} ${id}`)
 }
 
 main().catch((e) => { console.error(e); process.exit(1) }).finally(() => db.$disconnect())

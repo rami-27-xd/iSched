@@ -6,6 +6,7 @@ import { notifyAllSuperAdmins } from "@/lib/notifications"
 import { recordAudit } from "@/lib/audit"
 import { TBA_EMPLOYEE_ID } from "@/lib/sentinels"
 import { isFacultyType, maxUnitsForType, DEFAULT_HOURS_BY_TYPE } from "@/lib/faculty-types"
+import { isUnitRole, getUnitSubjects, facultyBelongsToUnit, type UnitRole } from "@/lib/services/unit-faculty"
 
 export async function GET(req: Request) {
   try {
@@ -91,11 +92,12 @@ export async function GET(req: Request) {
           ).map((r) => r.facultyId as string)
         : []
 
-    const faculty = await db.faculty.findMany({
+    // The "TBA" placeholder is gone from every list and picker — every class
+    // is taught by a real, named instructor.
+    let faculty = await db.faculty.findMany({
       where: {
         OR: [
           { ...scopeFilter, employeeId: { not: TBA_EMPLOYEE_ID } },
-          ...(dbUser?.role === "PATHFIT" ? [{ employeeId: TBA_EMPLOYEE_ID }] : []),
           ...(allocatedIds.length ? [{ id: { in: allocatedIds } }] : []),
         ],
       },
@@ -106,6 +108,13 @@ export async function GET(req: Request) {
       },
       orderBy: { user: { lastName: "asc" } },
     })
+
+    // PATHFit / NSTP Directors manage their own instructors only — CAS faculty
+    // tagged for their subjects (see lib/services/unit-faculty.ts).
+    if (isUnitRole(dbUser?.role)) {
+      const unitSubjects = await getUnitSubjects(dbUser!.role as UnitRole)
+      faculty = faculty.filter((f) => facultyBelongsToUnit(f.specializations, unitSubjects))
+    }
 
     return NextResponse.json(apiResponse(faculty))
   } catch (error) {
@@ -121,9 +130,9 @@ export async function POST(req: Request) {
       return NextResponse.json(apiError("Unauthorized"), { status: 401 })
     }
 
-    // Only SUPER_ADMIN and ADMIN can add faculty
+    // Chairs and the PATHFit / NSTP Directors can add faculty
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "PATHFIT", "NSTP"].includes(dbUser.role)) {
       return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
     }
 
@@ -144,8 +153,20 @@ export async function POST(req: Request) {
       return NextResponse.json(apiError("Department is required"), { status: 400 })
     }
 
-    // ADMIN (Program Chair) can only create faculty in their own department
-    if (dbUser.role === "ADMIN") {
+    // A Director's instructor must be tagged for the Director's own subjects,
+    // otherwise the new record would belong to nobody's list.
+    if (isUnitRole(dbUser.role)) {
+      const unitSubjects = await getUnitSubjects(dbUser.role)
+      if (!facultyBelongsToUnit(specializations, unitSubjects)) {
+        return NextResponse.json(
+          apiError(`Pick at least one ${dbUser.role === "PATHFIT" ? "PATHFit" : "NSTP"} subject in Specializations for this instructor`),
+          { status: 400 }
+        )
+      }
+    }
+
+    // ADMIN (Program Chair) / Directors can only create faculty in their own department
+    if (dbUser.role === "ADMIN" || isUnitRole(dbUser.role)) {
       const adminDeptId = getUserDepartmentId(dbUser)
       if (!adminDeptId || departmentId !== adminDeptId) {
         return NextResponse.json(

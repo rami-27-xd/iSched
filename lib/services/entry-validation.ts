@@ -4,9 +4,9 @@
 import { db } from "@/lib/db"
 import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 import { specializationsCoverSubject } from "@/lib/specialization-match"
-import { isPlaceholderRoomCode, isTbaFacultyEmployeeId } from "@/lib/sentinels"
+import { isPlaceholderRoomCode, isTbaFacultyEmployeeId, isPathfitVenueCode, pathfitVenueLimit, isPathfitCode } from "@/lib/sentinels"
 import { describeRequiredRoomTypes, roomTypeAllowedForSubject } from "@/lib/room-type-rules"
-import { resolveMaxMinutesPerDay, formatMinutes } from "@/lib/session-rules"
+import { resolveMaxMinutesPerDay, formatMinutes, sessionLengthViolation } from "@/lib/session-rules"
 import { DAY_START_TIME, DAY_END_TIME } from "@/lib/constants"
 import { MAX_UNITS_ANY_TYPE, formatFacultyType } from "@/lib/faculty-types"
 
@@ -265,6 +265,9 @@ export async function validateEntry(
   if (subject) {
     const cap = resolveMaxMinutesPerDay(subject)
     const sessionMinutes = toMinutes(entry.endTime) - toMinutes(entry.startTime)
+    // Lab = one continuous 3-hour block; lecture = never a single 3-hour block.
+    const lengthProblem = sessionLengthViolation(subject, sessionMinutes)
+    if (lengthProblem) return `${HARD_CONFLICT_PREFIX}${lengthProblem}`
     if (cap !== null && sessionMinutes > cap) {
       return `${HARD_CONFLICT_PREFIX}${subject.code} may run for at most ${formatMinutes(cap)} per day — this session is ${formatMinutes(sessionMinutes)} (${entry.startTime}–${entry.endTime}). Split it across more days, or change the subject's per-day limit on the Subjects page.`
     }
@@ -274,6 +277,19 @@ export async function validateEntry(
   // or by hand. Never overridable (same tier as double-booking).
   if (entry.startTime < DAY_START_TIME || entry.endTime > DAY_END_TIME) {
     return `${HARD_CONFLICT_PREFIX}Classes must be scheduled between 7:30 AM and 8:00 PM — this session runs ${entry.startTime}-${entry.endTime}.`
+  }
+
+  // 0a3. PATHFit venues — a PATHFit class is held ONLY in the Gymnasium, Covered
+  // Court or Field, and those three are for PATHFit only. Never overridable.
+  if (subject && roomAccess) {
+    const isPathfit = isPathfitCode(subject.code)
+    const isVenue = isPathfitVenueCode(roomAccess.code)
+    if (isPathfit && !isVenue) {
+      return `${HARD_CONFLICT_PREFIX}PATHFit classes are held in the Gymnasium, the Covered Court or the Field only — ${roomAccess.code} is not one of them.`
+    }
+    if (!isPathfit && isVenue) {
+      return `${HARD_CONFLICT_PREFIX}The Gymnasium, Covered Court and Field are reserved for PATHFit classes.`
+    }
   }
 
   // 0. Inactive faculty check — either Faculty.isActive or User.isActive must be true
@@ -364,6 +380,22 @@ export async function validateEntry(
   )
   if (roomConflict) {
     return `${HARD_CONFLICT_PREFIX}Room conflict: ${roomConflict.room?.code ?? "Room"} is already booked on ${entry.day} (${roomConflict.startTime}-${roomConflict.endTime}) for "${roomConflict.subject?.code}"${whereClause(scheduleId, roomConflict)}`
+  }
+
+  // 2b. PATHFit venue concurrency — a venue may host only so many PATHFit classes
+  // at the same moment (Gymnasium 4, Covered Court 4, Field 2).
+  if (isPathfitVenueCode(roomAccess?.code)) {
+    const limit = pathfitVenueLimit(roomAccess?.code)
+    const running = allEntries.filter(
+      (e) =>
+        e.roomId === entry.roomId &&
+        e.day === entry.day &&
+        !sameMergedClass(e) &&
+        timesOverlap(e.startTime, e.endTime, entry.startTime, entry.endTime)
+    ).length
+    if (running >= limit) {
+      return `${HARD_CONFLICT_PREFIX}Venue full: the ${roomAccess?.code === "GYM" ? "Gymnasium" : roomAccess?.code === "FIELD" ? "Field" : "Covered Court"} can hold at most ${limit} PATHFit classes at the same time, and ${running} already meet on ${entry.day} during ${entry.startTime}-${entry.endTime}.`
+    }
   }
 
   // 3. Section overlap — same section, same day, overlapping times (within schedule only —

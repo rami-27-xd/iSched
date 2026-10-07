@@ -1,4 +1,5 @@
 import { specializationsCoverSubject } from '@/lib/specialization-match'
+import { LAB_BLOCK_MINUTES, isPathfitOrNstpCode } from '@/lib/session-rules'
 // Constraint-Based Scheduling Engine with Backtracking Algorithm
 // Uses MRV (Minimum Remaining Values) and LCV (Least Constraining Value) heuristics
 //
@@ -443,7 +444,47 @@ export class SchedulingEngine {
     return tasks
   }
 
+  /**
+   * Set A / Set B pairing (hard rule): a laboratory is never left half-placed.
+   * Whenever only one of a (subject, section)'s two sets found a slot, that set
+   * is withdrawn too and both are reported as unplaced — the chair then fixes the
+   * cause (faculty, room, availability) and regenerates, instead of discovering a
+   * lone Set A with no Set B.
+   */
   async generate(): Promise<GenerationResult> {
+    const result = await this.generateRaw()
+    const sets = new Map<string, Set<'A' | 'B'>>()
+    for (const a of result.assignments) {
+      if (!a.set) continue
+      const key = `${a.subjectId}__${a.sectionId}`
+      if (!sets.has(key)) sets.set(key, new Set())
+      sets.get(key)!.add(a.set)
+    }
+    const orphaned = new Set<string>()
+    for (const [key, s] of sets) if (s.size < 2) orphaned.add(key)
+    if (orphaned.size === 0) return result
+
+    const taskByKey = new Map(this.tasks.map(t => [`${t.subjectId}__${t.sectionId}`, t]))
+    const unassigned = [...result.unassigned]
+    for (const key of orphaned) {
+      const t = taskByKey.get(key)
+      if (!t) continue
+      unassigned.push({
+        subjectId: t.subjectId,
+        subjectCode: t.subject.code,
+        subjectTitle: t.subject.title,
+        sectionId: t.sectionId,
+        sectionName: t.section.name,
+        reason: 'Set A and Set B must be scheduled together, but only one of them could be placed — neither was kept. Check the faculty, room and availability for this laboratory.',
+      })
+    }
+    return {
+      assignments: result.assignments.filter(a => !(a.set && orphaned.has(`${a.subjectId}__${a.sectionId}`))),
+      unassigned,
+    }
+  }
+
+  private async generateRaw(): Promise<GenerationResult> {
     // ── Priority pass: placeholder-assigned tasks (PATHFIT → TBA / GYM) ──────
     // Placed before anything else, against a clean board that holds only the
     // locked entries. Their placements are then treated exactly like locked
@@ -481,9 +522,17 @@ export class SchedulingEngine {
     const emptyDomainTasks: SchedulingTask[] = []
     const schedulableTasks: SchedulingTask[] = []
 
+    // A lab's Set A and Set B stand or fall together: if either has no possible
+    // slot at all, neither is attempted.
+    const emptyPairKeys = new Set<string>()
     for (const task of this.tasks) {
       const candidates = this.taskCandidates.get(task.taskId)
-      if (!candidates || candidates.length === 0) {
+      if (task.set && (!candidates || candidates.length === 0)) emptyPairKeys.add(`${task.subjectId}__${task.sectionId}`)
+    }
+    for (const task of this.tasks) {
+      const candidates = this.taskCandidates.get(task.taskId)
+      const pairBlocked = !!task.set && emptyPairKeys.has(`${task.subjectId}__${task.sectionId}`)
+      if (!candidates || candidates.length === 0 || pairBlocked) {
         emptyDomainTasks.push(task)
       } else {
         schedulableTasks.push(task)
@@ -966,8 +1015,10 @@ export class SchedulingEngine {
     const cap = subject.maxMinutesPerDay && subject.maxMinutesPerDay > 0 ? subject.maxMinutesPerDay : null
 
     if (subject.type === 'LABORATORY') {
-      // Labs: single continuous block on any one day (never split)
-      const mins = Math.max(60, h * 60)
+      // Labs: ONE continuous 3-hour block per set on a single day (never split,
+      // never shorter) — independent of the subject's unit count, so a 1-unit
+      // lab is still 3 hours, not the 1-hour slot its unit count implies.
+      const mins = LAB_BLOCK_MINUTES
       const labPatterns = allDays.map(d => ({ days: [d], minutesEach: mins }))
       return cap ? labPatterns.filter(p => p.minutesEach <= cap) : labPatterns
     }
@@ -984,8 +1035,12 @@ export class SchedulingEngine {
     const totalMins = Math.max(60, h * 60)
     const singleSessionPatterns = allDays.map(d => ({ days: [d] as DayOfWeek[], minutesEach: totalMins }))
 
-    // Return distributed first (preferred), single-session last (fallback)
-    const patterns = [...distributedPatterns, ...singleSessionPatterns]
+    // A lecture of 3+ hours is never one continuous 3-hour block (that shape is
+    // reserved for labs), so the single-session fallback only exists for short
+    // lectures. PATHFit/NSTP never come through here with a 3-hour shape rule.
+    const patterns = totalMins >= LAB_BLOCK_MINUTES && !isPathfitOrNstpCode(subject.code)
+      ? [...distributedPatterns]
+      : [...distributedPatterns, ...singleSessionPatterns]
     if (!cap) return patterns
     // With a cap the single-block fallback is (for a 3-hour GEC) exactly what
     // must never happen, so it drops out here along with any distributed

@@ -11,7 +11,7 @@ import { detectCrossScheduleConflicts, type CrossScheduleEntry } from "@/lib/ser
 import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
 import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
 import { resolveMaxMinutesPerDay } from "@/lib/session-rules"
-import { isGecFinalized, GEC_FIRST_MESSAGE, reopenProgramIfStale } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { runPathfitGeneration } from "@/lib/services/pathfit-generation"
 import { recordAudit } from "@/lib/audit"
 
@@ -214,10 +214,20 @@ export async function POST(
     // only during this stage instead of blocking it outright, so "Generate" still
     // does something useful (auto-places the labs) rather than just erroring.
     let citLabsOnlyStage = false
+    let citLecturesOnlyStage = false
+    // Phase 2 (Department Chairpersons' GEC/GEL) cannot start in a CIT schedule
+    // before Phase 1 (CIT laboratories) has been plotted.
+    if (isCasInjectingOther && !(await isCitLabPhaseDone(id))) {
+      return NextResponse.json(
+        { success: false, error: "CIT laboratories are not plotted yet", details: [CIT_LABS_FIRST_MESSAGE] },
+        { status: 409 }
+      )
+    }
     if (isAdmin) {
       const gecReady = await isGecFinalized(id)
       if (isCitAdmin) {
         citLabsOnlyStage = !gecReady
+        citLecturesOnlyStage = gecReady
       } else if (!gecReady) {
         // Every other Program Chair has no pre-plot stage: their whole major
         // load waits for all three CAS cluster chairpersons to finalize GEC/GEL.
@@ -238,6 +248,8 @@ export async function POST(
           id: { notIn: citLockedLabSubjectIds },
           // Labs-only pre-plot stage — restrict to LABORATORY subjects until GEC exists.
           ...(citLabsOnlyStage ? { type: "LABORATORY" } : {}),
+          // Phase 3 — once GEC/GEL is final, the CIT chair generates lectures only.
+          ...(citLecturesOnlyStage ? { type: "LECTURE" } : {}),
           // ADMIN (Program Chair): major subjects only — no GEC (Dept Chair handles those)
           OR: [
             // This program's specific major subjects — Subject.semester is authoritative

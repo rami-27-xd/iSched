@@ -5,6 +5,7 @@ import { apiResponse, apiError } from "@/lib/api-helpers"
 import { isFacultyType, maxUnitsForType, DEFAULT_HOURS_BY_TYPE } from "@/lib/faculty-types"
 import { recordAudit } from "@/lib/audit"
 import { createAdminClient } from "@/lib/supabase/admin"
+import { isUnitRole, getUnitSubjects, facultyBelongsToUnit } from "@/lib/services/unit-faculty"
 
 /**
  * Write-permission guard for faculty records:
@@ -25,19 +26,29 @@ async function checkFacultyWriteAccess(facultyId: string): Promise<
   { error: NextResponse; dbUser?: never } | { error: null; dbUser: any }
 > {
   const dbUser = await getCurrentUser()
-  if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
+  if (!dbUser || !["SUPER_ADMIN", "ADMIN", "PATHFIT", "NSTP"].includes(dbUser.role)) {
     return { error: NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 }) }
   }
 
   const target = await db.faculty.findUnique({
     where: { id: facultyId },
-    select: { departmentId: true, clusterId: true },
+    select: { departmentId: true, clusterId: true, specializations: true },
   })
   if (!target) {
     return { error: NextResponse.json(apiError("Faculty not found"), { status: 404 }) }
   }
 
-  if (dbUser.role === "ADMIN" || dbUser.role === "SUPER_ADMIN") {
+  // PATHFit / NSTP Directors: only their own instructors (tagged for their subjects).
+  if (isUnitRole(dbUser.role)) {
+    const unitSubjects = await getUnitSubjects(dbUser.role)
+    if (!facultyBelongsToUnit(target.specializations, unitSubjects)) {
+      return {
+        error: NextResponse.json(apiError("Forbidden — this instructor is not one of yours"), { status: 403 }),
+      }
+    }
+  }
+
+  if (dbUser.role === "ADMIN" || dbUser.role === "SUPER_ADMIN" || isUnitRole(dbUser.role)) {
     const chairDeptId = getUserDepartmentId(dbUser)
     if (!chairDeptId || target.departmentId !== chairDeptId) {
       return {
@@ -122,7 +133,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       current.maxHoursPerWeek < DEFAULT_HOURS_BY_TYPE[employmentType as "REGULAR" | "COSI"]
 
     // ADMIN cannot move faculty into another department
-    if (access.dbUser.role === "ADMIN" && departmentId !== undefined) {
+    if ((access.dbUser.role === "ADMIN" || isUnitRole(access.dbUser.role)) && departmentId !== undefined) {
       const adminDeptId = getUserDepartmentId(access.dbUser)
       if (departmentId !== adminDeptId) {
         return NextResponse.json(

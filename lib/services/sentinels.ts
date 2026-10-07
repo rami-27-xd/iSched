@@ -1,6 +1,6 @@
 import { db } from "@/lib/db"
 import {
-  TBA_EMPLOYEE_ID, TBA_ROOM_CODE, GYM_ROOM_CODE, GYM_BUILDING_CODE,
+  TBA_EMPLOYEE_ID, TBA_ROOM_CODE, GYM_ROOM_CODE, GYM_BUILDING_CODE, PATHFIT_VENUES,
 } from "@/lib/sentinels"
 
 /**
@@ -91,8 +91,22 @@ export async function ensureGymRoom(): Promise<{ id: string; buildingId: string 
   return room
 }
 
-/** Convenience: everything the PATHFIT pass needs, in one call. */
-export async function ensurePathfitSentinels(): Promise<{ tbaFacultyId: string; gymRoomId: string }> {
-  const [tba, gym] = await Promise.all([ensureTbaFaculty(), ensureGymRoom()])
-  return { tbaFacultyId: tba.id, gymRoomId: gym.id }
+/**
+ * The three PATHFit venues (Gymnasium, Covered Court, Field), all in the "GYM"
+ * building. Idempotent; returns code → room id.
+ */
+export async function ensurePathfitVenues(): Promise<Record<string, string>> {
+  const gym = await ensureGymRoom()
+  const out: Record<string, string> = { [GYM_ROOM_CODE]: gym.id }
+  for (const v of PATHFIT_VENUES) {
+    if (v.code === GYM_ROOM_CODE) continue
+    const room = await db.room.upsert({
+      where: { code: v.code },
+      update: {},
+      create: { name: v.name, code: v.code, buildingId: gym.buildingId, type: "LECTURE_ROOM", isActive: true },
+      select: { id: true },
+    })
+    out[v.code] = room.id
+  }
+  return out
 }

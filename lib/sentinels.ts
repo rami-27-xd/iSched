@@ -17,12 +17,43 @@ export const TBA_EMPLOYEE_ID = "TBA"
 export const TBA_ROOM_CODE = "TBA"
 export const GYM_ROOM_CODE = "GYM"
 export const GYM_BUILDING_CODE = "GYM"
+export const COURT_ROOM_CODE = "COVERED_COURT"
+export const FIELD_ROOM_CODE = "FIELD"
 
-/** Free-text faculty label stored on auto-generated PATHFIT entries. */
-export const PATHFIT_FACULTY_LABEL = "TBA"
+/**
+ * TBA is retired (2026-10-07): no TBA instructor or TBA room is offered or
+ * created any more. The constants stay only so old rows can still be recognised
+ * and hidden. Every class has a real, named instructor.
+ */
+export const PATHFIT_FACULTY_LABEL = ""
 
-/** Rooms that are placeholders rather than real, single-occupancy rooms. */
-export const PLACEHOLDER_ROOM_CODES: readonly string[] = [TBA_ROOM_CODE, GYM_ROOM_CODE]
+/**
+ * The ONLY places a PATHFit class may be held, and how many PATHFit classes may
+ * run in each at the same time. (A venue is shared, so several sections meet in
+ * it at once — up to its limit.)
+ */
+export const PATHFIT_VENUES: readonly { code: string; name: string; maxConcurrent: number }[] = [
+  { code: GYM_ROOM_CODE, name: "Gymnasium", maxConcurrent: 4 },
+  { code: COURT_ROOM_CODE, name: "Covered Court", maxConcurrent: 4 },
+  { code: FIELD_ROOM_CODE, name: "Field", maxConcurrent: 2 },
+]
+
+export const PATHFIT_VENUE_CODES: readonly string[] = PATHFIT_VENUES.map((v) => v.code)
+
+export function isPathfitVenueCode(code: string | null | undefined): boolean {
+  return !!code && PATHFIT_VENUE_CODES.includes(code)
+}
+
+export function pathfitVenueLimit(code: string | null | undefined): number {
+  return PATHFIT_VENUES.find((v) => v.code === code)?.maxConcurrent ?? 1
+}
+
+/**
+ * Rooms exempt from ordinary one-class-at-a-time room double-booking: the three
+ * shared PATHFit venues (their own concurrency limit applies instead) and the
+ * legacy TBA room.
+ */
+export const PLACEHOLDER_ROOM_CODES: readonly string[] = [TBA_ROOM_CODE, ...PATHFIT_VENUE_CODES]
 
 export function isPlaceholderRoomCode(code: string | null | undefined): boolean {
   return !!code && PLACEHOLDER_ROOM_CODES.includes(code)

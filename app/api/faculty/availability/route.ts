@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
 import { departmentHasScheduleForTerm } from "@/lib/services/term-scope"
+import { isUnitRole, getUnitSubjects, facultyBelongsToUnit } from "@/lib/services/unit-faculty"
 
 /**
  * Write-permission guard for faculty availability, mirroring checkFacultyWriteAccess
@@ -22,19 +23,26 @@ import { departmentHasScheduleForTerm } from "@/lib/services/term-scope"
  */
 async function checkFacultyWriteAccess(facultyId: string): Promise<{ error: NextResponse | null }> {
   const dbUser = await getCurrentUser()
-  if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
+  if (!dbUser || !["SUPER_ADMIN", "ADMIN", "PATHFIT", "NSTP"].includes(dbUser.role)) {
     return { error: NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 }) }
   }
 
   const target = await db.faculty.findUnique({
     where: { id: facultyId },
-    select: { departmentId: true, clusterId: true },
+    select: { departmentId: true, clusterId: true, specializations: true },
   })
   if (!target) {
     return { error: NextResponse.json(apiError("Faculty not found"), { status: 404 }) }
   }
 
-  if (dbUser.role === "ADMIN" || dbUser.role === "SUPER_ADMIN") {
+  if (isUnitRole(dbUser.role)) {
+    const unitSubjects = await getUnitSubjects(dbUser.role)
+    if (!facultyBelongsToUnit(target.specializations, unitSubjects)) {
+      return { error: NextResponse.json(apiError("Forbidden — this instructor is not one of yours"), { status: 403 }) }
+    }
+  }
+
+  if (dbUser.role === "ADMIN" || dbUser.role === "SUPER_ADMIN" || isUnitRole(dbUser.role)) {
     const chairDeptId = getUserDepartmentId(dbUser)
     if (!chairDeptId || target.departmentId !== chairDeptId) {
       return {
@@ -71,7 +79,7 @@ export async function GET(req: Request) {
     // access (restricted to Dashboard, Manage Schedules, Departments, User
     // Management and System Logs).
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "PATHFIT", "NSTP"].includes(dbUser.role)) {
       return NextResponse.json(apiError("Forbidden — insufficient permissions"), { status: 403 })
     }
 
@@ -83,8 +91,8 @@ export async function GET(req: Request) {
     if (facultyId) where.facultyId = facultyId
     if (semesterId) where.semesterId = semesterId
 
-    // ADMIN (Program Chair) / DEAN — scoped to faculty within their own department only
-    if (dbUser.role === "ADMIN" || dbUser.role === "DEAN") {
+    // ADMIN (Program Chair) / Directors / DEAN — scoped to faculty within their own department only
+    if (dbUser.role === "ADMIN" || dbUser.role === "DEAN" || isUnitRole(dbUser.role)) {
       const adminDeptId = getUserDepartmentId(dbUser)
       if (!adminDeptId) return NextResponse.json(apiResponse([]))
       where.faculty = { departmentId: adminDeptId }

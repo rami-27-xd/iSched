@@ -384,6 +384,9 @@ export default function FacultyPage() {
   })
   const isAdmin = currentUser?.role === "ADMIN"
   const isSuperAdminEditor = currentUser?.role === "SUPER_ADMIN"
+  // PATHFit / NSTP Directors add their own instructors as new people (no account to link).
+  const isUnitDirector = currentUser?.role === "PATHFIT" || currentUser?.role === "NSTP"
+  const effectiveAddMode = isUnitDirector ? "new" : addMode
   const userDeptId: string | undefined = currentUser?.departmentId ?? undefined
   // Both chair roles are locked server-side to their own department's faculty
   // (GET /api/faculty ignores any dept/college param), so no filter is passed.
@@ -570,7 +573,8 @@ export default function FacultyPage() {
     const specs = getSpecsFromCounts(sectionCounts)
 
     try {
-      if (addMode === "new") {
+      if (effectiveAddMode === "new") {
+        if (isUnitDirector && specs.length === 0) return toast.error("Pick at least one subject under Specializations")
         // Create a brand-new faculty person — always in the current user's own department
         if (!firstName.trim()) return toast.error("First name is required")
         if (!lastName.trim()) return toast.error("Last name is required")
@@ -628,7 +632,11 @@ export default function FacultyPage() {
       if (!subjectTitles.includes(title) && count > 0) foreignCounts[title] = count
     }
     const mergedCounts = { ...foreignCounts, ...editForm.sectionCounts }
-    const specs = getSpecsFromCounts(mergedCounts)
+    // Same for specializations: tags outside this chair's subject list (another
+    // program's subjects, GEC/GEL code tags) are not shown in the picker, so they
+    // must be carried over rather than dropped when the form is saved.
+    const foreignSpecs = ((editTarget.specializations ?? []) as string[]).filter((s) => !subjectTitles.includes(s))
+    const specs = [...new Set([...foreignSpecs, ...getSpecsFromCounts(mergedCounts)])]
     try {
       await updateFaculty.mutateAsync({
         id: editTarget.id,
@@ -647,7 +655,7 @@ export default function FacultyPage() {
   }
 
   return (
-    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN"]}>
+    <RoleGuard allowedRoles={["SUPER_ADMIN", "ADMIN", "PATHFIT", "NSTP"]}>
     {/* flex/gap instead of space-y: space-y's margin-bottom lands on the sticky
         bar itself (it's not the last child), which throws off the browser's
         sticky release point and shows as a gap/overlap once you scroll. */}
@@ -670,6 +678,7 @@ export default function FacultyPage() {
               <DialogHeader><DialogTitle>Add Faculty</DialogTitle></DialogHeader>
               <div className="grid gap-4 py-4">
                 {/* Mode toggle: link an existing account vs. create a new person */}
+                {!isUnitDirector && (
                 <div className="flex rounded-lg border border-input p-1 gap-1">
                   <button
                     type="button"
@@ -690,8 +699,9 @@ export default function FacultyPage() {
                     New Faculty
                   </button>
                 </div>
+                )}
 
-                {addMode === "new" ? (
+                {effectiveAddMode === "new" ? (
                   <>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="grid gap-2">
@@ -811,7 +821,7 @@ export default function FacultyPage() {
       {/* Faculty requests — a Program Chair raises one here and tracks the answer;
           the Department Chairperson approves or declines. The API existed and already
           sent notifications, but nothing rendered it, so requests went into a void. */}
-      <FacultyRequestsPanel isSuperAdmin={isSuperAdminEditor} />
+      {!isUnitDirector && <FacultyRequestsPanel isSuperAdmin={isSuperAdminEditor} />}
 
       {isLoading ? (
         <TableSkeleton rows={8} cols={6} label="Loading faculty" />

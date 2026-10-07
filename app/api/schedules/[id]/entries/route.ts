@@ -3,7 +3,7 @@ import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { validateEntry, validateEntryCapacity, stripConflictMarker, isHardConflict, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
-import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale, reopenProgramIfStale } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale, reopenProgramIfStale, CIT_LECTURES_ONLY_MESSAGE, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 import { isGeUnitRole, isNstpCode } from "@/lib/roles"
@@ -60,6 +60,11 @@ export async function POST(
       }
     }
 
+    // Phase 2 (Department Chairperson, CIT schedule) waits for Phase 1 (CIT labs).
+    if (dbUser.role === "SUPER_ADMIN" && !(await isCitLabPhaseDone(id))) {
+      return NextResponse.json(apiError(CIT_LABS_FIRST_MESSAGE), { status: 409 })
+    }
+
     // ── GEC-finalized gate ──────────────────────────────────────────────
     // Program Chairs add their major load only after ALL THREE CAS cluster
     // chairpersons have finalized GEC/GEL for this schedule. Before that:
@@ -84,6 +89,16 @@ export async function POST(
             ),
             { status: 409 }
           )
+        }
+      } else {
+        // Phase 3 — GEC/GEL is final: the CIT Program Chairperson now adds
+        // LECTURE subjects only (laboratories were Phase 1).
+        const chairCollege = (dbUser as any).programHead?.program?.department?.college?.abbreviation ?? null
+        if (chairCollege === "CIT") {
+          const subj = await db.subject.findUnique({ where: { id: body.subjectId }, select: { type: true } })
+          if (subj?.type === "LABORATORY") {
+            return NextResponse.json(apiError(CIT_LECTURES_ONLY_MESSAGE), { status: 409 })
+          }
         }
       }
     }
@@ -128,14 +143,13 @@ export async function POST(
       return NextResponse.json(apiError("Select a section"), { status: 400 })
     }
     const isMerged = sectionIds.length > 1
+    // Merging NSTP sections is turned off (2026-10-07): every class is scheduled
+    // one section at a time. (Classes merged earlier still display and can be split.)
     if (isMerged) {
-      const subj = await db.subject.findUnique({ where: { id: body.subjectId }, select: { code: true } })
-      if (!isNstpCode(subj?.code)) {
-        return NextResponse.json(
-          apiError("Only NSTP classes can be merged across sections — every other subject is scheduled one section at a time."),
-          { status: 400 }
-        )
-      }
+      return NextResponse.json(
+        apiError("Merging sections is turned off — schedule each section's class on its own."),
+        { status: 400 }
+      )
     }
     const mergeGroupId = isMerged ? crypto.randomUUID() : null
 

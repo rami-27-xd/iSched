@@ -77,6 +77,36 @@ export async function reopenGecIfStale(scheduleId: string, subjectCode: string |
   await db.gecFinalization.deleteMany({ where: { scheduleId, clusterId } })
 }
 
+// ─── CIT three-phase order (2026-10-07) ───────────────────────────────────────
+//   Phase 1  CIT Program Chairperson — LABORATORY subjects only
+//   Phase 2  Department Chairpersons — GEC/GEL (the department's schedule)
+//   Phase 3  CIT Program Chairperson — LECTURE subjects only
+// Phase 2 cannot start in a CIT schedule until Phase 1 has put laboratories on it,
+// and once Phase 2 is done the CIT chair adds lectures only (labs stay where they
+// were plotted — they can be moved, not added anew).
+
+/** True when the schedule belongs to the CIT college. */
+export async function isCitSchedule(scheduleId: string): Promise<boolean> {
+  const s = await db.schedule.findUnique({
+    where: { id: scheduleId },
+    select: { department: { select: { college: { select: { abbreviation: true } } } } },
+  })
+  return s?.department?.college?.abbreviation === "CIT"
+}
+
+/** Phase 1 done: the CIT schedule already holds laboratory classes. Always true for other colleges. */
+export async function isCitLabPhaseDone(scheduleId: string): Promise<boolean> {
+  if (!(await isCitSchedule(scheduleId))) return true
+  const n = await db.scheduleEntry.count({ where: { scheduleId, subject: { type: "LABORATORY" } } })
+  return n > 0
+}
+
+export const CIT_LABS_FIRST_MESSAGE =
+  "Phase 1 comes first: the CIT Program Chairperson must plot the laboratory subjects before the Department Chairpersons schedule GEC/GEL for CIT."
+
+export const CIT_LECTURES_ONLY_MESSAGE =
+  "Phase 3: laboratory subjects were plotted in Phase 1. The CIT Program Chairperson now adds lecture subjects only."
+
 export const GEC_FIRST_MESSAGE =
   "The three CAS department heads have not all finalized the GEC/GEL schedule for this term yet. Program Chairpersons add their major subjects only after every department head has finalized."
 

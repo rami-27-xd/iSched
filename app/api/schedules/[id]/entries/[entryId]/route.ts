@@ -204,6 +204,12 @@ export async function PATCH(
         )
       }
 
+      // Merging NSTP sections is turned off (2026-10-07): a class can no longer
+      // gain sections. A class merged earlier may still drop some (split back).
+      if (target.length > 1 && !updated.mergeGroupId) {
+        return NextResponse.json(apiError("Merging sections is turned off — schedule each section's class on its own."), { status: 400 })
+      }
+
       // Every row of the CLASS (all days): the merge group, else the row plus
       // its multi-day siblings.
       let mergeGroupId = updated.mergeGroupId
@@ -225,6 +231,9 @@ export async function PATCH(
       const current = [...new Set(classRows.map((r) => r.sectionId))]
       const toAdd = target.filter((s) => !current.includes(s))
       const toRemove = current.filter((s) => !target.includes(s))
+      if (toAdd.length > 0) {
+        return NextResponse.json(apiError("Merging sections is turned off — schedule each section's class on its own."), { status: 400 })
+      }
 
       // Distinct sessions the class meets in (day + time), after the move above.
       const sessions = [...new Map(classRows.map((r) => [`${r.day}|${r.startTime}|${r.endTime}`, r])).values()]
