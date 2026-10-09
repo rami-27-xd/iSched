@@ -2207,7 +2207,7 @@ export default function SchedulesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resolved: true }),
       })
-      const json = await res.json()
+      const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error ?? "Failed to resolve conflict")
       queryClient.invalidateQueries({ queryKey: ["schedules", selectedScheduleId] })
       toast.success("Conflict marked resolved")
@@ -2747,7 +2747,7 @@ export default function SchedulesPage() {
                       {selectedSchedule.unassigned.map((u: any) => (
                         <div
                           key={u.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5"
+                          className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
                         >
                           <div className="min-w-0">
                             {/* Explicit text-amber-900: this row's amber-50 background is
@@ -2762,12 +2762,15 @@ export default function SchedulesPage() {
                               {u.section?.name} &middot; {u.reason ?? "No slot available"}
                             </p>
                           </div>
-                          {canModifyEntries && (
+                          {canAddEntry && (
                             <Button
                               variant="outline"
                               size="sm"
-                              className="shrink-0 border-amber-300 text-xs hover:border-amber-400"
+                              className="w-full shrink-0 border-amber-300 text-xs hover:border-amber-400 sm:w-auto"
                               onClick={() => {
+                                // Opens Add Entry with this class's section and subject
+                                // already chosen; everything else starts blank.
+                                resetEntryForm()
                                 setEntryForm((prev: any) => ({
                                   ...prev,
                                   subjectId: u.subjectId,
@@ -2776,7 +2779,8 @@ export default function SchedulesPage() {
                                 setAddEntryOpen(true)
                               }}
                             >
-                              Manually Assign
+                              <Plus className="mr-1 h-3.5 w-3.5" />
+                              Add manually
                             </Button>
                           )}
                         </div>
