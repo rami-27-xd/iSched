@@ -77,6 +77,13 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
   const [approveTarget, setApproveTarget] = useState<FacultyRequestRow | null>(null)
   const [allocateFacultyId, setAllocateFacultyId] = useState("")
   const [allocateNote, setAllocateNote] = useState("")
+  // The FIXED weekly windows the allocated instructor may be scheduled in for this program.
+  type Slot = { day: string; startTime: string; endTime: string }
+  const DEFAULT_SLOTS: Slot[] = [{ day: "MONDAY", startTime: "08:00", endTime: "17:00" }]
+  const [allocateSlots, setAllocateSlots] = useState<Slot[]>(DEFAULT_SLOTS)
+  const slotsValid =
+    allocateSlots.length > 0 &&
+    allocateSlots.every((s) => s.startTime && s.endTime && s.startTime < s.endTime && s.startTime >= "07:30" && s.endTime <= "20:00")
 
   // Terms a Program Chairperson can request for: those with a non-archived
   // schedule in their department (the API scopes the list to their department).
@@ -125,7 +132,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
   })
 
   const respond = useMutation({
-    mutationFn: async (vars: { id: string; action: "approve" | "deny"; facultyId?: string; responseNote?: string }) => {
+    mutationFn: async (vars: { id: string; action: "approve" | "deny"; facultyId?: string; responseNote?: string; availability?: { day: string; startTime: string; endTime: string }[] }) => {
       const res = await fetch("/api/faculty/request", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -227,7 +234,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
                     size="sm"
                     className="h-7 bg-[#1B4332] text-xs text-white hover:bg-[#2D6A4F]"
                     disabled={respond.isPending}
-                    onClick={() => { setApproveTarget(r); setAllocateFacultyId(""); setAllocateNote("") }}
+                    onClick={() => { setApproveTarget(r); setAllocateFacultyId(""); setAllocateNote(""); setAllocateSlots(DEFAULT_SLOTS) }}
                   >
                     <Check className="mr-1 h-3.5 w-3.5" /> Allocate & approve
                   </Button>
@@ -316,7 +323,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
               {approveTarget?.programAbbr ? ` (${approveTarget.programAbbr})` : ""} asked for help
               {approveTarget?.termLabel ? ` for ${approveTarget.termLabel}` : ""}
               {approveTarget?.subjectCode ? ` with ${approveTarget.subjectCode}` : ""}. The faculty member you choose joins
-              that program&apos;s pool for the term — still subject to their specializations, availability and building access.
+              that program&apos;s pool for the term, and is scheduled only inside the fixed availability you set below.
             </DialogDescription>
           </DialogHeader>
           {approveTarget && (
@@ -341,6 +348,47 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
                   ))}
               </select>
             </div>
+            <div className="grid content-start gap-2">
+              <Label>Fixed availability for this program</Label>
+              <div className="space-y-2">
+                {allocateSlots.map((s, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={s.day}
+                      onChange={(e) => setAllocateSlots((prev) => prev.map((x, j) => (j === i ? { ...x, day: e.target.value } : x)))}
+                      className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      aria-label="Day"
+                    >
+                      {["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"].map((d) => (
+                        <option key={d} value={d}>{d.charAt(0) + d.slice(1).toLowerCase()}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="time" step={1800} value={s.startTime} aria-label="From"
+                      onChange={(e) => setAllocateSlots((prev) => prev.map((x, j) => (j === i ? { ...x, startTime: e.target.value } : x)))}
+                      className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <span className="text-xs text-muted-foreground">to</span>
+                    <input
+                      type="time" step={1800} value={s.endTime} aria-label="To"
+                      onChange={(e) => setAllocateSlots((prev) => prev.map((x, j) => (j === i ? { ...x, endTime: e.target.value } : x)))}
+                      className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    {allocateSlots.length > 1 && (
+                      <Button type="button" size="sm" variant="ghost" className="h-8 px-2" onClick={() => setAllocateSlots((prev) => prev.filter((_, j) => j !== i))} aria-label="Remove window">
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setAllocateSlots((prev) => [...prev, { day: "TUESDAY", startTime: "08:00", endTime: "17:00" }])}>
+                  Add another window
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Between 7:30 AM and 8:00 PM. The Program Chairperson&apos;s Generate and Add Entry will use only these windows for this instructor.
+              </p>
+            </div>
             <div className="grid gap-2">
               <Label>Note (optional)</Label>
               <textarea
@@ -355,8 +403,8 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
             <Button variant="outline" onClick={() => setApproveTarget(null)}>Cancel</Button>
             <Button
               className="bg-[#1B4332] text-white hover:bg-[#2D6A4F]"
-              disabled={respond.isPending || !allocateFacultyId}
-              onClick={() => approveTarget && respond.mutate({ id: approveTarget.id, action: "approve", facultyId: allocateFacultyId, responseNote: allocateNote || undefined })}
+              disabled={respond.isPending || !allocateFacultyId || !slotsValid}
+              onClick={() => approveTarget && respond.mutate({ id: approveTarget.id, action: "approve", facultyId: allocateFacultyId, responseNote: allocateNote || undefined, availability: allocateSlots })}
             >
               {respond.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Allocate & approve

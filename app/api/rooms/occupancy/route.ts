@@ -1,19 +1,14 @@
 import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
-import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib/auth"
+import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { apiResponse, apiError } from "@/lib/api-helpers"
-import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
+import { TBA_ROOM_CODE } from "@/lib/sentinels"
 
 // GET /api/rooms/occupancy?semesterId=[&buildingId=]
-// Every class held this semester in a set of rooms, whichever department's
-// schedule it comes from — that is the point: outside departments using your
-// rooms show up too. Which buildings:
-//   DEAN        — the buildings assigned to their department (DepartmentBuilding)
-//   ADMIN (PC)  — the buildings their department may use: shared (no department
-//                 links) or linked to it — the same union rule the generator and
-//                 manual entry apply
-//   SUPER_ADMIN — every building (their work spans every college)
-// `buildingId` narrows any of the above to one building. The response lists the
+// Every class held this semester in EVERY room of the campus, whichever
+// department's schedule it comes from — outside departments using a room show
+// up too. All three roles see all buildings and all rooms (free ones included),
+// so a chair can spot a free room anywhere; `buildingId` narrows to one building. The response lists the
 // departments present so the UI can draw a colour key (lib/department-colors.ts).
 const OCCUPANCY_ROLES = ["DEAN", "SUPER_ADMIN", "ADMIN"]
 
@@ -28,13 +23,7 @@ export async function GET(req: Request) {
     }
 
     const { searchParams } = new URL(req.url)
-    const isUniversityWide = dbUser.role === "SUPER_ADMIN"
-    const ownDeptId = getUserDepartmentId(dbUser)
-    const scopeDeptId = isUniversityWide ? null : ownDeptId
     const buildingId = searchParams.get("buildingId") || null
-    if (!isUniversityWide && !scopeDeptId) {
-      return NextResponse.json(apiResponse({ semester: null, buildings: [], departments: [] }))
-    }
 
     let semesterId = searchParams.get("semesterId")
     if (!semesterId) {
@@ -49,12 +38,7 @@ export async function GET(req: Request) {
     if (!semester) return NextResponse.json(apiResponse({ semester: null, buildings: [], departments: [] }))
 
     // Building scope per role (see header comment).
-    const buildingWhere: any =
-      dbUser.role === "DEAN"
-        ? { departments: { some: { departmentId: scopeDeptId! } } }
-        : scopeDeptId
-          ? { OR: [{ departments: { none: {} } }, { departments: { some: { departmentId: scopeDeptId } } }] }
-          : {}
+    const buildingWhere: any = {}
     if (buildingId) buildingWhere.id = buildingId
 
     const buildings = await db.building.findMany({
@@ -62,7 +46,8 @@ export async function GET(req: Request) {
       include: {
         departments: { select: { department: { select: { abbreviation: true } } } },
         rooms: {
-          where: { code: { notIn: [...PLACEHOLDER_ROOM_CODES] } },
+          // Every room, including the PATHFit venues; only the retired TBA room is hidden.
+          where: { code: { not: TBA_ROOM_CODE } },
           orderBy: { code: "asc" },
           select: { id: true, code: true, name: true, type: true, isActive: true },
         },

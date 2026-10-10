@@ -3,7 +3,7 @@ import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { validateEntry, validateEntryCapacity, stripConflictMarker, isHardConflict, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
-import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale, reopenProgramIfStale, CIT_LECTURES_ONLY_MESSAGE, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 import { isGeUnitRole, isNstpCode } from "@/lib/roles"
@@ -90,17 +90,9 @@ export async function POST(
             { status: 409 }
           )
         }
-      } else {
-        // Phase 3 — GEC/GEL is final: the CIT Program Chairperson now adds
-        // LECTURE subjects only (laboratories were Phase 1).
-        const chairCollege = (dbUser as any).programHead?.program?.department?.college?.abbreviation ?? null
-        if (chairCollege === "CIT") {
-          const subj = await db.subject.findUnique({ where: { id: body.subjectId }, select: { type: true } })
-          if (subj?.type === "LABORATORY") {
-            return NextResponse.json(apiError(CIT_LECTURES_ONLY_MESSAGE), { status: 409 })
-          }
-        }
       }
+      // Phase 3 (lectures after GEC) steers Generate; by hand a CIT chair may still
+      // add any of their own subjects — e.g. a laboratory left in the Unassigned Queue.
     }
 
     // ── Building restriction check ─────────────────────────────────────────

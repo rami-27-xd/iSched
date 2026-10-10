@@ -9,6 +9,7 @@ import { createNotification } from "@/lib/notifications"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { detectCrossScheduleConflicts, type CrossScheduleEntry } from "@/lib/services/cross-schedule-conflicts"
 import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
+import { getProgramAllocations } from "@/lib/services/allocations"
 import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
 import { resolveMaxMinutesPerDay } from "@/lib/session-rules"
 import { isGecFinalized, GEC_FIRST_MESSAGE, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
@@ -310,14 +311,13 @@ export async function POST(
     // their own program first; a shortage is answered by a request, and the
     // allocated faculty then joins the pool — still bound by specialization,
     // availability like everyone else.
-    const allocatedFacultyIds: string[] = isAdmin && programId
-      ? (
-          await db.facultyRequest.findMany({
-            where: { status: "APPROVED", programId, semesterId: schedule.semesterId, facultyId: { not: null } },
-            select: { facultyId: true },
-          })
-        ).map((r: any) => r.facultyId as string)
-      : []
+    // An allocated instructor is only ever scheduled inside the FIXED availability
+    // the Department Chairperson set on approval (their own recorded hours are not
+    // used for this program's classes).
+    const allocation = isAdmin && programId
+      ? await getProgramAllocations(programId, schedule.semesterId)
+      : { ids: [] as string[], slotsByFaculty: new Map<string, { day: string; startTime: string; endTime: string }[]>() }
+    const allocatedFacultyIds: string[] = allocation.ids
 
     const [subjects, faculty, rooms, sections] = await Promise.all([
       db.subject.findMany({
@@ -476,7 +476,7 @@ export async function POST(
     }))
 
     const facultyInputs = faculty.map((f: any) => {
-      const avail = f.availability
+      const avail = allocation.slotsByFaculty.get(f.id) ?? f.availability
       return {
         id: f.id,
         name: `${f.user.firstName} ${f.user.lastName}`,

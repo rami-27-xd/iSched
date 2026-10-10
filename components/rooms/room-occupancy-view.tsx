@@ -33,6 +33,8 @@ export interface OccupancyBlock {
   sections: string[]
   program: string
   faculty: string
+  /** Room code — filled by the faculty-occupancy API (rows there are faculty, not rooms). */
+  room?: string
   scheduleId: string
   scheduleStatus: string
   departmentId: string
@@ -62,6 +64,8 @@ interface OccupancyPayload {
   buildings: BuildingOccupancy[]
   departments: { id: string; abbreviation: string; name: string; college: string; collegeName?: string }[]
 }
+
+export type OccupancyMode = "rooms" | "faculty"
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -116,7 +120,11 @@ function todayWeekday(): string {
  * list. A System Logs tab for the Dean, Department Chairperson and Program
  * Chairperson (the API decides which buildings each role sees).
  */
-export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
+export function RoomOccupancyView({ compact = false, mode = "rooms" }: { compact?: boolean; mode?: OccupancyMode }) {
+  // "faculty" mode is the same grid with one row per faculty member (grouped by
+  // department) instead of one row per room (grouped by building): who is teaching
+  // what, where and when — /api/faculty/occupancy.
+  const isFaculty = mode === "faculty"
   const role = useUserRole()
   const { data: semesters = [] } = useScheduledSemesters()
   const activeSemester = useMemo(() => (semesters as any[]).find((s) => s.isActive) ?? (semesters as any[])[0], [semesters])
@@ -129,13 +137,13 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
   const effectiveSemesterId = semesterId || activeSemester?.id || ""
 
   const { data, isLoading } = useQuery<OccupancyPayload>({
-    queryKey: ["room-occupancy", effectiveSemesterId],
+    queryKey: [isFaculty ? "faculty-occupancy" : "room-occupancy", effectiveSemesterId],
     queryFn: async () => {
       const params = new URLSearchParams()
       if (effectiveSemesterId) params.set("semesterId", effectiveSemesterId)
-      const res = await fetch(`/api/rooms/occupancy?${params}`)
+      const res = await fetch(`${isFaculty ? "/api/faculty/occupancy" : "/api/rooms/occupancy"}?${params}`)
       const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? "Failed to load room occupancy")
+      if (!res.ok) throw new Error(json.error ?? (isFaculty ? "Failed to load faculty occupancy" : "Failed to load room occupancy"))
       return json.data
     },
     staleTime: 30_000,
@@ -208,15 +216,15 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
               <option key={s.id} value={s.id}>{semesterLabel(s)}{s.isActive ? " (active)" : ""}</option>
             ))}
           </select>
-          <select value={buildingId} onChange={(e) => setBuildingId(e.target.value)} className={selectClass} aria-label="Building">
-            <option value="">All buildings</option>
+          <select value={buildingId} onChange={(e) => setBuildingId(e.target.value)} className={selectClass} aria-label={isFaculty ? "Department" : "Building"}>
+            <option value="">{isFaculty ? "All departments" : "All buildings"}</option>
             {allBuildings.map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Find a room…" value={roomSearch} onChange={(e) => setRoomSearch(e.target.value)} className="h-9 pl-9 sm:w-44" />
+            <Input placeholder={isFaculty ? "Find a faculty member…" : "Find a room…"} value={roomSearch} onChange={(e) => setRoomSearch(e.target.value)} className="h-9 pl-9 sm:w-44" />
           </div>
           <div className="ml-auto inline-flex rounded-lg border border-input p-0.5" role="tablist" aria-label="View">
             <button
@@ -238,6 +246,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
               <Rows3 className="h-3.5 w-3.5" /> List
             </button>
           </div>
+          {!isFaculty && (
           <Button
             variant="outline"
             size="sm"
@@ -248,6 +257,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
             {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <FileDown className="mr-1.5 h-3.5 w-3.5" />}
             Export All Rooms
           </Button>
+          )}
         </div>
 
         {/* Day tabs */}
@@ -273,7 +283,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
             )
           })}
           <p className="ml-auto text-xs text-muted-foreground">
-            {isLoading ? "Loading…" : `${totals.busyRooms} of ${totals.rooms} room${totals.rooms === 1 ? "" : "s"} in use on ${DAY_FULL[day]} · ${totals.classesToday} class${totals.classesToday === 1 ? "" : "es"} (${totals.classesWeek} this week)`}
+            {isLoading ? "Loading…" : `${totals.busyRooms} of ${totals.rooms} ${isFaculty ? `faculty member${totals.rooms === 1 ? "" : "s"} teaching` : `room${totals.rooms === 1 ? "" : "s"} in use`} on ${DAY_FULL[day]} · ${totals.classesToday} class${totals.classesToday === 1 ? "" : "es"} (${totals.classesWeek} this week)`}
           </p>
         </div>
 
@@ -304,7 +314,9 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
         <Card>
           <CardContent className="p-8 text-center text-sm text-muted-foreground">
             {roomSearch
-              ? "No room matches that search."
+              ? (isFaculty ? "No faculty member matches that search." : "No room matches that search.")
+              : isFaculty
+                ? "No faculty to show yet."
               : role === "DEAN"
                 ? "No buildings are assigned to your department yet. Assign buildings under Buildings to see who uses their rooms."
                 : "No buildings to show yet."}
@@ -318,16 +330,17 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
                 <Building2 className="h-4 w-4 text-[#1B4332]" />
                 {b.name}
                 <span className="text-xs font-normal text-muted-foreground">
-                  {b.code} · {b.rooms.length} room{b.rooms.length === 1 ? "" : "s"}
-                  {b.restrictedTo.length > 0 ? ` · reserved for ${b.restrictedTo.join(", ")}` : " · shared"}
+                  {b.code} · {b.rooms.length} {isFaculty ? "faculty" : `room${b.rooms.length === 1 ? "" : "s"}`}
+                  {isFaculty ? "" : b.restrictedTo.length > 0 ? ` · reserved for ${b.restrictedTo.join(", ")}` : " · shared"}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent className={compact ? "p-0 pb-3" : "pt-0"}>
               {b.rooms.length === 0 ? (
-                <p className="px-4 text-sm text-muted-foreground">No rooms in this building.</p>
+                <p className="px-4 text-sm text-muted-foreground">{isFaculty ? "No faculty in this department." : "No rooms in this building."}</p>
               ) : (
                 <OccupancyGrid
+                  mode={mode}
                   building={b}
                   day={day}
                   colorOf={colorOf}
@@ -336,7 +349,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
                 />
               )}
               {selected && selected.building.id === b.id && (
-                <SelectedBlock selection={selected} colorOf={colorOf} onClose={() => setSelected(null)} />
+                <SelectedBlock mode={mode} selection={selected} colorOf={colorOf} onClose={() => setSelected(null)} />
               )}
             </CardContent>
           </Card>
@@ -348,12 +361,12 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
               <CardTitle className="flex flex-wrap items-center gap-2 text-base">
                 <Building2 className="h-4 w-4 text-[#1B4332]" />
                 {b.name}
-                <span className="text-xs font-normal text-muted-foreground">{b.code} · {b.rooms.length} room{b.rooms.length === 1 ? "" : "s"}</span>
+                <span className="text-xs font-normal text-muted-foreground">{b.code} · {b.rooms.length} {isFaculty ? "faculty" : `room${b.rooms.length === 1 ? "" : "s"}`}</span>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {b.rooms.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No rooms in this building.</p>
+                <p className="text-sm text-muted-foreground">{isFaculty ? "No faculty in this department." : "No rooms in this building."}</p>
               ) : (
                 b.rooms.map((room) => {
                   const rows = room.occupancy
@@ -381,7 +394,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
                                 <TableHead className="w-32 px-3">Time</TableHead>
                                 <TableHead>Subject</TableHead>
                                 <TableHead className="w-44">Section</TableHead>
-                                <TableHead className="w-48">Faculty</TableHead>
+                                <TableHead className="w-48">{isFaculty ? "Room" : "Faculty"}</TableHead>
                                 <TableHead className="w-32">Department</TableHead>
                                 <TableHead className="w-36">Status</TableHead>
                               </TableRow>
@@ -403,7 +416,7 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
                                       {o.section}
                                       {o.merged && <Badge variant="outline" className="ml-1 border-sky-200 bg-sky-50 text-[10px] text-sky-800">Merged</Badge>}
                                     </TableCell>
-                                    <TableCell className="whitespace-normal break-words text-sm">{o.faculty}</TableCell>
+                                    <TableCell className="whitespace-normal break-words text-sm">{isFaculty ? o.room : o.faculty}</TableCell>
                                     <TableCell className="text-sm">
                                       <span className="inline-flex items-center gap-1.5">
                                         <span className="inline-block h-2.5 w-2.5 rounded-sm border" style={{ background: c.bg, borderColor: c.border }} />
@@ -437,12 +450,14 @@ export function RoomOccupancyView({ compact = false }: { compact?: boolean }) {
 // ─── Grid ────────────────────────────────────────────────────────────────────
 
 function OccupancyGrid({
+  mode,
   building,
   day,
   colorOf,
   selectedId,
   onSelect,
 }: {
+  mode: OccupancyMode
   building: BuildingOccupancy
   day: string
   colorOf: (deptId: string) => DeptColor
@@ -468,7 +483,7 @@ function OccupancyGrid({
       >
         {/* Header row */}
         <div className="sticky left-0 z-20 border-b border-r bg-muted/60 px-3 py-1.5 font-semibold text-muted-foreground" style={{ gridRow: 1, gridColumn: 1 }}>
-          Room
+          {mode === "faculty" ? "Faculty" : "Room"}
         </div>
         {hourLabels.map((label, i) => (
           <div
@@ -484,7 +499,7 @@ function OccupancyGrid({
           const row = ri + 2
           const blocks = room.occupancy.filter((o) => o.day === day)
           return (
-            <RoomRow key={room.id} room={room} row={row} blocks={blocks} colorOf={colorOf} selectedId={selectedId} onSelect={onSelect} />
+            <RoomRow key={room.id} mode={mode} room={room} row={row} blocks={blocks} colorOf={colorOf} selectedId={selectedId} onSelect={onSelect} />
           )
         })}
       </div>
@@ -493,6 +508,7 @@ function OccupancyGrid({
 }
 
 function RoomRow({
+  mode,
   room,
   row,
   blocks,
@@ -500,6 +516,7 @@ function RoomRow({
   selectedId,
   onSelect,
 }: {
+  mode: OccupancyMode
   room: RoomOccupancy
   row: number
   blocks: OccupancyBlock[]
@@ -516,12 +533,12 @@ function RoomRow({
         style={{ gridRow: row, gridColumn: 1 }}
       >
         <span className="flex items-center gap-1.5 font-medium">
-          <DoorOpen className="h-3.5 w-3.5 text-muted-foreground" />
+          {mode === "faculty" ? <Users className="h-3.5 w-3.5 text-muted-foreground" /> : <DoorOpen className="h-3.5 w-3.5 text-muted-foreground" />}
           {room.code}
           {!room.isActive && <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">inactive</span>}
         </span>
         <span className="truncate text-[10px] text-muted-foreground" title={room.name}>
-          {room.name} · {room.type.replace(/_/g, " ").toLowerCase()}
+          {room.name}{mode === "faculty" ? "" : ` · ${room.type.replace(/_/g, " ").toLowerCase()}`}
           {busyMinutes > 0 ? ` · ${Math.round((busyMinutes / 60) * 10) / 10} h` : " · free"}
         </span>
       </div>
@@ -548,7 +565,7 @@ function RoomRow({
             key={b.id}
             type="button"
             onClick={() => onSelect(b, room)}
-            title={`${b.subjectCode} — ${b.subjectTitle}\n${b.section}${b.set ? ` (Set ${b.set})` : ""} · ${b.faculty}\n${b.startTime}–${b.endTime} · ${b.department} · ${STATUS_LABEL[b.scheduleStatus] ?? b.scheduleStatus}`}
+            title={`${b.subjectCode} — ${b.subjectTitle}\n${b.section}${b.set ? ` (Set ${b.set})` : ""} · ${mode === "faculty" ? b.room : b.faculty}\n${b.startTime}–${b.endTime} · ${b.department} · ${STATUS_LABEL[b.scheduleStatus] ?? b.scheduleStatus}`}
             className={`z-[5] m-0.5 flex min-w-0 flex-col justify-center overflow-hidden rounded-md px-1.5 py-0.5 text-left leading-tight transition-shadow hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring ${isSelected ? "ring-2 ring-offset-1" : ""}`}
             style={{
               gridRow: row,
@@ -566,7 +583,7 @@ function RoomRow({
               {b.merged && <Users className="h-3 w-3 shrink-0" />}
             </span>
             {span >= 2 && <span className="truncate text-[10px]">{b.section}</span>}
-            {span >= 3 && <span className="truncate text-[10px] opacity-80">{b.faculty}</span>}
+            {span >= 3 && <span className="truncate text-[10px] opacity-80">{mode === "faculty" ? b.room : b.faculty}</span>}
           </button>
         )
       })}
@@ -575,10 +592,12 @@ function RoomRow({
 }
 
 function SelectedBlock({
+  mode,
   selection,
   colorOf,
   onClose,
 }: {
+  mode: OccupancyMode
   selection: { block: OccupancyBlock; room: RoomOccupancy; building: BuildingOccupancy }
   colorOf: (deptId: string) => DeptColor
   onClose: () => void
@@ -593,10 +612,10 @@ function SelectedBlock({
           {b.set && <Badge variant="outline" className="ml-1.5 text-[10px]">Set {b.set}</Badge>}
         </p>
         <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
-          <div><dt className="text-muted-foreground">Room</dt><dd>{room.code} · {room.name}</dd></div>
+          <div><dt className="text-muted-foreground">Room</dt><dd>{mode === "faculty" ? (b.room || "—") : `${room.code} · ${room.name}`}</dd></div>
           <div><dt className="text-muted-foreground">When</dt><dd>{DAY_FULL[b.day] ?? b.day}, {b.startTime}–{b.endTime}</dd></div>
           <div><dt className="text-muted-foreground">Section{b.sections.length > 1 ? "s (merged)" : ""}</dt><dd>{b.sections.length > 1 ? b.sections.join(" + ") : b.section}{b.program ? ` · ${b.program}` : ""}</dd></div>
-          <div><dt className="text-muted-foreground">Faculty</dt><dd>{b.faculty}</dd></div>
+          <div><dt className="text-muted-foreground">Faculty</dt><dd>{mode === "faculty" ? room.code : b.faculty}</dd></div>
           <div><dt className="text-muted-foreground">Department</dt><dd>{b.departmentName || b.department}</dd></div>
           <div>
             <dt className="text-muted-foreground">Schedule status</dt>

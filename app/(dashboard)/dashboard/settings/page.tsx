@@ -157,8 +157,8 @@ export default function SettingsPage() {
                   <Input value={profileForm.email} disabled className="bg-muted" />
                   <p className="text-xs text-muted-foreground">Email cannot be changed</p>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="grid gap-2">
+                <div className="grid grid-cols-1 items-start sm:grid-cols-2 gap-4">
+                  <div className="grid content-start gap-2">
                     <Label>Role</Label>
                     <Input
                       value={formatRole(currentUser?.role)}
@@ -166,7 +166,7 @@ export default function SettingsPage() {
                       className="bg-muted"
                     />
                   </div>
-                  <div className="grid gap-2">
+                  <div className="grid content-start gap-2">
                     <Label>Department</Label>
                     {isSuperAdmin ? (
                       <>

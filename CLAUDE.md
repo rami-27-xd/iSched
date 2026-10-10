@@ -503,3 +503,17 @@ PUBLISHED ──(SUPER_ADMIN reset / unpublish)──► DRAFT        CAS schedu
   Old TBA entries already in the DB are left as they are.
 - **NSTP merging is off**: POST/PATCH refuse adding sections; the Add dialog picker is gone; already-merged classes still
   display and can be split by removing sections.
+
+## Update 2026-10-11
+- **Phase 3 is a Generate rule only**: the CIT Program Chairperson's manual Add Entry is no longer blocked for laboratories after GEC
+  (a lab left in the Unassigned Queue must be addable); the three-phase order still steers Generate and the Department Chairperson gates.
+- **System Logs → Room Occupancy shows every room** of every building to Dean / Department Chairperson / Program Chairperson (free rooms
+  included; only the retired TBA room is hidden). New **Faculty Occupancy** tab (`GET /api/faculty/occupancy`, same grid via
+  `RoomOccupancyView mode="faculty"`): the caller's own faculty with every class they teach in any department's schedule.
+- **Allocated instructors (faculty requests)**: approving a request now needs the instructor's FIXED weekly availability for that program
+  (`FacultyRequest.allocatedAvailability Json?` — **schema change, run `prisma db push` on production**). `lib/services/allocations.ts`:
+  the instructor is listed on the Program Chairperson's Faculty page ("Allocated to your program", no edit/delete), shown read-only on
+  Faculty Availability with the fixed windows, and Generate (`generate/route.ts`) and manual entry (`validateEntry`, non-GEC subjects of
+  that program) schedule them ONLY inside those windows. Older approvals without windows keep using the instructor's own availability.
+  The Department Chairperson's whole-semester export already includes their faculty's classes in every department's schedule.
+- Faculty picker "N sections available" counts the subject's own program sections (was every section of the year level, default 1).

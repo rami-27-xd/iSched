@@ -31,6 +31,24 @@ import { TableSkeleton } from "@/components/shared/loading-skeletons"
 // Type for section counts per subject: { "Subject Title": numberOfSections }
 type SectionCountMap = Record<string, number>
 
+// An instructor the Department Chairperson allocated to this Program Chairperson's
+// program: managed by the Department Chairperson, schedulable only inside the fixed
+// windows set on approval.
+const SHORT_DAY: Record<string, string> = { MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu", FRIDAY: "Fri", SATURDAY: "Sat" }
+function AllocatedInfo({ f }: { f: any }) {
+  const slots: { day: string; startTime: string; endTime: string }[] = f.allocatedSlots ?? []
+  return (
+    <div className="mt-1.5 space-y-0.5">
+      <Badge variant="outline" className="border-[#D4AF37] text-[10px] text-[#7a5f00]">Allocated to your program</Badge>
+      <p className="text-[10px] text-muted-foreground">
+        {slots.length > 0
+          ? "Fixed availability: " + slots.map((x) => `${SHORT_DAY[x.day] ?? x.day} ${x.startTime}–${x.endTime}`).join(", ")
+          : "Scheduled in their own recorded availability"}
+      </p>
+    </div>
+  )
+}
+
 // ── SpecializationPicker — defined OUTSIDE FacultyPage to prevent remount on render ──
 function SpecializationPicker({
   sectionCounts,
@@ -44,8 +62,9 @@ function SpecializationPicker({
   sectionCounts: SectionCountMap
   maxUnits: number
   subjectTitles: string[]
-  subjectInfoMap: Record<string, { units: number; year: number; type: string; semester?: string }>
-  sectionCountByYear: Record<number, number>
+  subjectInfoMap: Record<string, { units: number; year: number; type: string; semester?: string; programId?: string | null }>
+  // Sections per "<programId | *>:<year>" — a program's own subject counts that program's sections only.
+  sectionCountByYear: Record<string, number>
   onToggle: (title: string) => void
   onSetCount: (title: string, count: number) => void
 }) {
@@ -70,14 +89,19 @@ function SpecializationPicker({
     return pool.filter(t => t.toLowerCase().includes(q))
   }, [specSearch, semFilter, subjectTitles, subjectInfoMap])
 
-  function getMaxSections(title: string): number {
+  // How many sections actually exist for this subject (0 when none do).
+  function sectionsFor(title: string): number {
     const info = subjectInfoMap[title]
-    if (!info) return 1
-    return sectionCountByYear[info.year] ?? 1
+    if (!info) return 0
+    return sectionCountByYear[`${info.programId ?? "*"}:${info.year}`] ?? 0
+  }
+  // A subject can always be given to one section; more only if they exist.
+  function getMaxSections(title: string): number {
+    return Math.max(1, sectionsFor(title))
   }
 
   return (
-    <div className="grid gap-2">
+    <div className="grid content-start gap-2">
       <Label>
         Teaching Load
         <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -132,6 +156,7 @@ function SpecializationPicker({
           visibleSubjects.map((title) => {
             const info = subjectInfoMap[title]
             const maxSec = getMaxSections(title)
+            const existing = sectionsFor(title)
             const currentCount = sectionCounts[title] ?? 0
             const isSelected = currentCount > 0
             const subjectLoad = (info?.units ?? 0) * currentCount
@@ -155,7 +180,7 @@ function SpecializationPicker({
                     )}
                   </div>
                   <span className="text-[10px] text-muted-foreground">
-                    {info?.units ?? 0}u per section · Year {info?.year ?? '?'} · {maxSec} section{maxSec !== 1 ? 's' : ''} available
+                    {info?.units ?? 0}u per section · Year {info?.year ?? '?'} · {existing === 0 ? 'no sections yet' : `${existing} section${existing !== 1 ? 's' : ''} available`}
                   </span>
                 </div>
                 {isSelected && (
@@ -261,7 +286,9 @@ function MobileFacultyList({
                           {formatFacultyType(f.employmentType)} · max {f.maxUnitsPerWeek}u · {f.maxHoursPerWeek ?? 30}h /wk
                         </span>
                       </div>
+                      {f.allocated && <AllocatedInfo f={f} />}
                     </div>
+                    {!f.allocated && (
                     <DropdownMenu>
                       <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" />}>
                         <MoreHorizontal className="h-4 w-4" />
@@ -275,6 +302,7 @@ function MobileFacultyList({
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    )}
                   </div>
 
                   {specEntries.length > 0 && (
@@ -420,10 +448,10 @@ export default function FacultyPage() {
 
   // Map subject title → { units, year, type, semester }
   const subjectInfoMap = useMemo(() => {
-    const map: Record<string, { units: number; year: number; type: string; semester: string }> = {}
+    const map: Record<string, { units: number; year: number; type: string; semester: string; programId: string | null }> = {}
     for (const s of subjects) {
       if (s.title && !map[s.title]) {
-        map[s.title] = { units: s.units ?? 0, year: s.year ?? 1, type: s.type ?? "LECTURE", semester: s.semester ?? "FIRST" }
+        map[s.title] = { units: s.units ?? 0, year: s.year ?? 1, type: s.type ?? "LECTURE", semester: s.semester ?? "FIRST", programId: s.programId ?? null }
       }
     }
     return map
@@ -431,10 +459,13 @@ export default function FacultyPage() {
 
   // Count sections per year level
   const sectionCountByYear = useMemo(() => {
-    const map: Record<number, number> = {}
+    const map: Record<string, number> = {}
     for (const sec of sections) {
       const year = sec.yearLevel?.level ?? 0
-      if (year > 0) map[year] = (map[year] ?? 0) + 1
+      if (year <= 0) continue
+      const programId = sec.yearLevel?.programId ?? sec.yearLevel?.program?.id
+      map[`*:${year}`] = (map[`*:${year}`] ?? 0) + 1
+      if (programId) map[`${programId}:${year}`] = (map[`${programId}:${year}`] ?? 0) + 1
     }
     return map
   }, [sections])
@@ -454,7 +485,7 @@ export default function FacultyPage() {
   function getMaxSections(title: string): number {
     const info = subjectInfoMap[title]
     if (!info) return 1
-    return sectionCountByYear[info.year] ?? 1
+    return Math.max(1, sectionCountByYear[`${info.programId ?? "*"}:${info.year}`] ?? 0)
   }
 
   // ── Add form helpers ──
@@ -764,8 +795,8 @@ export default function FacultyPage() {
                 )}
 
                 {/* Employment type (decides the unit cap) / Hours */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="grid gap-2">
+                <div className="grid grid-cols-1 items-start sm:grid-cols-2 gap-4">
+                  <div className="grid content-start gap-2">
                     <Label>Employment type</Label>
                     <select
                       value={addForm.employmentType}
@@ -773,12 +804,12 @@ export default function FacultyPage() {
                       className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     >
                       {FACULTY_TYPES.map((t) => (
-                        <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]} — max {MAX_UNITS_BY_TYPE[t]} units / week</option>
+                        <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]}</option>
                       ))}
                     </select>
                     <p className="text-[10px] text-muted-foreground">{FACULTY_TYPE_DESCRIPTIONS[addForm.employmentType]}.</p>
                   </div>
-                  <div className="grid gap-2">
+                  <div className="grid content-start gap-2">
                     <Label className="text-muted-foreground">Hours / Week</Label>
                     <Input type="number" value={0} disabled readOnly className="bg-muted/40" />
                     <p className="text-[10px] text-muted-foreground">Auto-calculated from the assigned schedule.</p>
@@ -879,6 +910,7 @@ export default function FacultyPage() {
                           <TableCell>
                             <div>
                               <p className="font-medium">{f.user?.firstName} {f.user?.lastName}</p>
+                              {f.allocated && <AllocatedInfo f={f} />}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -927,6 +959,7 @@ export default function FacultyPage() {
                             </Badge>
                           </TableCell>
                           <TableCell>
+                            {!f.allocated && (
                             <DropdownMenu>
                               <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
                                 <MoreHorizontal className="h-4 w-4" />
@@ -940,6 +973,7 @@ export default function FacultyPage() {
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
+                            )}
                           </TableCell>
                         </TableRow>
                       )
@@ -981,8 +1015,8 @@ export default function FacultyPage() {
                 <Input value={editForm.lastName} onChange={(e) => setEditForm(f => ({ ...f, lastName: e.target.value }))} />
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="grid gap-2">
+            <div className="grid grid-cols-1 items-start sm:grid-cols-3 gap-4">
+              <div className="grid content-start gap-2">
                 <Label>Employment type</Label>
                 <select
                   value={editForm.employmentType}
@@ -990,17 +1024,17 @@ export default function FacultyPage() {
                   className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
                   {FACULTY_TYPES.map((t) => (
-                    <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]} — max {MAX_UNITS_BY_TYPE[t]}u</option>
+                    <option key={t} value={t}>{FACULTY_TYPE_LABELS[t]}</option>
                   ))}
                 </select>
                 <p className="text-[10px] text-muted-foreground">Max {maxUnitsForType(editForm.employmentType)} units / week.</p>
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label className="text-muted-foreground">Hours / Week</Label>
                 <Input type="number" value={editForm.hoursPerWeek} disabled readOnly className="bg-muted/40" />
                 <p className="text-[10px] text-muted-foreground">Auto-calculated from the assigned schedule.</p>
               </div>
-              <div className="grid gap-2">
+              <div className="grid content-start gap-2">
                 <Label>Status</Label>
                 <select
                   value={editForm.isActive ? "active" : "inactive"}

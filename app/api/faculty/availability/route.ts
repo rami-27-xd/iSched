@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
 import { departmentHasScheduleForTerm } from "@/lib/services/term-scope"
+import { getProgramAllocations, type AvailabilitySlot } from "@/lib/services/allocations"
 import { isUnitRole, getUnitSubjects, facultyBelongsToUnit } from "@/lib/services/unit-faculty"
 
 /**
@@ -88,6 +89,7 @@ export async function GET(req: Request) {
     const semesterId = searchParams.get("semesterId")
 
     const where: any = {}
+    let allocationSlots = new Map<string, AvailabilitySlot[]>()
     if (facultyId) where.facultyId = facultyId
     if (semesterId) where.semesterId = semesterId
 
@@ -95,10 +97,20 @@ export async function GET(req: Request) {
     if (dbUser.role === "ADMIN" || dbUser.role === "DEAN" || isUnitRole(dbUser.role)) {
       const adminDeptId = getUserDepartmentId(dbUser)
       if (!adminDeptId) return NextResponse.json(apiResponse([]))
-      where.faculty = { departmentId: adminDeptId }
+      // A Program Chairperson also sees the instructors allocated to their program.
+      const alloc = dbUser.role === "ADMIN"
+        ? await getProgramAllocations((dbUser as any).programHead?.programId, semesterId)
+        : { ids: [] as string[], slotsByFaculty: new Map<string, AvailabilitySlot[]>() }
+      if (alloc.ids.length > 0) {
+        where.OR = [{ faculty: { departmentId: adminDeptId } }, { facultyId: { in: alloc.ids } }]
+        delete where.faculty
+      } else {
+        where.faculty = { departmentId: adminDeptId }
+      }
+      allocationSlots = alloc.slotsByFaculty
     }
 
-    const availability = await db.facultyAvailability.findMany({
+    const availability: any[] = await db.facultyAvailability.findMany({
       where,
       include: {
         faculty: {
@@ -108,6 +120,24 @@ export async function GET(req: Request) {
       },
       orderBy: [{ faculty: { user: { lastName: "asc" } } }, { day: "asc" }, { startTime: "asc" }],
     })
+
+    // Allocated instructors show their FIXED windows (what the program may use),
+    // not their own recorded availability.
+    if (allocationSlots.size > 0) {
+      const sample = new Map<string, any>()
+      for (const a of availability) if (!sample.has(a.facultyId)) sample.set(a.facultyId, a)
+      const kept = availability.filter((a) => !allocationSlots.has(a.facultyId))
+      const synthetic: any[] = []
+      for (const [fid, slots] of allocationSlots) {
+        const base = sample.get(fid)
+        const faculty = base?.faculty ?? (await db.faculty.findUnique({ where: { id: fid }, include: { user: { select: { firstName: true, lastName: true, email: true } } } }))
+        slots.forEach((s, i) => synthetic.push({
+          id: `alloc-${fid}-${i}`, facultyId: fid, semesterId: semesterId ?? base?.semesterId ?? null,
+          day: s.day, startTime: s.startTime, endTime: s.endTime, faculty, semester: base?.semester ?? null, allocated: true,
+        }))
+      }
+      return NextResponse.json(apiResponse([...kept, ...synthetic]))
+    }
 
     return NextResponse.json(apiResponse(availability))
   } catch (error) {

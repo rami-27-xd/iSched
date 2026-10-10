@@ -1176,9 +1176,9 @@ export default function AvailabilityPage() {
                   isSaving={savingFacultyId === f.id}
                   onSaveMaxHours={handleSaveMaxHours}
                   isSavingMaxHours={savingMaxHoursFor === f.id}
-                  onEdit={isDean ? undefined : openEdit}
-                  onDeactivate={isDean ? undefined : setDeactivateTarget}
-                  readOnly={isDean}
+                  onEdit={isDean || (f as any).allocated ? undefined : openEdit}
+                  onDeactivate={isDean || (f as any).allocated ? undefined : setDeactivateTarget}
+                  readOnly={isDean || !!(f as any).allocated}
                 />
               ))}
             </div>

@@ -3,6 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { createNotification, notifyAllSuperAdmins } from "@/lib/notifications"
+import { parseSlots, readSlots, type AvailabilitySlot } from "@/lib/services/allocations"
 
 // POST — Program Chair sends a faculty request to Department Chair
 export async function POST(req: Request) {
@@ -148,6 +149,7 @@ export async function GET() {
           subjectCode: r.subjectId ? subjectById.get(r.subjectId)?.code ?? null : null,
           subjectTitle: r.subjectId ? subjectById.get(r.subjectId)?.title ?? null : null,
           facultyName: r.facultyId ? facultyNameById.get(r.facultyId) ?? null : null,
+          allocatedAvailability: readSlots(r.allocatedAvailability),
           termLabel: r.semesterId ? termById.get(r.semesterId) ?? null : null,
           programAbbr: r.programId ? programById.get(r.programId) ?? null : null,
         }))
@@ -171,7 +173,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json(apiError("Only Department Chairs can respond to faculty requests"), { status: 403 })
     }
 
-    const { id, action, responseNote, facultyId } = await req.json()
+    const { id, action, responseNote, facultyId, availability } = await req.json()
     if (!id || !["approve", "deny"].includes(action)) {
       return NextResponse.json(apiError("A request id and an action of approve or deny are required"), { status: 400 })
     }
@@ -190,7 +192,13 @@ export async function PATCH(req: Request) {
     // generator and the Add/Edit picker both read approved requests). They are
     // still bound by specialization and availability.
     let allocatedName: string | null = null
+    let fixedSlots: AvailabilitySlot[] = []
     if (action === "approve") {
+      // The Department Chairperson sets the instructor's FIXED availability for
+      // this program: the only windows they will be scheduled in on its classes.
+      const parsed = parseSlots(availability)
+      if (!parsed.ok) return NextResponse.json(apiError(parsed.error), { status: 400 })
+      fixedSlots = parsed.slots
       if (!facultyId) {
         return NextResponse.json(apiError("Choose the faculty member to allocate before approving"), { status: 400 })
       }
@@ -211,6 +219,7 @@ export async function PATCH(req: Request) {
       data: {
         status,
         facultyId: action === "approve" ? facultyId : null,
+        allocatedAvailability: action === "approve" ? (fixedSlots as any) : undefined,
         respondedBy: dbUser.id,
         respondedAt: new Date(),
         responseNote: responseNote?.trim() || null,
@@ -229,7 +238,7 @@ export async function PATCH(req: Request) {
       title: action === "approve" ? "Instructor Allocated" : "Faculty Request Declined",
       message:
         action === "approve"
-          ? `${allocatedName} has been allocated to your program for ${termLabel}. They now appear in your Add Entry picker and are included when you generate.` +
+          ? `${allocatedName} has been allocated to your program for ${termLabel}. They now appear in your Faculty list and Add Entry picker and are included when you generate — but only inside the fixed availability the Department Chairperson set for them.` +
             (responseNote?.trim() ? ` Note: ${responseNote.trim()}` : "")
           : `Your request for additional faculty was declined` + (responseNote?.trim() ? `: ${responseNote.trim()}` : "."),
       type: "faculty_request",

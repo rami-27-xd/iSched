@@ -126,6 +126,7 @@ export default function SystemLogsPage() {
             <TabsTrigger value="classes"><ListChecks className="mr-1.5 h-4 w-4" />Classes</TabsTrigger>
             <TabsTrigger value="subjects"><Layers className="mr-1.5 h-4 w-4" />Subject Summary</TabsTrigger>
             <TabsTrigger value="rooms"><DoorOpen className="mr-1.5 h-4 w-4" />Room Occupancy</TabsTrigger>
+            <TabsTrigger value="faculty"><Users className="mr-1.5 h-4 w-4" />Faculty Occupancy</TabsTrigger>
           </TabsList>
           <TabsContent value="activity" className="mt-4">
             <ActivityTab />
@@ -141,6 +142,9 @@ export default function SystemLogsPage() {
           </TabsContent>
           <TabsContent value="rooms" className="mt-4">
             <RoomOccupancyView />
+          </TabsContent>
+          <TabsContent value="faculty" className="mt-4">
+            <RoomOccupancyView mode="faculty" />
           </TabsContent>
         </Tabs>
       </div>

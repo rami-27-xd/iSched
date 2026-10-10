@@ -6,6 +6,7 @@ import { notifyAllSuperAdmins } from "@/lib/notifications"
 import { recordAudit } from "@/lib/audit"
 import { TBA_EMPLOYEE_ID } from "@/lib/sentinels"
 import { isFacultyType, maxUnitsForType, DEFAULT_HOURS_BY_TYPE } from "@/lib/faculty-types"
+import { getProgramAllocations } from "@/lib/services/allocations"
 import { isUnitRole, getUnitSubjects, facultyBelongsToUnit, type UnitRole } from "@/lib/services/unit-faculty"
 
 export async function GET(req: Request) {
@@ -82,15 +83,13 @@ export async function GET(req: Request) {
     // picker offers exactly who the generator may assign.
     const semesterId = searchParams.get("semesterId")
     const chairProgramId = dbUser?.role === "ADMIN" ? ((dbUser as any).programHead?.programId ?? null) : null
-    const allocatedIds =
-      schedulable && chairProgramId
-        ? (
-            await db.facultyRequest.findMany({
-              where: { status: "APPROVED", programId: chairProgramId, facultyId: { not: null }, ...(semesterId ? { semesterId } : {}) },
-              select: { facultyId: true },
-            })
-          ).map((r) => r.facultyId as string)
-        : []
+    // Allocated instructors are listed for the Program Chairperson everywhere (the
+    // Faculty page as well as the pickers), each with the fixed availability the
+    // Department Chairperson set for them (lib/services/allocations.ts).
+    const allocation = chairProgramId
+      ? await getProgramAllocations(chairProgramId, semesterId)
+      : { ids: [] as string[], slotsByFaculty: new Map<string, { day: string; startTime: string; endTime: string }[]>() }
+    const allocatedIds = allocation.ids
 
     // The "TBA" placeholder is gone from every list and picker — every class
     // is taught by a real, named instructor.
@@ -116,7 +115,11 @@ export async function GET(req: Request) {
       faculty = faculty.filter((f) => facultyBelongsToUnit(f.specializations, unitSubjects))
     }
 
-    return NextResponse.json(apiResponse(faculty))
+    const out = faculty.map((f) => {
+      const isAllocated = allocation.ids.includes(f.id) && f.departmentId !== userDeptId
+      return isAllocated ? { ...f, allocated: true, allocatedSlots: allocation.slotsByFaculty.get(f.id) ?? [] } : f
+    })
+    return NextResponse.json(apiResponse(out))
   } catch (error) {
     console.error("GET /api/faculty error:", error)
     return NextResponse.json(apiError("Internal server error"), { status: 500 })

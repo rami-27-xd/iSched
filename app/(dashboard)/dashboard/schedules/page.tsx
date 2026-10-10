@@ -97,7 +97,7 @@ import { roomTypeAllowedForSubject } from "@/lib/room-type-rules"
 // Per-day session cap (GEC/GEL 1h / 1h 30min) — same rule the server and the
 // generator enforce, so the End Time picker never offers a length the save
 // would reject. See lib/session-rules.ts.
-import { resolveMaxMinutesPerDay, formatMinutes, LAB_BLOCK_MINUTES } from "@/lib/session-rules"
+import { resolveMaxMinutesPerDay, formatMinutes, LAB_BLOCK_MINUTES, isPathfitOrNstpCode } from "@/lib/session-rules"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { WorkflowActions } from "@/components/schedule/workflow-actions"
 
@@ -3523,7 +3523,7 @@ export default function SchedulesPage() {
             {/* Faculty (text autocomplete) & Room (department-restricted). Room drops
                 out of this row in split mode — it moves into the Set A/Set B cards
                 below instead, since each set can use a different room. */}
-            <div className={splitLabSets ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 sm:grid-cols-2 gap-4"}>
+            <div className={splitLabSets ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 items-start sm:grid-cols-2 gap-4"}>
               {/* ── Faculty — free-text with autocomplete suggestions ────────
                   The user types a name; matching faculty appear as suggestions.
                   Selecting one fills both the display name and the internal facultyId.
@@ -3821,7 +3821,7 @@ export default function SchedulesPage() {
             {(
               (entryForm.facultyId && entryForm.day && availableTimeOptions.length < TIME_OPTIONS.length) ||
               (entryForm.day && (occupiedSlots.faculty.length > 0 || occupiedSlots.room.length > 0 || occupiedSlots.section.length > 0)) ||
-              (entryForm.startTime && constraintFilteredEndTimes.length > 0) ||
+              (entryForm.startTime) ||
               (entryForm.startTime && selectedSubjectForEntry && resolveMaxMinutesPerDay(selectedSubjectForEntry) !== null)
             ) && (
               <div className="-mt-2 space-y-0.5">
@@ -3829,10 +3829,29 @@ export default function SchedulesPage() {
                   <p className="text-[10px] text-muted-foreground">Filtered by faculty availability</p>
                 )}
                 {entryForm.day && (occupiedSlots.faculty.length > 0 || occupiedSlots.room.length > 0 || occupiedSlots.section.length > 0) && (
-                  <p className="text-[10px] text-amber-600">Conflicting times disabled</p>
+                  <p className="text-[10px] text-amber-600">
+                    Start times you cannot pick are already taken on {entryForm.day.charAt(0) + entryForm.day.slice(1).toLowerCase()}:{" "}
+                    {[
+                      occupiedSlots.faculty.length > 0 && "the faculty is teaching",
+                      occupiedSlots.room.length > 0 && "the room is booked",
+                      occupiedSlots.section.length > 0 && "the section has a class",
+                    ].filter(Boolean).join(", ")}.
+                  </p>
                 )}
-                {entryForm.startTime && constraintFilteredEndTimes.length > 0 && (
-                  <p className="text-[10px] text-muted-foreground">Showing valid end times (no conflicts)</p>
+                {entryForm.startTime && selectedSubjectForEntry?.type === "LABORATORY" && !isPathfitOrNstpCode(selectedSubjectForEntry?.code) && (
+                  <p className="text-[10px] text-sky-700">A laboratory set is one continuous {formatMinutes(LAB_BLOCK_MINUTES)} class, so the end time follows the start time.</p>
+                )}
+                {entryForm.startTime && selectedSubjectForEntry?.type !== "LABORATORY" && constraintFilteredEndTimes.length > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    The class can end as late as {constraintFilteredEndTimes[constraintFilteredEndTimes.length - 1].time}
+                    {resolveMaxMinutesPerDay(selectedSubjectForEntry) !== null &&
+                    toMinsHelper(constraintFilteredEndTimes[constraintFilteredEndTimes.length - 1].time) - toMinsHelper(entryForm.startTime) >= resolveMaxMinutesPerDay(selectedSubjectForEntry)!
+                      ? " (the subject's per-day limit)"
+                      : " — a booking or the faculty's available hours stops it there"}.
+                  </p>
+                )}
+                {entryForm.startTime && selectedSubjectForEntry?.type !== "LABORATORY" && constraintFilteredEndTimes.length === 0 && (
+                  <p className="text-[10px] text-red-600">No end time fits after {entryForm.startTime}: a booking or the end of the faculty's available hours comes right after it. Pick an earlier start time.</p>
                 )}
                 {entryForm.startTime && selectedSubjectForEntry && resolveMaxMinutesPerDay(selectedSubjectForEntry) !== null && (
                   <p className="text-[10px] text-sky-700">

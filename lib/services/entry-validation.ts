@@ -6,7 +6,8 @@ import { getCurriculumCodes, hasCurriculumMap } from "@/lib/curriculum-map"
 import { specializationsCoverSubject } from "@/lib/specialization-match"
 import { isPlaceholderRoomCode, isTbaFacultyEmployeeId, isPathfitVenueCode, pathfitVenueLimit, isPathfitCode } from "@/lib/sentinels"
 import { describeRequiredRoomTypes, roomTypeAllowedForSubject } from "@/lib/room-type-rules"
-import { resolveMaxMinutesPerDay, formatMinutes, sessionLengthViolation } from "@/lib/session-rules"
+import { resolveMaxMinutesPerDay, formatMinutes, sessionLengthViolation, isGecCode, isPathfitOrNstpCode } from "@/lib/session-rules"
+import { getProgramAllocations } from "@/lib/services/allocations"
 import { DAY_START_TIME, DAY_END_TIME } from "@/lib/constants"
 import { MAX_UNITS_ANY_TYPE, formatFacultyType } from "@/lib/faculty-types"
 
@@ -427,9 +428,19 @@ export async function validateEntry(
     // (This used to fall back to the active semester's rows — the one place
     // 1st- and 2nd-semester data bled into each other.) The generator applies the
     // same rule (generate/route.ts), so both paths always agree.
-    const availability = await db.facultyAvailability.findMany({
+    let availability: { day: any; startTime: string; endTime: string }[] = await db.facultyAvailability.findMany({
       where: { facultyId: entry.facultyId, semesterId: schedule.semesterId },
     })
+    // An instructor allocated to this section's program (approved faculty request)
+    // is scheduled ONLY inside the fixed windows the Department Chairperson set —
+    // for the program's own subjects (GEC/GEL/PATHFit/NSTP keep the instructor's
+    // regular availability).
+    const entryProgramId = section?.yearLevel?.program?.id
+    if (entryProgramId && subject && !isGecCode(subject.code) && !isPathfitOrNstpCode(subject.code)) {
+      const alloc = await getProgramAllocations(entryProgramId, schedule.semesterId)
+      const fixed = alloc.slotsByFaculty.get(entry.facultyId)
+      if (fixed) availability = fixed
+    }
     if (availability.length === 0) {
       const fname = faculty?.user ? `${faculty.user.firstName} ${faculty.user.lastName}` : "This faculty member"
       return `${fname} has no availability recorded for this term and cannot be scheduled. Open Faculty Availability, choose this term, and mark their hours first.`

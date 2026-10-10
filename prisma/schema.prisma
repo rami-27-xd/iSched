@@ -669,6 +669,9 @@ model FacultyRequest {
   respondedBy  String?
   respondedAt  DateTime?
   responseNote String?
+  // Fixed weekly availability the Department Chairperson set for the allocated
+  // instructor on approval: [{ day, startTime, endTime }] — see lib/services/allocations.ts
+  allocatedAvailability Json?
   createdAt    DateTime  @default(now())
 
   @@index([departmentId, status])
