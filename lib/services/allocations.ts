@@ -20,6 +20,26 @@ export interface AvailabilitySlot {
   endTime: string
 }
 
+/**
+ * `FacultyRequest.allocatedAvailability` was added after the first deployment. Until
+ * `prisma db push` has run on a database, selecting it makes EVERY faculty-request
+ * query fail ("Internal server error"). This checks once whether the column exists and
+ * returns the `omit` to use: undefined when it does, `{ allocatedAvailability: true }`
+ * when it does not (requests still work; fixed windows just can't be stored yet).
+ */
+let columnChecked: boolean | null = null
+export async function requestOmit(): Promise<{ allocatedAvailability: true } | undefined> {
+  if (columnChecked === null) {
+    try {
+      const rows = await db.$queryRaw<{ n: number }[]>`SELECT 1 AS n FROM information_schema.columns WHERE table_name = 'FacultyRequest' AND column_name = 'allocatedAvailability' LIMIT 1`
+      columnChecked = rows.length > 0
+    } catch {
+      columnChecked = false
+    }
+  }
+  return columnChecked ? undefined : { allocatedAvailability: true }
+}
+
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 
@@ -61,9 +81,10 @@ export async function getProgramAllocations(
 ): Promise<{ ids: string[]; slotsByFaculty: Map<string, AvailabilitySlot[]> }> {
   const slotsByFaculty = new Map<string, AvailabilitySlot[]>()
   if (!programId) return { ids: [], slotsByFaculty }
-  const rows = await db.facultyRequest.findMany({
+  const omit = await requestOmit()
+  const rows: { facultyId: string | null; allocatedAvailability?: unknown }[] = await db.facultyRequest.findMany({
     where: { status: "APPROVED", programId, facultyId: { not: null }, ...(semesterId ? { semesterId } : {}) },
-    select: { facultyId: true, allocatedAvailability: true },
+    omit: { ...(omit ?? {}), id: false } as any,
   })
   const ids: string[] = []
   for (const r of rows) {

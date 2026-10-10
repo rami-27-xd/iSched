@@ -3,7 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, getUserDepartmentId } from "@/lib
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { createNotification, notifyAllSuperAdmins } from "@/lib/notifications"
-import { parseSlots, readSlots, type AvailabilitySlot } from "@/lib/services/allocations"
+import { parseSlots, readSlots, requestOmit, type AvailabilitySlot } from "@/lib/services/allocations"
 
 // POST — Program Chair sends a faculty request to Department Chair
 export async function POST(req: Request) {
@@ -44,7 +44,9 @@ export async function POST(req: Request) {
       ? await db.subject.findUnique({ where: { id: String(subjectId) }, select: { id: true } }).catch(() => null)
       : null
 
+    const omit = await requestOmit()
     const request = await db.facultyRequest.create({
+      omit,
       data: {
         requesterId: dbUser.id,
         departmentId,
@@ -86,7 +88,9 @@ export async function GET() {
     // submitted, so they can track their own.
     // Previously only the Dept Chair could read this, which left the requester
     // with no way to tell whether their request had been answered.
+    const omit = await requestOmit()
     const requests = await db.facultyRequest.findMany({
+      omit,
       // SUPER_ADMIN (Dept Chair) sees every request. The request's departmentId is
       // the REQUESTER's department (CIT, CAG, …), while a Dept Chair's own is CAS —
       // filtering on it meant a CIT chair's request was invisible to the very person
@@ -149,7 +153,7 @@ export async function GET() {
           subjectCode: r.subjectId ? subjectById.get(r.subjectId)?.code ?? null : null,
           subjectTitle: r.subjectId ? subjectById.get(r.subjectId)?.title ?? null : null,
           facultyName: r.facultyId ? facultyNameById.get(r.facultyId) ?? null : null,
-          allocatedAvailability: readSlots(r.allocatedAvailability),
+          allocatedAvailability: readSlots((r as any).allocatedAvailability),
           termLabel: r.semesterId ? termById.get(r.semesterId) ?? null : null,
           programAbbr: r.programId ? programById.get(r.programId) ?? null : null,
         }))
@@ -178,7 +182,8 @@ export async function PATCH(req: Request) {
       return NextResponse.json(apiError("A request id and an action of approve or deny are required"), { status: 400 })
     }
 
-    const existing = await db.facultyRequest.findUnique({ where: { id } })
+    const omit = await requestOmit()
+    const existing = await db.facultyRequest.findUnique({ where: { id }, omit })
     if (!existing) return NextResponse.json(apiError("Request not found"), { status: 404 })
 
     // No department check: the Dept Chair is the approver for all Program Chairs,
@@ -199,6 +204,11 @@ export async function PATCH(req: Request) {
       const parsed = parseSlots(availability)
       if (!parsed.ok) return NextResponse.json(apiError(parsed.error), { status: 400 })
       fixedSlots = parsed.slots
+      if (omit) {
+        // The database has not been updated for fixed availability yet — refuse rather
+        // than approve and silently drop the windows the chair just set.
+        return NextResponse.json(apiError("Fixed availability can't be saved yet: the database still needs the latest update (prisma db push). Ask the system administrator."), { status: 503 })
+      }
       if (!facultyId) {
         return NextResponse.json(apiError("Choose the faculty member to allocate before approving"), { status: 400 })
       }
@@ -216,10 +226,11 @@ export async function PATCH(req: Request) {
     const status = action === "approve" ? "APPROVED" : "DENIED"
     const updated = await db.facultyRequest.update({
       where: { id },
+      omit,
       data: {
         status,
         facultyId: action === "approve" ? facultyId : null,
-        allocatedAvailability: action === "approve" ? (fixedSlots as any) : undefined,
+        ...(omit ? {} : { allocatedAvailability: action === "approve" ? (fixedSlots as any) : undefined }),
         respondedBy: dbUser.id,
         respondedAt: new Date(),
         responseNote: responseNote?.trim() || null,
