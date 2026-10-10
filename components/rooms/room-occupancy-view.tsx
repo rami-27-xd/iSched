@@ -81,7 +81,7 @@ const GRID_END_MIN = 21 * 60
 const SLOT_MIN = 30
 const SLOT_COUNT = (GRID_END_MIN - GRID_START_MIN) / SLOT_MIN // 28
 const LABEL_COL_PX = 168
-const SLOT_COL_PX = 30
+const SLOT_COL_PX = 46
 
 const STATUS_STYLE: Record<string, string> = {
   DRAFT: "bg-gray-100 text-gray-700 border-gray-200",
@@ -464,11 +464,13 @@ function OccupancyGrid({
   selectedId: string | null
   onSelect: (block: OccupancyBlock, room: RoomOccupancy) => void
 }) {
-  const hourLabels = Array.from({ length: SLOT_COUNT / 2 }, (_, i) => {
-    const h = 7 + i
-    const suffix = h >= 12 ? "PM" : "AM"
+  // One header cell per 30-minute column: "7:00 AM", "7:30 AM", …
+  const slotLabels = Array.from({ length: SLOT_COUNT }, (_, i) => {
+    const mins = GRID_START_MIN + i * SLOT_MIN
+    const h = Math.floor(mins / 60)
+    const m = mins % 60
     const h12 = h % 12 === 0 ? 12 : h % 12
-    return `${h12} ${suffix}`
+    return `${h12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`
   })
 
   return (
@@ -485,11 +487,11 @@ function OccupancyGrid({
         <div className="sticky left-0 z-20 border-b border-r bg-muted/60 px-3 py-1.5 font-semibold text-muted-foreground" style={{ gridRow: 1, gridColumn: 1 }}>
           {mode === "faculty" ? "Faculty" : "Room"}
         </div>
-        {hourLabels.map((label, i) => (
+        {slotLabels.map((label, i) => (
           <div
             key={label}
-            className="border-b border-l bg-muted/60 px-1 py-1.5 text-center text-[10px] font-medium text-muted-foreground"
-            style={{ gridRow: 1, gridColumn: `${2 + i * 2} / span 2` }}
+            className={`whitespace-nowrap border-b border-l bg-muted/60 px-0.5 py-1.5 text-center text-[9px] ${i % 2 === 0 ? "font-semibold text-muted-foreground" : "font-normal text-muted-foreground/70"}`}
+            style={{ gridRow: 1, gridColumn: 2 + i }}
           >
             {label}
           </div>

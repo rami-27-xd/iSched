@@ -177,7 +177,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json(apiError("Only Department Chairs can respond to faculty requests"), { status: 403 })
     }
 
-    const { id, action, responseNote, facultyId, availability } = await req.json()
+    const { id, action, responseNote, facultyId, availability, subjectIds } = await req.json()
     if (!id || !["approve", "deny"].includes(action)) {
       return NextResponse.json(apiError("A request id and an action of approve or deny are required"), { status: 400 })
     }
@@ -198,12 +198,19 @@ export async function PATCH(req: Request) {
     // still bound by specialization and availability.
     let allocatedName: string | null = null
     let fixedSlots: AvailabilitySlot[] = []
+    let assignedSubjects: { id: string; title: string }[] = []
     if (action === "approve") {
       // The Department Chairperson sets the instructor's FIXED availability for
       // this program: the only windows they will be scheduled in on its classes.
       const parsed = parseSlots(availability)
       if (!parsed.ok) return NextResponse.json(apiError(parsed.error), { status: 400 })
       fixedSlots = parsed.slots
+      assignedSubjects = Array.isArray(subjectIds) && subjectIds.length > 0
+        ? await db.subject.findMany({ where: { id: { in: subjectIds.map(String) } }, select: { id: true, title: true } })
+        : []
+      if (assignedSubjects.length === 0) {
+        return NextResponse.json(apiError("Choose the subject(s) to assign to this instructor"), { status: 400 })
+      }
       if (omit) {
         // The database has not been updated for fixed availability yet — refuse rather
         // than approve and silently drop the windows the chair just set.
@@ -236,6 +243,14 @@ export async function PATCH(req: Request) {
         responseNote: responseNote?.trim() || null,
       },
     })
+
+    // The assigned subjects become the instructor's specializations (merged), so the
+    // Program Chairperson can plot them: generation and Add Entry both require a match.
+    if (action === "approve" && assignedSubjects.length > 0 && facultyId) {
+      const f = await db.faculty.findUnique({ where: { id: facultyId }, select: { specializations: true } })
+      const merged = [...new Set([...(f?.specializations ?? []), ...assignedSubjects.map((s) => s.title)])]
+      await db.faculty.update({ where: { id: facultyId }, data: { specializations: merged } })
+    }
 
     const term = existing.semesterId
       ? await db.semester.findUnique({ where: { id: existing.semesterId }, select: { type: true, academicYear: { select: { label: true } } } })

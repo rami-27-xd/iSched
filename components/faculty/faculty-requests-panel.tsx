@@ -49,6 +49,9 @@ interface FacultyRequestRow {
   termLabel: string | null
   programAbbr: string | null
   semesterId: string | null
+  programId: string | null
+  departmentId: string | null
+  subjectId: string | null
 }
 
 function termLabelOf(s: any): string {
@@ -77,13 +80,24 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
   const [approveTarget, setApproveTarget] = useState<FacultyRequestRow | null>(null)
   const [allocateFacultyId, setAllocateFacultyId] = useState("")
   const [allocateNote, setAllocateNote] = useState("")
-  // The FIXED weekly windows the allocated instructor may be scheduled in for this program.
-  type Slot = { day: string; startTime: string; endTime: string }
-  const DEFAULT_SLOTS: Slot[] = [{ day: "MONDAY", startTime: "08:00", endTime: "17:00" }]
-  const [allocateSlots, setAllocateSlots] = useState<Slot[]>(DEFAULT_SLOTS)
+  // The FIXED weekly windows the allocated instructor may be scheduled in for this
+  // program — each window is a set of days (MWF / TTh / custom) with one time range —
+  // and the subjects the instructor is assigned to teach for it (their specialization).
+  type Win = { days: string[]; startTime: string; endTime: string }
+  const DAY_KEYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
+  const DAY_SHORT: Record<string, string> = { MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu", FRIDAY: "Fri", SATURDAY: "Sat" }
+  const PRESETS: { label: string; days: string[] }[] = [
+    { label: "MWF", days: ["MONDAY", "WEDNESDAY", "FRIDAY"] },
+    { label: "TTh", days: ["TUESDAY", "THURSDAY"] },
+  ]
+  const DEFAULT_WINDOWS: Win[] = [{ days: ["MONDAY", "WEDNESDAY", "FRIDAY"], startTime: "08:00", endTime: "17:00" }]
+  const [allocateWindows, setAllocateWindows] = useState<Win[]>(DEFAULT_WINDOWS)
+  const [allocateSubjectIds, setAllocateSubjectIds] = useState<string[]>([])
+  const allocateSlots = allocateWindows.flatMap((w) => w.days.map((day) => ({ day, startTime: w.startTime, endTime: w.endTime })))
   const slotsValid =
-    allocateSlots.length > 0 &&
-    allocateSlots.every((s) => s.startTime && s.endTime && s.startTime < s.endTime && s.startTime >= "07:30" && s.endTime <= "20:00")
+    allocateWindows.length > 0 &&
+    allocateWindows.every((w) => w.days.length > 0 && w.startTime && w.endTime && w.startTime < w.endTime && w.startTime >= "07:30" && w.endTime <= "20:00")
+  const patchWindow = (i: number, patch: Partial<Win>) => setAllocateWindows((prev) => prev.map((w, j) => (j === i ? { ...w, ...patch } : w)))
 
   // Terms a Program Chairperson can request for: those with a non-archived
   // schedule in their department (the API scopes the list to their department).
@@ -95,6 +109,23 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
 
   // Instructors the Department Chairperson may allocate — their schedulable pool
   // (every CAS faculty member), the same set the generator draws GEC from.
+  // Subjects the instructor can be assigned for the requesting program (its own majors
+  // and the department's shared non-GE subjects) — what the Department Chairperson picks
+  // as the instructor's specialization for this allocation.
+  const { data: programSubjects = [] } = useQuery<any[]>({
+    queryKey: ["allocation-subjects", approveTarget?.departmentId, approveTarget?.programId],
+    enabled: isSuperAdmin && !!approveTarget?.departmentId,
+    queryFn: async () => {
+      const res = await fetch(`/api/subjects?departmentId=${approveTarget!.departmentId}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "Failed to load subjects")
+      return (json.data ?? []).filter(
+        (s: any) =>
+          (!approveTarget!.programId || s.programId === approveTarget!.programId || s.programId == null) &&
+          !/^(GEC|GEL|PATHFIT|NST)/i.test(s.code ?? "")
+      )
+    },
+  })
   const { data: allocatable = [] } = useFaculty(undefined, { enabled: isSuperAdmin && !!approveTarget, scope: "schedulable" })
 
   const { data: requests = [], isLoading } = useQuery<FacultyRequestRow[]>({
@@ -132,7 +163,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
   })
 
   const respond = useMutation({
-    mutationFn: async (vars: { id: string; action: "approve" | "deny"; facultyId?: string; responseNote?: string; availability?: { day: string; startTime: string; endTime: string }[] }) => {
+    mutationFn: async (vars: { id: string; action: "approve" | "deny"; facultyId?: string; responseNote?: string; availability?: { day: string; startTime: string; endTime: string }[]; subjectIds?: string[] }) => {
       const res = await fetch("/api/faculty/request", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -234,7 +265,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
                     size="sm"
                     className="h-7 bg-[#1B4332] text-xs text-white hover:bg-[#2D6A4F]"
                     disabled={respond.isPending}
-                    onClick={() => { setApproveTarget(r); setAllocateFacultyId(""); setAllocateNote(""); setAllocateSlots(DEFAULT_SLOTS) }}
+                    onClick={() => { setApproveTarget(r); setAllocateFacultyId(""); setAllocateNote(""); setAllocateWindows(DEFAULT_WINDOWS); setAllocateSubjectIds(r.subjectId ? [r.subjectId] : []) }}
                   >
                     <Check className="mr-1 h-3.5 w-3.5" /> Allocate & approve
                   </Button>
@@ -323,7 +354,7 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
               {approveTarget?.programAbbr ? ` (${approveTarget.programAbbr})` : ""} asked for help
               {approveTarget?.termLabel ? ` for ${approveTarget.termLabel}` : ""}
               {approveTarget?.subjectCode ? ` with ${approveTarget.subjectCode}` : ""}. The faculty member you choose joins
-              that program&apos;s pool for the term, and is scheduled only inside the fixed availability you set below.
+              that program&apos;s pool for the term, and is scheduled only for the subjects and inside the fixed availability you set below.
             </DialogDescription>
           </DialogHeader>
           {approveTarget && (
@@ -349,44 +380,83 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
               </select>
             </div>
             <div className="grid content-start gap-2">
+              <Label>Subjects to assign (the instructor&apos;s specialization)</Label>
+              <div className="max-h-40 divide-y divide-border overflow-y-auto rounded-lg border border-input">
+                {programSubjects.length === 0 ? (
+                  <p className="p-3 text-xs italic text-muted-foreground">No subjects found for this program.</p>
+                ) : (
+                  (programSubjects as any[]).map((sub) => {
+                    const on = allocateSubjectIds.includes(sub.id)
+                    return (
+                      <label key={sub.id} className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm ${on ? "bg-primary/5" : "hover:bg-muted/50"}`}>
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() => setAllocateSubjectIds((prev) => (on ? prev.filter((x) => x !== sub.id) : [...prev, sub.id]))}
+                          className="shrink-0 rounded border-input"
+                        />
+                        <span className="min-w-0 truncate">{sub.code} — {sub.title}</span>
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">Year {sub.year} · {sub.semester === "SECOND" ? "2nd" : "1st"} sem</span>
+                      </label>
+                    )
+                  })
+                )}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                These are added to the instructor&apos;s specializations, so the Program Chairperson can plot them for the program.
+              </p>
+            </div>
+            <div className="grid content-start gap-2">
               <Label>Fixed availability for this program</Label>
-              <div className="space-y-2">
-                {allocateSlots.map((s, i) => (
-                  <div key={i} className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={s.day}
-                      onChange={(e) => setAllocateSlots((prev) => prev.map((x, j) => (j === i ? { ...x, day: e.target.value } : x)))}
-                      className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      aria-label="Day"
-                    >
-                      {["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"].map((d) => (
-                        <option key={d} value={d}>{d.charAt(0) + d.slice(1).toLowerCase()}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="time" step={1800} value={s.startTime} aria-label="From"
-                      onChange={(e) => setAllocateSlots((prev) => prev.map((x, j) => (j === i ? { ...x, startTime: e.target.value } : x)))}
-                      className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                    <span className="text-xs text-muted-foreground">to</span>
-                    <input
-                      type="time" step={1800} value={s.endTime} aria-label="To"
-                      onChange={(e) => setAllocateSlots((prev) => prev.map((x, j) => (j === i ? { ...x, endTime: e.target.value } : x)))}
-                      className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                    {allocateSlots.length > 1 && (
-                      <Button type="button" size="sm" variant="ghost" className="h-8 px-2" onClick={() => setAllocateSlots((prev) => prev.filter((_, j) => j !== i))} aria-label="Remove window">
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+              <div className="space-y-3">
+                {allocateWindows.map((w, i) => (
+                  <div key={i} className="space-y-2 rounded-lg border border-input p-3">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {PRESETS.map((p) => {
+                        const active = p.days.length === w.days.length && p.days.every((d) => w.days.includes(d))
+                        return (
+                          <button key={p.label} type="button" onClick={() => patchWindow(i, { days: p.days })}
+                            className={`h-7 rounded-full border px-3 text-xs font-medium ${active ? "border-[#1B4332] bg-[#1B4332] text-white" : "border-input hover:bg-muted"}`}>
+                            {p.label}
+                          </button>
+                        )
+                      })}
+                      <span className="mx-1 text-[10px] text-muted-foreground">or pick days:</span>
+                      {DAY_KEYS.map((d) => {
+                        const on = w.days.includes(d)
+                        return (
+                          <button key={d} type="button" aria-pressed={on}
+                            onClick={() => patchWindow(i, { days: on ? w.days.filter((x) => x !== d) : [...w.days, d] })}
+                            className={`h-7 rounded-md border px-2 text-xs ${on ? "border-[#1B4332] bg-[#1B4332]/10 font-semibold text-[#1B4332]" : "border-input text-muted-foreground hover:bg-muted"}`}>
+                            {DAY_SHORT[d]}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input type="time" step={1800} value={w.startTime} aria-label="From"
+                        onChange={(e) => patchWindow(i, { startTime: e.target.value })}
+                        className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                      <span className="text-xs text-muted-foreground">to</span>
+                      <input type="time" step={1800} value={w.endTime} aria-label="To"
+                        onChange={(e) => patchWindow(i, { endTime: e.target.value })}
+                        className="h-9 rounded-lg border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+                      {allocateWindows.length > 1 && (
+                        <Button type="button" size="sm" variant="ghost" className="ml-auto h-8 px-2" aria-label="Remove window"
+                          onClick={() => setAllocateWindows((prev) => prev.filter((_, j) => j !== i))}>
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
-                <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setAllocateSlots((prev) => [...prev, { day: "TUESDAY", startTime: "08:00", endTime: "17:00" }])}>
+                <Button type="button" size="sm" variant="outline" className="h-8 text-xs"
+                  onClick={() => setAllocateWindows((prev) => [...prev, { days: ["TUESDAY", "THURSDAY"], startTime: "08:00", endTime: "17:00" }])}>
                   Add another window
                 </Button>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Between 7:30 AM and 8:00 PM. The Program Chairperson&apos;s Generate and Add Entry will use only these windows for this instructor.
+                Between 7:30 AM and 8:00 PM. The Program Chairperson&apos;s Generate and Add Entry use only these days and times for this instructor.
               </p>
             </div>
             <div className="grid gap-2">
@@ -403,8 +473,8 @@ export function FacultyRequestsPanel({ isSuperAdmin }: { isSuperAdmin: boolean }
             <Button variant="outline" onClick={() => setApproveTarget(null)}>Cancel</Button>
             <Button
               className="bg-[#1B4332] text-white hover:bg-[#2D6A4F]"
-              disabled={respond.isPending || !allocateFacultyId || !slotsValid}
-              onClick={() => approveTarget && respond.mutate({ id: approveTarget.id, action: "approve", facultyId: allocateFacultyId, responseNote: allocateNote || undefined, availability: allocateSlots })}
+              disabled={respond.isPending || !allocateFacultyId || !slotsValid || allocateSubjectIds.length === 0}
+              onClick={() => approveTarget && respond.mutate({ id: approveTarget.id, action: "approve", facultyId: allocateFacultyId, responseNote: allocateNote || undefined, availability: allocateSlots, subjectIds: allocateSubjectIds })}
             >
               {respond.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Allocate & approve
