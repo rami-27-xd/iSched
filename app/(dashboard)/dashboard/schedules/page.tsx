@@ -4311,13 +4311,7 @@ export default function SchedulesPage() {
               <Loader2 className="h-10 w-10 animate-spin text-[#1B4332]" />
               <Cpu className="absolute inset-0 m-auto h-4 w-4 text-[#1B4332]" />
             </div>
-            <div className="space-y-1">
-              <p className="font-semibold">Generating…</p>
-              <p className="text-sm text-muted-foreground">
-                Building the timetable from your subjects, faculty availability and rooms.
-                This can take up to a minute — please keep this tab open.
-              </p>
-            </div>
+            <p className="font-semibold">Generating…</p>
           </div>
         </div>
       )}

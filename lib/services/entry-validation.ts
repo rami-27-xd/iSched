@@ -8,6 +8,7 @@ import { isPlaceholderRoomCode, isTbaFacultyEmployeeId, isPathfitVenueCode, path
 import { describeRequiredRoomTypes, roomTypeAllowedForSubject } from "@/lib/room-type-rules"
 import { resolveMaxMinutesPerDay, formatMinutes, sessionLengthViolation, isGecCode, isPathfitOrNstpCode } from "@/lib/session-rules"
 import { getProgramAllocations } from "@/lib/services/allocations"
+import { getUnitSubjects, facultyBelongsToUnit } from "@/lib/services/unit-faculty"
 import { DAY_START_TIME, DAY_END_TIME } from "@/lib/constants"
 import { MAX_UNITS_ANY_TYPE, formatFacultyType } from "@/lib/faculty-types"
 
@@ -472,7 +473,12 @@ export async function validateEntry(
     // faculty member the picker offered could still be refused here on save.
     // Code-aware (a tag may be "GEC01 - Understanding the Self" or just "GEC01") and
     // identical to the generator's matcher — there is no GEC exemption on either side.
-    if (!specializationsCoverSubject(faculty.specializations, subject.title, subject.code)) {
+    // PATHFit / NSTP are one family each: a tag for any subject of the family qualifies the
+    // instructor for all of it (same rule as PATHFit generation).
+    const inFamily = (isPathfitCode(subject.code) || /^NST/i.test(subject.code ?? ""))
+      ? facultyBelongsToUnit(faculty.specializations, await getUnitSubjects(isPathfitCode(subject.code) ? "PATHFIT" : "NSTP"))
+      : false
+    if (!inFamily && !specializationsCoverSubject(faculty.specializations, subject.title, subject.code)) {
       return `Specialization mismatch: ${faculty.user ? `${faculty.user.firstName} ${faculty.user.lastName}` : "this faculty member"} is not tagged for "${subject.code} - ${subject.title}" (their specializations: ${faculty.specializations.join(", ")}). Add it on the Faculty page first.`
     }
   }

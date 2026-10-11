@@ -87,6 +87,9 @@ export async function runPathfitGeneration(scheduleId: string, dbUser: any): Pro
     where: { isActive: true, department: { college: { abbreviation: "CAS" } }, user: { isActive: true } },
     select: { id: true, specializations: true, maxHoursPerWeek: true },
   })
+  // An instructor tagged for ANY PATHFit subject teaches PATHFit — the four subjects are
+  // one family (PATHFit 1–4 are taught by the same people), so tagging only PATHFit 1
+  // and 3 must not leave the 2nd-semester PATHFit 2 and 4 with nobody.
   const pathfitFaculty = allFaculty.filter((f) =>
     pathfitSubjects.some((s) => specializationsCoverSubject(f.specializations, s.title, s.code))
   )
@@ -111,6 +114,18 @@ export async function runPathfitGeneration(scheduleId: string, dbUser: any): Pro
   for (const a of availabilityRows) {
     if (!availByFaculty.has(a.facultyId)) availByFaculty.set(a.facultyId, [])
     availByFaculty.get(a.facultyId)!.push({ day: a.day, start: toMin(a.startTime), end: toMin(a.endTime) })
+  }
+  const termName = `${schedule.semester?.type === "FIRST" ? "1st" : schedule.semester?.type === "SECOND" ? "2nd" : "this"} semester`
+  if (!pathfitFaculty.some((f) => availByFaculty.has(f.id))) {
+    return {
+      ok: false,
+      status: 422,
+      error: "No PATHFit instructor has availability for this term",
+      details: [
+        `Open Faculty Availability, choose the ${termName} of this schedule's academic year, and mark the hours each PATHFit instructor can teach.`,
+        `Instructors found: ${pathfitFaculty.length}, none with hours marked for this term.`,
+      ],
+    }
   }
 
   const venueIds = await ensurePathfitVenues()
@@ -178,11 +193,8 @@ export async function runPathfitGeneration(scheduleId: string, dbUser: any): Pro
     for (const subj of pathfitSubjects as any[]) {
       if (!takesSubject(sec, subj)) continue
       const minutes = Math.max(60, (subj.hoursPerWeek ?? subj.units ?? 2) * 60)
-      const candidates = pathfitFaculty.filter((f) => specializationsCoverSubject(f.specializations, subj.title, subj.code))
-      if (candidates.length === 0) {
-        unassigned.push({ subjectId: subj.id, sectionId: sec.id, reason: `No PATHFit instructor is tagged for ${subj.code} — add one on the Faculty page` })
-        continue
-      }
+      // Every PATHFit instructor with hours marked this term is a candidate (one family of subjects).
+      const candidates = pathfitFaculty.filter((f) => availByFaculty.has(f.id))
 
       let placed = false
       // Rotate the starting day per section so classes spread over the week.
@@ -248,7 +260,8 @@ export async function runPathfitGeneration(scheduleId: string, dbUser: any): Pro
       error: "No PATHFit class could be placed",
       details: [
         "Existing entries have been preserved.",
-        ...unassigned.slice(0, 5).map((u) => `• ${u.reason}`),
+        ...[...new Set(unassigned.map((u) => u.reason))].slice(0, 5).map((r) => `• ${r}`),
+        `${unassigned.length} class(es) could not be placed. Check that each instructor's availability has a free block of at least 2 hours between 7:30 AM and 6:00 PM, and that the venues are not full.`,
       ],
     }
   }
