@@ -288,7 +288,11 @@ export class SchedulingEngine {
   // facultyId → scheduled minutes this week (all sessions), for maxHoursPerWeek.
   private facultyWeeklyMinutes: Map<string, number> = new Map()
   private facultyWeeklyUnits: Map<string, number> = new Map()
-  private facultySubjectSections: Map<string, number> = new Map()
+  // "<facultyId>|<subject title>" → { sectionId → assignments }. The per-subject
+  // section limit (Faculty.sectionCounts) counts DISTINCT SECTIONS: a laboratory's
+  // Set A and Set B are two assignments for ONE section, so they must not count twice
+  // (with a limit of 1 section, Set B was refused and every lab went unassigned).
+  private facultySubjectSections: Map<string, Map<string, number>> = new Map()
 
   // Lecture-lab pairing: ensures the lab and its corresponding lecture use the same faculty.
   // lectureLabPairs: labSubjectId → lectureSubjectId
@@ -713,7 +717,7 @@ export class SchedulingEngine {
             subjectTitle: t.subject.title,
             sectionId: t.sectionId,
             sectionName: t.section.name,
-            reason: 'No conflict-free slot available — manual assignment required',
+            reason: this.noSlotReason(t),
           })
         }
         break
@@ -756,7 +760,7 @@ export class SchedulingEngine {
           subjectTitle: task.subject.title,
           sectionId: task.sectionId,
           sectionName: task.section.name,
-          reason: 'No conflict-free slot available — manual assignment required',
+          reason: this.noSlotReason(task),
         })
       }
     }
@@ -1400,7 +1404,8 @@ export class SchedulingEngine {
         const maxSec = fac.sectionCounts[subject.title]
         if (maxSec !== undefined && maxSec > 0) {
           const fsKey = `${candidate.facultyId}|${subject.title}`
-          if ((this.facultySubjectSections.get(fsKey) ?? 0) >= maxSec) return false
+          const tally = this.facultySubjectSections.get(fsKey)
+          if (!tally?.has(candidate.sectionId) && (tally?.size ?? 0) >= maxSec) return false
         }
       }
 
@@ -1417,6 +1422,16 @@ export class SchedulingEngine {
     }
 
     return true
+  }
+
+  // Why a task that HAS candidates still found no slot — name the usual causes so the
+  // chair knows what to change rather than reading a generic message.
+  private noSlotReason(t: SchedulingTask): string {
+    const lab = t.subject.type === 'LABORATORY'
+    const base = lab
+      ? `No conflict-free slot for ${t.set ? 'Set ' + t.set : 'this laboratory'}: it needs one continuous 3-hour block, in a laboratory room, with a tagged faculty member whose availability covers all 3 hours and who is free (Set A and Set B cannot share the same time for one faculty member)`
+      : 'No conflict-free slot available'
+    return `${base} — add availability or faculty, raise the faculty's hours / section limit, or assign manually`
   }
 
   private hasBackToBackLabFast(
@@ -1457,7 +1472,9 @@ export class SchedulingEngine {
     if (subject) {
       this.facultyWeeklyUnits.set(a.facultyId, (this.facultyWeeklyUnits.get(a.facultyId) ?? 0) + subject.units)
       const fsKey = `${a.facultyId}|${subject.title}`
-      this.facultySubjectSections.set(fsKey, (this.facultySubjectSections.get(fsKey) ?? 0) + 1)
+      const tally = this.facultySubjectSections.get(fsKey) ?? new Map<string, number>()
+      tally.set(a.sectionId, (tally.get(a.sectionId) ?? 0) + 1)
+      this.facultySubjectSections.set(fsKey, tally)
     }
     // Track faculty per (subject, section, set?) for lecture-lab pairing constraint
     const pairKey = a.set
@@ -1491,9 +1508,13 @@ export class SchedulingEngine {
       if (newUnits <= 0) this.facultyWeeklyUnits.delete(a.facultyId)
       else this.facultyWeeklyUnits.set(a.facultyId, newUnits)
       const fsKey = `${a.facultyId}|${subject.title}`
-      const prevSec = this.facultySubjectSections.get(fsKey) ?? 0
-      if (prevSec <= 1) this.facultySubjectSections.delete(fsKey)
-      else this.facultySubjectSections.set(fsKey, prevSec - 1)
+      const tally = this.facultySubjectSections.get(fsKey)
+      if (tally) {
+        const left = (tally.get(a.sectionId) ?? 0) - 1
+        if (left <= 0) tally.delete(a.sectionId)
+        else tally.set(a.sectionId, left)
+        if (tally.size === 0) this.facultySubjectSections.delete(fsKey)
+      }
     }
     // Un-track faculty assignment for lecture-lab pairing constraint
     const pairKey = a.set
