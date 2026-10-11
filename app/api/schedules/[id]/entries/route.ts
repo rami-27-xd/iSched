@@ -3,7 +3,7 @@ import { getAuthenticatedUser, getCurrentUser } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { validateEntry, validateEntryCapacity, stripConflictMarker, isHardConflict, roomBuildingOpenToDepartment } from "@/lib/services/entry-validation"
-import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenGecIfStale, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE, hasFinalizedOwnGec, GEC_REOPEN_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { checkSubjectEditPermission } from "@/lib/services/subject-permissions"
 import { isGeUnitRole, isNstpCode } from "@/lib/roles"
@@ -57,6 +57,16 @@ export async function POST(
       const permError = await checkSubjectEditPermission(dbUser, body.subjectId)
       if (permError) {
         return NextResponse.json(apiError(permError), { status: 403 })
+      }
+    }
+
+    // A Department Chairperson who already finalized their GEC/GEL must reopen it before
+    // adding GEC/GEL classes to this schedule.
+    if (dbUser.role === "SUPER_ADMIN" && body.subjectId) {
+      const subj = await db.subject.findUnique({ where: { id: body.subjectId }, select: { code: true } })
+      const code = (subj?.code ?? "").toUpperCase()
+      if ((code.startsWith("GEC") || code.startsWith("GEL")) && (await hasFinalizedOwnGec(id, dbUser))) {
+        return NextResponse.json(apiError(GEC_REOPEN_FIRST_MESSAGE), { status: 409 })
       }
     }
 

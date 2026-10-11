@@ -12,7 +12,7 @@ import { PLACEHOLDER_ROOM_CODES } from "@/lib/sentinels"
 import { getProgramAllocations } from "@/lib/services/allocations"
 import { resolveRequiredRoomTypes } from "@/lib/room-type-rules"
 import { resolveMaxMinutesPerDay } from "@/lib/session-rules"
-import { isGecFinalized, GEC_FIRST_MESSAGE, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
+import { isGecFinalized, GEC_FIRST_MESSAGE, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE, hasFinalizedOwnGec, GEC_REOPEN_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { runPathfitGeneration } from "@/lib/services/pathfit-generation"
 import { recordAudit } from "@/lib/audit"
 
@@ -76,6 +76,14 @@ export async function POST(
       return NextResponse.json(
         apiError("Program Chairs can only generate schedules in Draft status"),
         { status: 400 }
+      )
+    }
+
+    // A Department Chairperson who already finalized their GEC/GEL must reopen it first.
+    if (isSuperAdmin && (await hasFinalizedOwnGec(id, dbUser))) {
+      return NextResponse.json(
+        { success: false, error: "Reopen your GEC/GEL first", details: [GEC_REOPEN_FIRST_MESSAGE] },
+        { status: 409 }
       )
     }
 

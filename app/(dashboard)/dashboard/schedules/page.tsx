@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useCallback, useRef, useEffect, Suspense } from "react"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { useSearchParams } from "next/navigation"
 import { PageHeader } from "@/components/shared/page-header"
 import dynamic from "next/dynamic"
@@ -1307,6 +1308,19 @@ export default function SchedulesPage() {
   const myClusterId: string | null = isSuperAdmin ? ((currentUser as any)?.clusterId ?? null) : null
   const myClusterStatus = myClusterId ? gecClusters.find((c) => c.id === myClusterId) : null
 
+  // A Department Chairperson who finalized their GEC/GEL must reopen it before generating
+  // or adding classes: Generate / Add Entry ask first (warning dialog with the Reopen button).
+  const [reopenPromptOpen, setReopenPromptOpen] = useState(false)
+  const pendingAfterReopen = useRef<(() => void) | null>(null)
+  const guardFinalizedGec = (action: () => void) => {
+    if (myClusterStatus?.finalized) {
+      pendingAfterReopen.current = action
+      setReopenPromptOpen(true)
+    } else {
+      action()
+    }
+  }
+
   const gecFinalizeMutation = useMutation({
     mutationFn: async (vars: { action: "finalize" | "unfinalize"; clusterId?: string }) => {
       const res = await fetch(`/api/schedules/${selectedScheduleId}/gec-finalize`, {
@@ -2257,7 +2271,7 @@ export default function SchedulesPage() {
               </Button>
             )}
             {selectedScheduleId && canGenerate && (
-              <Button variant="outline" size="sm" onClick={() => setGenerateOpen(true)} className="bg-[#1B4332] text-white hover:bg-[#2D6A4F]">
+              <Button variant="outline" size="sm" onClick={() => guardFinalizedGec(() => setGenerateOpen(true))} className="bg-[#1B4332] text-white hover:bg-[#2D6A4F]">
                 <Cpu className="mr-2 h-4 w-4" />
                 <span>{userRole === "PATHFIT" ? "Generate PATHFit" : "Generate"}</span>
               </Button>
@@ -2311,7 +2325,7 @@ export default function SchedulesPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {selectedScheduleId && canAddEntry && (
-                  <DropdownMenuItem onClick={() => { setSectionSearch(""); setAddEntryOpen(true) }}>
+                  <DropdownMenuItem onClick={() => guardFinalizedGec(() => { setSectionSearch(""); setAddEntryOpen(true) })}>
                     <Plus className="mr-2 h-4 w-4" />
                     Add Entry
                   </DropdownMenuItem>
@@ -2756,13 +2770,15 @@ export default function SchedulesPage() {
                               onClick={() => {
                                 // Opens Add Entry with this class's section and subject
                                 // already chosen; everything else starts blank.
-                                resetEntryForm()
-                                setEntryForm((prev: any) => ({
-                                  ...prev,
-                                  subjectId: u.subjectId,
-                                  sectionId: u.sectionId,
-                                }))
-                                setAddEntryOpen(true)
+                                guardFinalizedGec(() => {
+                                  resetEntryForm()
+                                  setEntryForm((prev: any) => ({
+                                    ...prev,
+                                    subjectId: u.subjectId,
+                                    sectionId: u.sectionId,
+                                  }))
+                                  setAddEntryOpen(true)
+                                })
                               }}
                             >
                               <Plus className="mr-1 h-3.5 w-3.5" />
@@ -4602,6 +4618,32 @@ export default function SchedulesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Department Chairperson with a finalized GEC/GEL: warn, and reopen on confirm. */}
+      <ConfirmDialog
+        open={reopenPromptOpen}
+        onOpenChange={(o) => { if (!gecFinalizeMutation.isPending) { setReopenPromptOpen(o); if (!o) pendingAfterReopen.current = null } }}
+        title="Reopen your GEC/GEL first"
+        description={
+          <>
+            You already <strong>finalized</strong> your GEC/GEL for this schedule. To generate or add classes you have to
+            reopen it — the Program Chairpersons are locked out again until you finalize once more.
+          </>
+        }
+        confirmLabel="Reopen my GEC/GEL"
+        pending={gecFinalizeMutation.isPending}
+        onConfirm={async () => {
+          try {
+            await gecFinalizeMutation.mutateAsync({ action: "unfinalize" })
+            setReopenPromptOpen(false)
+            const next = pendingAfterReopen.current
+            pendingAfterReopen.current = null
+            next?.()
+          } catch {
+            // the mutation already toasted the error
+          }
+        }}
+      />
 
       <ExportDialog
         open={exportDialogOpen}

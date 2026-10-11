@@ -107,6 +107,24 @@ export const CIT_LABS_FIRST_MESSAGE =
 export const CIT_LECTURES_ONLY_MESSAGE =
   "Phase 3: laboratory subjects were plotted in Phase 1. The CIT Program Chairperson now adds lecture subjects only."
 
+/**
+ * Has THIS Department Chairperson (a department head with an area) already finalized
+ * their GEC/GEL for the schedule? Then they must reopen it before generating or adding
+ * GEC/GEL classes — finalizing is a deliberate "I'm done", so continuing to change the
+ * schedule without reopening is refused rather than silently un-finalizing.
+ */
+export async function hasFinalizedOwnGec(scheduleId: string, dbUser: any): Promise<boolean> {
+  if (dbUser?.role !== "SUPER_ADMIN" || !dbUser.clusterId) return false
+  const row = await db.gecFinalization.findUnique({
+    where: { scheduleId_clusterId: { scheduleId, clusterId: dbUser.clusterId } },
+    select: { scheduleId: true },
+  })
+  return !!row
+}
+
+export const GEC_REOPEN_FIRST_MESSAGE =
+  "You already finalized your GEC/GEL for this schedule. Reopen it first (Reopen my GEC/GEL), then generate or add classes."
+
 export const GEC_FIRST_MESSAGE =
   "The three CAS department heads have not all finalized the GEC/GEL schedule for this term yet. Program Chairpersons add their major subjects only after every department head has finalized."
 
