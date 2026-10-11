@@ -49,7 +49,14 @@ export async function updateSession(request: NextRequest) {
     }
   )
 
-  const { data: { user }, error } = await supabase.auth.getUser()
+  let { data: { user }, error } = await supabase.auth.getUser()
+  // A timeout / 5xx / 429 from the auth service looks exactly like "no user". The
+  // browser still holds a valid session, so ask again (briefly) before giving up —
+  // otherwise the request reaches a route with no identity and fails "Unauthorized".
+  for (let attempt = 1; !user && attempt <= 2 && hasSessionCookie(request) && !isDefinitelySignedOut(error); attempt++) {
+    await new Promise((r) => setTimeout(r, 250 * attempt))
+    ;({ data: { user }, error } = await supabase.auth.getUser())
+  }
 
   const pathname = request.nextUrl.pathname
 

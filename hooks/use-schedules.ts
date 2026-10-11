@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { safeFetch, DEFAULT_FETCH_TIMEOUT_MS, GENERATE_FETCH_TIMEOUT_MS } from "@/lib/api-client"
+import { safeFetch, fetchRetry401, SESSION_EXPIRED_MESSAGE, DEFAULT_FETCH_TIMEOUT_MS, GENERATE_FETCH_TIMEOUT_MS } from "@/lib/api-client"
 
 // ─── Safe raw fetch that handles HTML redirects / non-JSON ───────────────────
 // Aborts after DEFAULT_FETCH_TIMEOUT_MS so a hung server request (e.g. pool
@@ -10,7 +10,7 @@ async function rawFetch(url: string, options?: RequestInit, timeoutMs: number = 
 
   let res: Response
   try {
-    res = await fetch(url, { ...options, redirect: "follow", signal: controller.signal })
+    res = await fetchRetry401(url, { ...options, redirect: "follow", signal: controller.signal })
   } catch (err: any) {
     if (err?.name === "AbortError") {
       throw new Error("Request timed out. Please check your connection and try again.")
@@ -36,6 +36,7 @@ async function rawFetch(url: string, options?: RequestInit, timeoutMs: number = 
   } catch {
     throw new Error(`Server error (status ${res.status}).`)
   }
+  if (res.status === 401) json = { ...json, error: SESSION_EXPIRED_MESSAGE }
   return { res, json }
 }
 

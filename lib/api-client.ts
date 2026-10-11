@@ -15,6 +15,25 @@ export const DEFAULT_FETCH_TIMEOUT_MS = 25_000
 // comfortably above the engine's ceiling.
 export const GENERATE_FETCH_TIMEOUT_MS = 120_000
 
+/**
+ * fetch() that replays a request ONCE when the server answers 401.
+ *
+ * A 401 on a request from a signed-in browser is almost never a real sign-out: the
+ * access token had just expired and several requests refreshed it at the same moment
+ * (only one can use the single-use refresh token), or the auth service blinked. By
+ * the time we retry, the winning response has already stored the fresh cookies, so
+ * the replay succeeds. Nothing ran on the server for a 401, so replaying is safe —
+ * even for POST (Generate).
+ */
+export async function fetchRetry401(url: string, init: RequestInit): Promise<Response> {
+  const res = await fetch(url, init)
+  if (res.status !== 401) return res
+  await new Promise((r) => setTimeout(r, 700))
+  return fetch(url, init)
+}
+
+export const SESSION_EXPIRED_MESSAGE = "Your session has expired — please refresh the page or sign in again."
+
 export async function safeFetch<T = any>(
   url: string,
   options?: RequestInit,
@@ -31,7 +50,7 @@ export async function safeFetch<T = any>(
     // free to replay a cached GET. "Mark all read" was the visible symptom: the
     // PATCH committed, the refetch was served from cache, and the unread badge
     // stayed put — the action looked like it had done nothing.
-    res = await fetch(url, {
+    res = await fetchRetry401(url, {
       ...options,
       cache: "no-store",
       redirect: "follow",
@@ -65,6 +84,7 @@ export async function safeFetch<T = any>(
     throw new Error(`Server error (status ${res.status}).`)
   }
 
+  if (res.status === 401) throw new Error(SESSION_EXPIRED_MESSAGE)
   if (!res.ok) throw new Error(json.error ?? `Request failed (${res.status})`)
   // TanStack Query v5 forbids undefined — always return a value
   return (json.data ?? []) as T
