@@ -132,21 +132,12 @@ export async function departmentIdsAllInCollege(deptIds: string[], collegeId: st
  * available signal for *edit* ownership, since Building/Room have no dedicated
  * owning-college field in the schema.
  */
-export async function canManageBuilding(dbUser: any, buildingId: string): Promise<boolean> {
+export async function canManageBuilding(dbUser: any, _buildingId?: string): Promise<boolean> {
+  // Buildings and rooms are campus-wide shared infrastructure: every Department
+  // Chairperson and EVERY Program Chairperson may add and edit any of them
+  // (changed 2026-10-12 — it used to be locked to the chair's own college).
   if (!dbUser) return false
-  if (dbUser.role === 'SUPER_ADMIN') return true
-  if (dbUser.role !== 'ADMIN') return false
-
-  const adminCollegeId = await getUserCollegeId(dbUser)
-  if (!adminCollegeId) return false
-
-  const links = await db.departmentBuilding.findMany({
-    where: { buildingId },
-    select: { department: { select: { collegeId: true } } },
-  })
-  if (links.length === 0) return false
-
-  return links.every((l) => l.department.collegeId === adminCollegeId)
+  return dbUser.role === 'SUPER_ADMIN' || dbUser.role === 'ADMIN'
 }
 
 /**
