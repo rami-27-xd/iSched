@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { hasCurriculumMap, getCurriculumCodes } from "@/lib/curriculum-map"
 import { FACULTY_TYPES, FACULTY_TYPE_LABELS, FACULTY_TYPE_DESCRIPTIONS, MAX_UNITS_BY_TYPE, maxUnitsForType, formatFacultyType, type FacultyType } from "@/lib/faculty-types"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -55,16 +56,16 @@ function SpecializationPicker({
   maxUnits,
   subjectTitles,
   subjectInfoMap,
-  sectionCountByYear,
+  sectionCountByTitle,
   onToggle,
   onSetCount,
 }: {
   sectionCounts: SectionCountMap
   maxUnits: number
   subjectTitles: string[]
-  subjectInfoMap: Record<string, { units: number; year: number; type: string; semester?: string; programId?: string | null }>
-  // Sections per "<programId | *>:<year>" — a program's own subject counts that program's sections only.
-  sectionCountByYear: Record<string, number>
+  subjectInfoMap: Record<string, { units: number; year: number; type: string; semester?: string; programId?: string | null; code?: string }>
+  // Sections that actually take each subject, from the curriculum (see FacultyPage).
+  sectionCountByTitle: Record<string, number>
   onToggle: (title: string) => void
   onSetCount: (title: string, count: number) => void
 }) {
@@ -91,9 +92,7 @@ function SpecializationPicker({
 
   // How many sections actually exist for this subject (0 when none do).
   function sectionsFor(title: string): number {
-    const info = subjectInfoMap[title]
-    if (!info) return 0
-    return sectionCountByYear[`${info.programId ?? "*"}:${info.year}`] ?? 0
+    return sectionCountByTitle[title] ?? 0
   }
   // A subject can always be given to one section; more only if they exist.
   function getMaxSections(title: string): number {
@@ -266,7 +265,7 @@ function MobileFacultyList({
           {deptMembers.map((f: any) => {
             const saved = f.sectionCounts as Record<string, number> | null
             const counts: Record<string, number> = saved && typeof saved === "object" && Object.keys(saved).length > 0 ? saved : {}
-            const specEntries = Object.entries(counts).filter(([, c]) => c > 0)
+            const specEntries = Object.entries(counts).filter(([title, c]) => c > 0 && !!subjectInfoMap[title])
             const totalLoad = specEntries.reduce((sum, [title, count]) => {
               const info = subjectInfoMap[title]
               return sum + (info?.units ?? 0) * count
@@ -440,40 +439,67 @@ export default function FacultyPage() {
     }
   }
 
+  // The subjects this user can tag a faculty member with. A Program Chairperson sees
+  // only the subjects of THEIR program's curriculum — the department also holds the
+  // other programs' subjects (shared codes are stored department-wide), and offering
+  // those (Logic Circuits for a Computer Technology chair) was misleading.
+  const chairProgramAbbr: string | null = isAdmin ? currentUser?.programHead?.program?.abbreviation ?? null : null
+  const scopedSubjects = useMemo(() => {
+    if (!chairProgramAbbr || !hasCurriculumMap(chairProgramAbbr)) return subjects as any[]
+    const codes = new Set<string>()
+    for (let year = 1; year <= 5; year++) {
+      for (const sem of ["FIRST", "SECOND"] as const) {
+        for (const c of getCurriculumCodes(chairProgramAbbr, year, sem)) codes.add(c.toLowerCase())
+      }
+    }
+    return (subjects as any[]).filter((s) => codes.has((s.code ?? "").toLowerCase()))
+  }, [subjects, chairProgramAbbr])
+
   // Subject titles for listing
   const subjectTitles = useMemo(() => {
-    const titles = subjects.map((s: any) => s.title).filter(Boolean)
+    const titles = scopedSubjects.map((s: any) => s.title).filter(Boolean)
     return [...new Set(titles)] as string[]
-  }, [subjects])
+  }, [scopedSubjects])
 
-  // Map subject title → { units, year, type, semester }
+  // Map subject title → { units, year, type, semester, code, programId }
   const subjectInfoMap = useMemo(() => {
-    const map: Record<string, { units: number; year: number; type: string; semester: string; programId: string | null }> = {}
-    for (const s of subjects) {
+    const map: Record<string, { units: number; year: number; type: string; semester: string; programId: string | null; code: string }> = {}
+    for (const s of scopedSubjects) {
       if (s.title && !map[s.title]) {
-        map[s.title] = { units: s.units ?? 0, year: s.year ?? 1, type: s.type ?? "LECTURE", semester: s.semester ?? "FIRST", programId: s.programId ?? null }
+        map[s.title] = { units: s.units ?? 0, year: s.year ?? 1, type: s.type ?? "LECTURE", semester: s.semester ?? "FIRST", programId: s.programId ?? null, code: s.code ?? "" }
       }
     }
     return map
-  }, [subjects])
+  }, [scopedSubjects])
 
-  // Count sections per year level
-  const sectionCountByYear = useMemo(() => {
-    const map: Record<string, number> = {}
-    // A Program Chairperson only has their own program's sections (the department
-    // has many more — counting them all read "10 sections available" for a program
-    // with one).
-    const chairProgramId = isAdmin ? currentUser?.programHead?.programId ?? null : null
-    for (const sec of sections) {
-      const year = sec.yearLevel?.level ?? 0
-      if (year <= 0) continue
-      if (chairProgramId && (sec.yearLevel?.programId ?? sec.yearLevel?.program?.id) !== chairProgramId) continue
-      const programId = sec.yearLevel?.programId ?? sec.yearLevel?.program?.id
-      map[`*:${year}`] = (map[`*:${year}`] ?? 0) + 1
-      if (programId) map[`${programId}:${year}`] = (map[`${programId}:${year}`] ?? 0) + 1
+  // How many sections take each subject — from the CURRICULUM, not just the year level:
+  // a section counts when its program's curriculum lists the subject for that section's
+  // year in the subject's semester (e.g. Computer Programming 1 → the BS InfoTech,
+  // Computer Technology and Mechanical Technology sections). Programs without a
+  // curriculum map fall back to the subject's own year; a program-specific subject only
+  // counts its own program's sections.
+  const sectionCountByTitle = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const [title, info] of Object.entries(subjectInfoMap)) {
+      const code = (info.code ?? "").toLowerCase()
+      let n = 0
+      for (const sec of sections as any[]) {
+        const prog = sec.yearLevel?.program
+        const level = sec.yearLevel?.level ?? 0
+        if (level <= 0) continue
+        const secProgramId = sec.yearLevel?.programId ?? prog?.id
+        if (info.programId && secProgramId !== info.programId) continue
+        const abbr = prog?.abbreviation
+        const takes =
+          abbr && hasCurriculumMap(abbr)
+            ? getCurriculumCodes(abbr, level, (info.semester === "SECOND" ? "SECOND" : "FIRST")).some((c) => c.toLowerCase() === code)
+            : level === info.year
+        if (takes) n++
+      }
+      out[title] = n
     }
-    return map
-  }, [sections, isAdmin, currentUser])
+    return out
+  }, [subjectInfoMap, sections])
 
   function calcLoadFromCounts(counts: SectionCountMap) {
     return Object.entries(counts).reduce((sum, [title, secCount]) => {
@@ -488,9 +514,7 @@ export default function FacultyPage() {
   }
 
   function getMaxSections(title: string): number {
-    const info = subjectInfoMap[title]
-    if (!info) return 1
-    return Math.max(1, sectionCountByYear[`${info.programId ?? "*"}:${info.year}`] ?? 0)
+    return Math.max(1, sectionCountByTitle[title] ?? 0)
   }
 
   // ── Add form helpers ──
@@ -826,7 +850,7 @@ export default function FacultyPage() {
                   maxUnits={maxUnitsForType(addForm.employmentType)}
                   subjectTitles={subjectTitles}
                   subjectInfoMap={subjectInfoMap}
-                  sectionCountByYear={sectionCountByYear}
+                  sectionCountByTitle={sectionCountByTitle}
                   onToggle={toggleAddSubject}
                   onSetCount={setAddSectionCount}
                 />
@@ -1057,7 +1081,7 @@ export default function FacultyPage() {
               maxUnits={maxUnitsForType(editForm.employmentType)}
               subjectTitles={subjectTitles}
               subjectInfoMap={subjectInfoMap}
-              sectionCountByYear={sectionCountByYear}
+              sectionCountByTitle={sectionCountByTitle}
               onToggle={toggleEditSubject}
               onSetCount={setEditSectionCount}
             />
