@@ -146,7 +146,9 @@ export function RoomOccupancyView({ compact = false, mode = "rooms" }: { compact
       if (!res.ok) throw new Error(json.error ?? (isFaculty ? "Failed to load faculty occupancy" : "Failed to load room occupancy"))
       return json.data
     },
-    staleTime: 30_000,
+    // Always re-read when the tab opens — occupancy must reflect the latest classes, not a 30-second-old copy.
+    staleTime: 0,
+    refetchOnMount: "always" as const,
   })
 
   const allBuildings = data?.buildings ?? []

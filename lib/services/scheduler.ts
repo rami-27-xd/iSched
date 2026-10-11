@@ -193,11 +193,11 @@ const DEFAULT_CONSTRAINTS: ScheduleConstraints = {
 }
 
 const MAX_BACKTRACK_MS = 8_000
-const MAX_CANDIDATES_PER_TASK = 200
+const MAX_CANDIDATES_PER_TASK = 400
 // For greedy-only runs, early-stop candidate collection at this limit.
 // With upfront shuffling of faculty/rooms/patterns, 80 diverse candidates per task
 // gives the greedy algorithm enough flexibility without slowing enumeration.
-const MAX_CANDIDATES_GREEDY = 80
+const MAX_CANDIDATES_GREEDY = 240
 
 function shuffleInPlace<T>(arr: T[]): T[] {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -737,13 +737,19 @@ export class SchedulingEngine {
 
       let placed = false
 
+      // Of the candidates that fit, take the one that packs rooms best (back-to-back
+      // with the room's other classes, opening at the start of the day) — see packingScore.
+      let best: Assignment | null = null
+      let bestScore = -Infinity
       for (const candidate of candidates) {
-        if (this.isConsistentFast(candidate)) {
-          this.assign(candidate)
-          assigned.push(candidate)
-          placed = true
-          break
-        }
+        if (!this.isConsistentFast(candidate)) continue
+        const score = this.packingScore(candidate)
+        if (score > bestScore) { best = candidate; bestScore = score }
+      }
+      if (best) {
+        this.assign(best)
+        assigned.push(best)
+        placed = true
       }
 
       if (!placed) {
@@ -1310,7 +1316,11 @@ export class SchedulingEngine {
 
     const task = tasks[index]
     const candidates = this.taskCandidates.get(task.taskId) ?? []
+    // LCV order first, then (stable) the best-packed candidates ahead of the rest.
     const ordered = this.applyLCV(candidates)
+      .map((c, i) => ({ c, i, score: this.packingScore(c) }))
+      .sort((a, b) => b.score - a.score || a.i - b.i)
+      .map((x) => x.c)
 
     for (const candidate of ordered) {
       this.candidateChecks++
@@ -1422,6 +1432,33 @@ export class SchedulingEngine {
     }
 
     return true
+  }
+
+  /**
+   * Room packing. Rooms should be used one class straight after another — an
+   * IT lecture 7:30–10:30 for BS InfoTech, the next class in the same room at
+   * 10:30–12:30 for Food Technology — instead of leaving gaps and opening a new room
+   * for every class. A candidate scores higher when its room is already booked right
+   * before / after it, when it opens a room's day at the start of the day, and (a little)
+   * when the room is already in use that day. Locked and other-department bookings count
+   * (they live in roomSlots).
+   */
+  private packingScore(c: Assignment): number {
+    const sessions = [
+      { day: c.day, start: this.toMinutes(c.startTime), end: this.toMinutes(c.endTime) },
+      ...c.extraSessions.map((x) => ({ day: x.day, start: this.toMinutes(x.startTime), end: this.toMinutes(x.endTime) })),
+    ]
+    let score = 0
+    for (const ses of sessions) {
+      const before = this.roomSlots.has(`${c.roomId}|${ses.day}|${ses.start - 30}`)
+      const after = this.roomSlots.has(`${c.roomId}|${ses.day}|${ses.end}`)
+      if (before) score += 4
+      if (after) score += 4
+      if (!before && !after && this.assignments.some((a) => a.roomId === c.roomId && a.day === ses.day)) score += 1
+      if (!before && ses.start <= DAY_START_MIN) score += 2
+      score -= (ses.start - DAY_START_MIN) / 600
+    }
+    return score
   }
 
   // Why a task that HAS candidates still found no slot — name the usual causes so the
