@@ -42,11 +42,11 @@ const TYPE_COLORS: Record<string, string> = {
 const INITIAL_SUBJECT = { code: "", title: "", units: "3", type: "", departmentId: "", yearLevelId: "", semester: "FIRST", year: "1", roomType: "", maxMinutesPerDay: "" }
 const INITIAL_SECTION = { name: "", yearLevelId: "", capacity: "40" }
 
-function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester }: {
+function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester, readOnly = false }: {
   // onDelete receives the whole subject (not just its id) so the confirmation
   // dialog can name exactly what's about to be deleted.
   subjects: any[]; onEdit: (s: any) => void; onDelete: (s: any) => void;
-  displayYear?: number; displaySemester?: string;
+  displayYear?: number; displaySemester?: string; readOnly?: boolean;
 }) {
   // 10 rows per page — a year level can carry a dozen or more subjects.
   const pager = usePagination(subjects)
@@ -92,12 +92,16 @@ function SubjectTable({ subjects, onEdit, onDelete, displayYear, displaySemester
               <td className="px-3 py-1.5 text-xs">{s.units}</td>
               <td className="px-3 py-1.5">
                 <div className="flex items-center gap-1">
-                  <button onClick={() => onEdit(s)} className="p-1 rounded hover:bg-muted">
-                    <Pencil className="h-3 w-3 text-muted-foreground" />
-                  </button>
-                  <button onClick={() => onDelete(s)} className="p-1 rounded hover:bg-muted">
-                    <Trash2 className="h-3 w-3 text-destructive" />
-                  </button>
+                  {!readOnly && (
+                    <>
+                      <button onClick={() => onEdit(s)} className="p-1 rounded hover:bg-muted" aria-label={`Edit ${s.code}`}>
+                        <Pencil className="h-3 w-3 text-muted-foreground" />
+                      </button>
+                      <button onClick={() => onDelete(s)} className="p-1 rounded hover:bg-muted" aria-label={`Delete ${s.code}`}>
+                        <Trash2 className="h-3 w-3 text-destructive" />
+                      </button>
+                    </>
+                  )}
                 </div>
               </td>
             </tr>
@@ -169,6 +173,8 @@ export default function CoursesPage() {
   const userRole = (currentUser?.role ?? "FACULTY") as string
   const isSuperAdmin = userRole === "SUPER_ADMIN"
   const isAdmin = userRole === "ADMIN"
+  // The Dean views this page only; every write route refuses them, so their buttons are hidden.
+  const canEdit = isSuperAdmin || isAdmin
 
   const queryClient = useQueryClient()
   const { data: colleges = [], isLoading } = useColleges(semesterFilter)
@@ -525,7 +531,7 @@ export default function CoursesPage() {
                                                         {ylSubjects.length} subjects
                                                       </Badge>
                                                     </div>
-                                                    <div className="flex items-center gap-1">
+                                                    {canEdit && <div className="flex items-center gap-1">
                                                       <Button
                                                         variant="ghost"
                                                         size="sm"
@@ -542,7 +548,7 @@ export default function CoursesPage() {
                                                       >
                                                         <Plus className="h-3 w-3 mr-1" />Subject
                                                       </Button>
-                                                    </div>
+                                                    </div>}
                                                   </div>
                                                   {/* Sections */}
                                                   <div className="flex flex-wrap gap-1.5 ml-5">
@@ -563,7 +569,7 @@ export default function CoursesPage() {
                                                   {/* Subjects for this year level */}
                                                   {ylSubjects.length > 0 && (
                                                     <div className="ml-5">
-                                                      <SubjectTable subjects={ylSubjects} onEdit={openEditSubject} onDelete={setDeleteSubjectTarget} displayYear={yl.level} displaySemester={semesterFilter} />
+                                                      <SubjectTable readOnly={!canEdit} subjects={ylSubjects} onEdit={openEditSubject} onDelete={setDeleteSubjectTarget} displayYear={yl.level} displaySemester={semesterFilter} />
                                                     </div>
                                                   )}
                                                   {ylSubjects.length === 0 && (
@@ -589,11 +595,11 @@ export default function CoursesPage() {
                                                     <BookOpen className="h-3 w-3" />
                                                     General / Unassigned Subjects
                                                   </h5>
-                                                  <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => openAddSubject(dept.id)}>
+                                                  {canEdit && <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => openAddSubject(dept.id)}>
                                                     <Plus className="h-3 w-3 mr-1" />Add Subject
-                                                  </Button>
+                                                  </Button>}
                                                 </div>
-                                                <SubjectTable subjects={unassigned} onEdit={openEditSubject} onDelete={setDeleteSubjectTarget} />
+                                                <SubjectTable readOnly={!canEdit} subjects={unassigned} onEdit={openEditSubject} onDelete={setDeleteSubjectTarget} />
                                               </div>
                                             )
                                           })()}
@@ -613,9 +619,9 @@ export default function CoursesPage() {
                               return (
                                 <div className="flex items-center justify-between">
                                   <p className="text-sm text-muted-foreground italic">No subjects for {semesterFilter === "FIRST" ? "1st" : "2nd"} semester</p>
-                                  <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => openAddSubject(dept.id)}>
+                                  {canEdit && <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => openAddSubject(dept.id)}>
                                     <Plus className="h-3 w-3 mr-1" />Add Subject
-                                  </Button>
+                                  </Button>}
                                 </div>
                               )
                             }
@@ -637,7 +643,7 @@ export default function CoursesPage() {
                                         </Button>
                                       </div>
                                       <div className="ml-5">
-                                        <SubjectTable subjects={yrSubjects} onEdit={openEditSubject} onDelete={setDeleteSubjectTarget} />
+                                        <SubjectTable readOnly={!canEdit} subjects={yrSubjects} onEdit={openEditSubject} onDelete={setDeleteSubjectTarget} />
                                       </div>
                                     </div>
                                   )

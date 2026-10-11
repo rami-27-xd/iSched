@@ -460,15 +460,20 @@ export default function FacultyPage() {
   // Count sections per year level
   const sectionCountByYear = useMemo(() => {
     const map: Record<string, number> = {}
+    // A Program Chairperson only has their own program's sections (the department
+    // has many more — counting them all read "10 sections available" for a program
+    // with one).
+    const chairProgramId = isAdmin ? currentUser?.programHead?.programId ?? null : null
     for (const sec of sections) {
       const year = sec.yearLevel?.level ?? 0
       if (year <= 0) continue
+      if (chairProgramId && (sec.yearLevel?.programId ?? sec.yearLevel?.program?.id) !== chairProgramId) continue
       const programId = sec.yearLevel?.programId ?? sec.yearLevel?.program?.id
       map[`*:${year}`] = (map[`*:${year}`] ?? 0) + 1
       if (programId) map[`${programId}:${year}`] = (map[`${programId}:${year}`] ?? 0) + 1
     }
     return map
-  }, [sections])
+  }, [sections, isAdmin, currentUser])
 
   function calcLoadFromCounts(counts: SectionCountMap) {
     return Object.entries(counts).reduce((sum, [title, secCount]) => {
