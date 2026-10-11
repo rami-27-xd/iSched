@@ -820,7 +820,10 @@ export default function AvailabilityPage() {
   // of its own — restricting to it hid every term (and every availability row
   // generation had already used) behind "No active schedule".
   const { data: deptSchedules = [], isLoading: loadingSchedules } = useSchedules(undefined, false)
-  const isGeneralEducationChair = currentUser?.role === "SUPER_ADMIN"
+  // The PATHFit and NSTP Directors, like the CAS chairs, work across every college's
+  // schedule (CAS rarely has one of its own) — so their term list spans all of them.
+  const isDirector = currentUser?.role === "PATHFIT" || currentUser?.role === "NSTP"
+  const isGeneralEducationChair = currentUser?.role === "SUPER_ADMIN" || isDirector
   const terms = useMemo(() => {
     const byTerm = new Map<string, any>()
     for (const sc of deptSchedules as any[]) {
@@ -1077,10 +1080,18 @@ export default function AvailabilityPage() {
         <PageHeader
           action={
             <>
-              {!isDean && (
+              {!isDean && !isDirector && (
                 <Button onClick={() => setAddOpen(true)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Faculty
+                </Button>
+              )}
+              {isDirector && (
+                // A Director's instructor must be tagged for PATHFit / NSTP subjects, which
+                // the Faculty page's Add Faculty form asks for — so adding happens there.
+                <Button render={<Link href="/dashboard/faculty" />} variant="outline">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add instructors on the Faculty page
                 </Button>
               )}
               <div className="relative w-full sm:w-56">
@@ -1153,7 +1164,7 @@ export default function AvailabilityPage() {
       {/* No faculty */}
       {activeSemesterId && !isLoading && hasActiveSchedule && faculty.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-          No faculty members found. Use the <strong>Add Faculty</strong> button to add one.
+          {isDirector ? <>No instructors yet. Add them on the <strong>Faculty</strong> page (tag them for your subjects), then mark their hours here.</> : <>No faculty members found. Use the <strong>Add Faculty</strong> button to add one.</>}
         </div>
       )}
 
