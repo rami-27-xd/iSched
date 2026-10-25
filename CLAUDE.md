@@ -517,3 +517,13 @@ PUBLISHED ──(SUPER_ADMIN reset / unpublish)──► DRAFT        CAS schedu
   that program) schedule them ONLY inside those windows. Older approvals without windows keep using the instructor's own availability.
   The Department Chairperson's whole-semester export already includes their faculty's classes in every department's schedule.
 - Faculty picker "N sections available" counts the subject's own program sections (was every section of the year level, default 1).
+
+## Update 2026-10-25
+- **Notify Faculty button removed** (it was the Program Chairperson's action on a published schedule). **Unpublish is now the Dean's**
+  (`PATCH /api/schedules/[id] { action: "unpublish" }`, own department only, via the schedule page header); the Department Chairperson
+  no longer unpublishes (Reset via `/workflow` is unchanged).
+- **Undo / redo of Generate**: `ScheduleSnapshot` model (**schema change, run `prisma db push` on production**). Before each Generate
+  (engine route and `runPathfitGeneration`) `captureGenerationSnapshot` (`lib/services/generation-history.ts`) saves the slice of
+  entries + unassigned rows the run replaces (its subjects × sections) on the user's UNDO stack and clears their REDO stack.
+  `GET/POST /api/schedules/[id]/history` (`{ action: "undo" | "redo" }`; generating roles, DRAFT only) swaps the live slice with the
+  top snapshot and reopens GEC / program "done" declarations. Per user per schedule, 10 deep. Header buttons on Manage Schedules.

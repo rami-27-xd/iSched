@@ -503,6 +503,7 @@ model Schedule {
   entries    ScheduleEntry[]
   conflicts  ConflictLog[]
   unassigned UnassignedEntry[]
+  snapshots  ScheduleSnapshot[]
 
   @@index([departmentId])
   gecFinalizations     GecFinalization[]
@@ -705,4 +706,22 @@ model ScheduleSwapRequest {
   @@index([status])
   @@index([targetUserId, status])
   @@index([scheduleId])
+}
+
+// Undo / redo of schedule generation. Before each Generate the slice of entries it
+// is about to replace is saved on the user's UNDO stack; Undo swaps it back (saving
+// the current slice on REDO) and Redo does the reverse. Per user, per schedule.
+model ScheduleSnapshot {
+  id         String   @id @default(cuid())
+  scheduleId String
+  userId     String
+  stack      String   // "UNDO" | "REDO"
+  scope      Json     // { subjectIds: string[], sectionIds: string[] | null }
+  entries    Json
+  unassigned Json
+  createdAt  DateTime @default(now())
+
+  schedule Schedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, userId, stack])
 }

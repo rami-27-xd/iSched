@@ -120,8 +120,8 @@ export async function PATCH(
     }
 
     const dbUser = await getCurrentUser()
-    if (!dbUser || !["SUPER_ADMIN", "ADMIN"].includes(dbUser.role)) {
-      return NextResponse.json(apiError("Only Department and Program Chairpersons can modify schedules"), { status: 403 })
+    if (!dbUser || !["SUPER_ADMIN", "ADMIN", "DEAN"].includes(dbUser.role)) {
+      return NextResponse.json(apiError("Only Deans and Department and Program Chairpersons can modify schedules"), { status: 403 })
     }
 
     const { id } = await params
@@ -132,6 +132,16 @@ export async function PATCH(
     // Ownership — a Program Chair may only act on a schedule in their OWN department.
     const target = await db.schedule.findUnique({ where: { id }, select: { departmentId: true } })
     if (!target) return NextResponse.json(apiError("Schedule not found"), { status: 404 })
+
+    // The Dean's only write here is unpublishing their own department's schedule.
+    if (dbUser.role === "DEAN") {
+      if (body.action !== "unpublish") {
+        return NextResponse.json(apiError("Deans can only unpublish their department's schedule here"), { status: 403 })
+      }
+      if (!target.departmentId || getUserDepartmentId(dbUser) !== target.departmentId) {
+        return NextResponse.json(apiError("You can only unpublish your own department's schedule"), { status: 403 })
+      }
+    }
     const ownsSchedule = isSuperAdmin || (!!target.departmentId && getUserDepartmentId(dbUser) === target.departmentId)
 
     // Archive / unarchive — Dept Chair (any schedule) or Program Chair (own department).
@@ -260,15 +270,11 @@ export async function PATCH(
       return NextResponse.json(apiResponse(updated))
     }
 
-    // Everything below (unpublish, approval-status changes) stays Department-Chair-only.
-    if (!isSuperAdmin) {
-      return NextResponse.json(
-        apiError("Only the Department Chairperson can change a schedule's approval status"),
-        { status: 403 }
-      )
-    }
-
+    // Unpublish is the Dean's (own department only, checked above).
     if (body.action === "unpublish") {
+      if (dbUser.role !== "DEAN") {
+        return NextResponse.json(apiError("Only the Dean can unpublish a schedule"), { status: 403 })
+      }
       const schedule = await db.schedule.findUnique({ where: { id } })
       if (!schedule || schedule.status !== "PUBLISHED") {
         return NextResponse.json(apiError("Schedule is not published"), { status: 400 })
@@ -279,6 +285,14 @@ export async function PATCH(
       })
       await recordAudit({ actor: dbUser as any, action: "schedule.unpublished", entityType: "schedule", entityId: id, departmentId: target.departmentId, scheduleId: id, summary: "Unpublished the schedule (back to Draft)" })
       return NextResponse.json(apiResponse(updated))
+    }
+
+    // Approval-status changes stay Department-Chair-only.
+    if (!isSuperAdmin) {
+      return NextResponse.json(
+        apiError("Only the Department Chairperson can change a schedule's approval status"),
+        { status: 403 }
+      )
     }
 
     // Raw status changes: only on the Department Chairperson's own (CAS) schedule.

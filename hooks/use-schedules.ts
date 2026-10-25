@@ -275,6 +275,39 @@ export function useUnpublishSchedule() {
   })
 }
 
+// ---------- Undo / redo generation ----------
+export function useGenerationHistory(scheduleId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ["schedules", scheduleId, "history"],
+    enabled: !!scheduleId && enabled,
+    queryFn: async () => {
+      const { json } = await rawFetch(`/api/schedules/${scheduleId}/history`)
+      if (json.error) throw new Error(json.error)
+      return json.data as { canUndo: boolean; canRedo: boolean }
+    },
+  })
+}
+
+export function useGenerationHistoryAction() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ scheduleId, action }: { scheduleId: string; action: "undo" | "redo" }) => {
+      const { json } = await rawFetch(`/api/schedules/${scheduleId}/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      })
+      if (json.error) throw new Error(json.error)
+      return json.data as { canUndo: boolean; canRedo: boolean; restored: number }
+    },
+    onSuccess: (_data, { scheduleId }) => {
+      queryClient.invalidateQueries({ queryKey: ["schedules", scheduleId] })
+      queryClient.invalidateQueries({ queryKey: ["schedules"] })
+    },
+  })
+}
+
 // ---------- Create schedule ----------
 export function useCreateSchedule() {
   const queryClient = useQueryClient()

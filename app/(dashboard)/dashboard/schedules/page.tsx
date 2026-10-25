@@ -42,7 +42,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   CalendarDays,
   Globe,
-  BellRing,
   BookOpen,
   Filter,
   Plus,
@@ -57,6 +56,7 @@ import {
   FileDown,
   Cpu,
   Undo2,
+  Redo2,
   Search,
   X,
   Workflow,
@@ -79,6 +79,8 @@ import {
   useDeleteSchedule,
   usePublishSchedule,
   useUnpublishSchedule,
+  useGenerationHistory,
+  useGenerationHistoryAction,
   useArchiveSchedule,
   useFaculty,
   useRooms,
@@ -1122,6 +1124,7 @@ export default function SchedulesPage() {
   const deleteSchedule = useDeleteSchedule()
   const publishSchedule = usePublishSchedule()
   const unpublishSchedule = useUnpublishSchedule()
+  const historyAction = useGenerationHistoryAction()
   const archiveSchedule = useArchiveSchedule()
 
   const isLoading = tab === "active" ? loadingActive : loadingArchived
@@ -1364,11 +1367,12 @@ export default function SchedulesPage() {
   // SUPER_ADMIN: publishes only their OWN (CAS) schedule — it has no Program
   //   Chairpersons to submit it. Every other department's schedule is submitted by
   //   its Program Chairpersons and approved by its Dean (WorkflowActions).
-  // ADMIN: "Notify Faculty" action on an already-PUBLISHED schedule (does not change status)
-  const canPublish =
-    (isSuperAdmin && isSuperAdminOwnSchedule && (isDraft || isPendingApproval)) ||
-    (isAdmin && isOwnSchedule && isPublished)
-  const canUnpublish = isSuperAdmin && isPublished
+  const canPublish = isSuperAdmin && isSuperAdminOwnSchedule && (isDraft || isPendingApproval)
+  // Unpublishing a published schedule is the Dean's call (their own department only).
+  const canUnpublish = isDean && isDeanOwnSchedule && isPublished
+  // Undo / redo of the user's own generate runs — only while the schedule is a draft.
+  const canUndoRedo = canGenerate && isDraft
+  const { data: genHistory } = useGenerationHistory(selectedScheduleId, canUndoRedo)
   // Archive & Delete: the Dept Chair on any schedule; a Program Chair only on a
   // schedule in their OWN department (isOwnSchedule). Enforced server-side too.
   const canArchiveOrDelete = isSuperAdmin || (isAdmin && isOwnSchedule)
@@ -2276,6 +2280,40 @@ export default function SchedulesPage() {
                 <span>{userRole === "PATHFIT" ? "Generate PATHFit" : "Generate"}</span>
               </Button>
             )}
+            {selectedScheduleId && canUndoRedo && (
+              <div className="flex items-center gap-1">
+                {(["undo", "redo"] as const).map((action) => {
+                  const can = action === "undo" ? genHistory?.canUndo : genHistory?.canRedo
+                  const Icon = action === "undo" ? Undo2 : Redo2
+                  return (
+                    <Button
+                      key={action}
+                      variant="outline"
+                      size="sm"
+                      className="px-2"
+                      aria-label={action === "undo" ? "Undo last generate" : "Redo generate"}
+                      title={action === "undo" ? "Undo last generate" : "Redo generate"}
+                      disabled={!can || historyAction.isPending}
+                      onClick={() =>
+                        historyAction.mutate(
+                          { scheduleId: selectedScheduleId, action },
+                          {
+                            onSuccess: () => toast.success(action === "undo" ? "Generate undone" : "Generate redone"),
+                            onError: (err: any) => toast.error(err.message),
+                          }
+                        )
+                      }
+                    >
+                      {historyAction.isPending && historyAction.variables?.action === action ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Icon className="h-4 w-4" />
+                      )}
+                    </Button>
+                  )
+                })}
+              </div>
+            )}
             {selectedScheduleId && canPublish && (
               <Button
                 size="sm"
@@ -2286,11 +2324,9 @@ export default function SchedulesPage() {
                 {publishSchedule.isPending ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
-                  isAdmin
-                    ? <BellRing className="mr-2 h-4 w-4" />
-                    : <Globe className="mr-2 h-4 w-4" />
+                  <Globe className="mr-2 h-4 w-4" />
                 )}
-                {isAdmin ? "Notify Faculty" : "Publish Schedule"}
+                Publish Schedule
               </Button>
             )}
             {selectedScheduleId && canUnpublish && (

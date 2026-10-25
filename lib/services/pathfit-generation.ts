@@ -6,6 +6,7 @@ import { specializationsCoverSubject } from "@/lib/specialization-match"
 import { syncFacultySpecializations } from "@/lib/services/sync-specializations"
 import { createNotification } from "@/lib/notifications"
 import { recordAudit } from "@/lib/audit"
+import { captureGenerationSnapshot } from "@/lib/services/generation-history"
 
 /**
  * PATHFit generation — run by the single PATHFIT Director account.
@@ -268,6 +269,7 @@ export async function runPathfitGeneration(scheduleId: string, dbUser: any): Pro
 
   const sectionIds = sections.map((s) => s.id)
   const scope = { scheduleId, subjectId: { in: pathfitIds }, sectionId: { in: sectionIds } }
+  await captureGenerationSnapshot(scheduleId, dbUser.id, { subjectIds: pathfitIds, sectionIds })
   await db.scheduleEntry.deleteMany({ where: scope })
   await db.unassignedEntry.deleteMany({ where: scope })
   if (rows.length > 0) await db.scheduleEntry.createMany({ data: rows })

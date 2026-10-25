@@ -15,6 +15,7 @@ import { resolveMaxMinutesPerDay } from "@/lib/session-rules"
 import { isGecFinalized, GEC_FIRST_MESSAGE, reopenProgramIfStale, isCitLabPhaseDone, CIT_LABS_FIRST_MESSAGE, hasFinalizedOwnGec, GEC_REOPEN_FIRST_MESSAGE } from "@/lib/services/workflow-gates"
 import { runPathfitGeneration } from "@/lib/services/pathfit-generation"
 import { recordAudit } from "@/lib/audit"
+import { captureGenerationSnapshot } from "@/lib/services/generation-history"
 
 // Allow up to 60 seconds for schedule generation
 export const maxDuration = 60
@@ -726,6 +727,10 @@ export async function POST(
       ? { scheduleId: id, subjectId: { in: subjectIds }, sectionId: { in: sectionIds } }
       : { scheduleId: id, subjectId: { in: subjectIds } }
 
+    await captureGenerationSnapshot(id, dbUser.id, {
+      subjectIds,
+      sectionIds: isCasAdmin && casClusterProgramIds ? sectionIds : null,
+    })
     await db.scheduleEntry.deleteMany({ where: entryDeleteWhere })
     await db.unassignedEntry.deleteMany({ where: unassignedDeleteWhere })
 
