@@ -215,7 +215,7 @@ async function main() {
       const existingCodes = new Set((await db.room.findMany({ where: { buildingId: cteBuilding.id }, select: { code: true } })).map((r) => r.code))
       let added = 0
       for (let i = 1; i <= 4; i++) {
-        const code = `CTE-L0${i}`
+        const code = `CTEB-L0${i}`
         if (existingCodes.has(code)) continue
         await db.room.create({ data: { name: `CTE Laboratory ${i}`, code, buildingId: cteBuilding.id, type: "LECTURE_LAB" } })
         added++

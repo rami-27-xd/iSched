@@ -24,6 +24,7 @@ import { useRoomList, useCreateRoom, useUpdateRoom, useBuildings, useCreateBuild
 import { RoleGuard } from "@/components/shared/role-guard"
 import { LabInventory } from "@/components/rooms/lab-inventory"
 import { useCollege } from "@/lib/college-context"
+import { formatRoomCode, ROOM_CODE_HINT } from "@/lib/room-code"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { CardListSkeleton } from "@/components/shared/loading-skeletons"
@@ -292,6 +293,16 @@ export default function RoomsPage() {
     setEditRoomCollegeIds(deptIdsToCollegeIds((r.departments ?? []).map((d: any) => d.departmentId)))
     setEditRoomProgramIds((r.programs ?? []).map((p: any) => p.programId ?? p.program?.id).filter(Boolean))
     setEditOpen(true)
+  }
+
+  // Rewrites what was typed into the standard code for the chosen building
+  // (e.g. "301" in HPB -> "HPB-301"); the server applies the same rule.
+  function formatCodeField() {
+    setRoomForm((f) => {
+      const buildingCode = (buildings as any[]).find((b) => b.id === f.buildingId)?.code
+      const next = formatRoomCode(buildingCode, f.code)
+      return next && next !== f.code ? { ...f, code: next } : f
+    })
   }
 
   async function handleCreateRoom() {
@@ -638,7 +649,8 @@ export default function RoomsPage() {
               </div>
               <div className="grid gap-2">
                 <Label>Room Code</Label>
-                <Input placeholder="e.g. CCS-101" value={roomForm.code} onChange={(e) => setRoomForm((f) => ({ ...f, code: e.target.value }))} />
+                <Input placeholder="e.g. HPB-301" value={roomForm.code} onChange={(e) => setRoomForm((f) => ({ ...f, code: e.target.value }))} onBlur={formatCodeField} />
+                <p className="text-xs text-muted-foreground">{ROOM_CODE_HINT}</p>
               </div>
             </div>
             <div className="grid gap-2">
@@ -841,7 +853,8 @@ export default function RoomsPage() {
             </div>
             <div className="grid gap-2">
               <Label>Room Code</Label>
-              <Input value={roomForm.code} onChange={(e) => setRoomForm((f) => ({ ...f, code: e.target.value }))} />
+              <Input value={roomForm.code} onChange={(e) => setRoomForm((f) => ({ ...f, code: e.target.value }))} onBlur={formatCodeField} />
+              <p className="text-xs text-muted-foreground">{ROOM_CODE_HINT}</p>
             </div>
             <div className="grid gap-2">
               <Label>Building</Label>

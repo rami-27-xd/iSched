@@ -527,3 +527,12 @@ PUBLISHED ──(SUPER_ADMIN reset / unpublish)──► DRAFT        CAS schedu
   entries + unassigned rows the run replaces (its subjects × sections) on the user's UNDO stack and clears their REDO stack.
   `GET/POST /api/schedules/[id]/history` (`{ action: "undo" | "redo" }`; generating roles, DRAFT only) swaps the live slice with the
   top snapshot and reopens GEC / program "done" declarations. Per user per schedule, 10 deep. Header buttons on Manage Schedules.
+
+## Update 2026-11-10 — room codes
+- **One room code format**: `<building code>-<room>` (`lib/room-code.ts`, client-safe): the prefix is always the building's code
+  (HPB-301, JPRB-201, CIT-CPTLEC, ICT-2A, CTEB-L01, MDP-COMPLAB), room = the number on the SLSU GABAY Mappedin map or an upper-case
+  abbreviation, letters/digits only. GYM / COVERED_COURT / FIELD / TBA are exempt. `POST /api/rooms` and `PATCH /api/rooms/[id]`
+  normalise (`formatRoomCode`) and reject (`roomCodeProblem`) anything off-standard; the Add/Edit Room forms reformat on blur.
+- `prisma/standardize-room-codes.ts` (preview; `--apply`) rewrote the old prefixes (HP→HPB, JPR→JPRB, ABB→CIT, EAB→ICT, CTE→CTEB;
+  MDP-2014→MDP-214) in place — rooms keep their ids, so scheduled classes are untouched. **Run it against production too.**
+  `seed-buildings-rooms.ts` uses the new codes. Building codes themselves are unchanged. Room display names were not changed.

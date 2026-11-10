@@ -3,6 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, canManageBuilding } from "@/lib/a
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
+import { formatRoomCode, roomCodeProblem } from "@/lib/room-code"
 import { PATHFIT_VENUE_CODES, TBA_ROOM_CODE } from "@/lib/sentinels"
 import { ensurePathfitVenues } from "@/lib/services/sentinels"
 
@@ -102,9 +103,9 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json()
-    const { name, code, buildingId, type, equipment, restrictedDepartmentIds, restrictedProgramIds } = body
+    const { name, code: rawCode, buildingId, type, equipment, restrictedDepartmentIds, restrictedProgramIds } = body
 
-    if (!name || !code || !buildingId || !type) {
+    if (!name || !rawCode || !buildingId || !type) {
       return NextResponse.json(apiError("name, code, buildingId, and type are required"), { status: 400 })
     }
 
@@ -115,6 +116,15 @@ export async function POST(req: Request) {
         apiError("Forbidden — you can only add rooms to buildings in your own college"),
         { status: 403 }
       )
+    }
+
+    // One code format everywhere: <building code>-<room> (lib/room-code.ts).
+    const building = await db.building.findUnique({ where: { id: buildingId }, select: { code: true } })
+    if (!building) return NextResponse.json(apiError("Building not found"), { status: 404 })
+    const code = formatRoomCode(building.code, rawCode)
+    const codeProblem = roomCodeProblem(building.code, code)
+    if (!code || codeProblem) {
+      return NextResponse.json(apiError(codeProblem ?? "Room code is required"), { status: 400 })
     }
 
     const deptIds: string[] = Array.isArray(restrictedDepartmentIds) ? restrictedDepartmentIds : []

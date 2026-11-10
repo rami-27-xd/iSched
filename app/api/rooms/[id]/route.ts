@@ -3,6 +3,7 @@ import { getAuthenticatedUser, getCurrentUser, canManageBuilding } from "@/lib/a
 import { db } from "@/lib/db"
 import { apiResponse, apiError } from "@/lib/api-helpers"
 import { recordAudit } from "@/lib/audit"
+import { formatRoomCode, roomCodeProblem } from "@/lib/room-code"
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -57,11 +58,26 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       }
     }
 
+    // Keep the code in the standard format (<building code>-<room>) whenever the
+    // code or the building changes.
+    let nextCode: string | undefined = undefined
+    if (code !== undefined || buildingId !== undefined) {
+      const current = await db.room.findUnique({ where: { id }, select: { code: true, buildingId: true } })
+      if (!current) return NextResponse.json(apiError("Room not found"), { status: 404 })
+      const building = await db.building.findUnique({ where: { id: buildingId ?? current.buildingId }, select: { code: true } })
+      if (!building) return NextResponse.json(apiError("Building not found"), { status: 404 })
+      nextCode = formatRoomCode(building.code, code ?? current.code)
+      const codeProblem = roomCodeProblem(building.code, nextCode)
+      if (!nextCode || codeProblem) {
+        return NextResponse.json(apiError(codeProblem ?? "Room code is required"), { status: 400 })
+      }
+    }
+
     const room = await db.room.update({
       where: { id },
       data: {
         ...(name !== undefined ? { name } : {}),
-        ...(code !== undefined ? { code } : {}),
+        ...(nextCode !== undefined ? { code: nextCode } : {}),
         ...(buildingId !== undefined ? { buildingId } : {}),
         ...(type !== undefined ? { type } : {}),
         ...(capacity !== undefined ? { capacity: Number(capacity) } : {}),
