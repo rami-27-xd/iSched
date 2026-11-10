@@ -71,7 +71,7 @@ export async function GET(req: Request) {
             id: true, facultyId: true, day: true, startTime: true, endTime: true, set: true, mergeGroupId: true,
             subject: { select: { code: true, title: true, type: true } },
             section: { select: { name: true, yearLevel: { select: { program: { select: { abbreviation: true } } } } } },
-            room: { select: { code: true } },
+            room: { select: { code: true, name: true } },
             schedule: {
               select: { id: true, status: true, department: { select: { id: true, abbreviation: true, name: true, college: { select: { abbreviation: true, name: true } } } } },
             },
@@ -99,7 +99,7 @@ export async function GET(req: Request) {
         subjectCode: e.subject?.code ?? "", subjectTitle: e.subject?.title ?? "", subjectType: e.subject?.type ?? "LECTURE",
         section: e.section?.name ?? "", sections: e.section?.name ? [e.section.name] : [],
         program: e.section?.yearLevel?.program?.abbreviation ?? "",
-        faculty: "", room: e.room?.code ?? "",
+        faculty: "", room: e.room?.name ?? e.room?.code ?? "",
         scheduleId: e.schedule.id, scheduleStatus: e.schedule.status,
         departmentId: dept?.id ?? "", department: dept?.abbreviation ?? "", departmentName: dept?.name ?? "",
       }

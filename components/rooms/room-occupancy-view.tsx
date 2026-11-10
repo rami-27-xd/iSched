@@ -379,8 +379,8 @@ export function RoomOccupancyView({ compact = false, mode = "rooms" }: { compact
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <DoorOpen className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm font-medium">{room.code}</span>
-                          <span className="text-xs text-muted-foreground">{room.name}</span>
+                          <span className="text-sm font-medium">{mode === "faculty" ? room.code : room.name}</span>
+                          {mode === "faculty" && <span className="text-xs text-muted-foreground">{room.name}</span>}
                           <Badge variant="outline" className="text-[10px]">{room.type.replace(/_/g, " ")}</Badge>
                           {!room.isActive && <Badge variant="secondary" className="text-[10px]">Inactive</Badge>}
                         </div>
@@ -538,11 +538,11 @@ function RoomRow({
       >
         <span className="flex items-center gap-1.5 font-medium">
           {mode === "faculty" ? <Users className="h-3.5 w-3.5 text-muted-foreground" /> : <DoorOpen className="h-3.5 w-3.5 text-muted-foreground" />}
-          {room.code}
+          {mode === "faculty" ? room.code : room.name}
           {!room.isActive && <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground">inactive</span>}
         </span>
         <span className="truncate text-[10px] text-muted-foreground" title={room.name}>
-          {room.name}{mode === "faculty" ? "" : ` · ${room.type.replace(/_/g, " ").toLowerCase()}`}
+          {mode === "faculty" ? room.name : room.type.replace(/_/g, " ").toLowerCase()}
           {busyMinutes > 0 ? ` · ${Math.round((busyMinutes / 60) * 10) / 10} h` : " · free"}
         </span>
       </div>
@@ -616,7 +616,7 @@ function SelectedBlock({
           {b.set && <Badge variant="outline" className="ml-1.5 text-[10px]">Set {b.set}</Badge>}
         </p>
         <dl className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
-          <div><dt className="text-muted-foreground">Room</dt><dd>{mode === "faculty" ? (b.room || "—") : `${room.code} · ${room.name}`}</dd></div>
+          <div><dt className="text-muted-foreground">Room</dt><dd>{mode === "faculty" ? (b.room || "—") : room.name}</dd></div>
           <div><dt className="text-muted-foreground">When</dt><dd>{DAY_FULL[b.day] ?? b.day}, {b.startTime}–{b.endTime}</dd></div>
           <div><dt className="text-muted-foreground">Section{b.sections.length > 1 ? "s (merged)" : ""}</dt><dd>{b.sections.length > 1 ? b.sections.join(" + ") : b.section}{b.program ? ` · ${b.program}` : ""}</dd></div>
           <div><dt className="text-muted-foreground">Faculty</dt><dd>{mode === "faculty" ? room.code : b.faculty}</dd></div>

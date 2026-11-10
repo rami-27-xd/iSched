@@ -123,7 +123,6 @@ function RoomChip({ room }: { room: any }) {
         <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
           <p className="font-medium truncate">{room.name}</p>
-          <p className="text-[11px] text-muted-foreground font-mono">{room.code}</p>
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0 ml-3">

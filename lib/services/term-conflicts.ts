@@ -92,7 +92,7 @@ const entrySelect = {
   faculty: {
     select: { employeeId: true, maxUnitsPerWeek: true, user: { select: { firstName: true, lastName: true } } },
   },
-  room: { select: { code: true } },
+  room: { select: { code: true, name: true } },
   section: { select: { name: true, capacity: true } },
   schedule: { select: { department: { select: { id: true, abbreviation: true, name: true } } } },
 } as const
@@ -122,7 +122,7 @@ function toConflictEntry(e: any): ScheduleEntry {
     facultyName: `${e.faculty?.user?.firstName ?? ""} ${e.faculty?.user?.lastName ?? ""}`.trim(),
     facultyMaxUnits: e.faculty?.maxUnitsPerWeek ?? 0,
     roomId: isTbaRoom ? `tba-room::${e.id}` : e.roomId,
-    roomCode: e.room?.code ?? "",
+    roomCode: e.room?.name ?? e.room?.code ?? "",
     sectionId: e.sectionId,
     sectionName: e.section?.name ?? "",
     sectionCapacity: e.section?.capacity ?? 0,

@@ -139,7 +139,7 @@ export default function DashboardPage() {
                             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                               <span className="flex items-center gap-1">
                                 <MapPin className="h-3 w-3" />
-                                {entry.room?.code}
+                                {entry.room?.name ?? entry.room?.code}
                               </span>
                               <span className="flex items-center gap-1">
                                 <Users className="h-3 w-3" />
@@ -286,7 +286,7 @@ export default function DashboardPage() {
                         <div key={entry.id} className="flex items-center gap-3 rounded-lg border p-2 bg-muted/40 text-sm">
                           <span className="font-semibold text-[#1B4332] w-28 shrink-0 text-xs">{entry.startTime}–{entry.endTime}</span>
                           <span className="flex-1 truncate">{entry.subject?.code} — {entry.section?.name}</span>
-                          <span className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="h-3 w-3" />{entry.room?.code}</span>
+                          <span className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="h-3 w-3" />{entry.room?.name ?? entry.room?.code}</span>
                         </div>
                       ))}
                     </div>

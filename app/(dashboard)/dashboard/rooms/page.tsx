@@ -24,7 +24,6 @@ import { useRoomList, useCreateRoom, useUpdateRoom, useBuildings, useCreateBuild
 import { RoleGuard } from "@/components/shared/role-guard"
 import { LabInventory } from "@/components/rooms/lab-inventory"
 import { useCollege } from "@/lib/college-context"
-import { formatRoomCode, ROOM_CODE_HINT } from "@/lib/room-code"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PaginationControls, usePagination } from "@/components/shared/pagination"
 import { CardListSkeleton } from "@/components/shared/loading-skeletons"
@@ -69,7 +68,6 @@ function BuildingRooms({
             <DoorOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <p className="text-sm font-medium break-words">{room.name}</p>
-              <p className="text-xs text-muted-foreground font-mono">{room.code}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-start sm:justify-end">
@@ -295,19 +293,9 @@ export default function RoomsPage() {
     setEditOpen(true)
   }
 
-  // Rewrites what was typed into the standard code for the chosen building
-  // (e.g. "301" in HPB -> "HPB-301"); the server applies the same rule.
-  function formatCodeField() {
-    setRoomForm((f) => {
-      const buildingCode = (buildings as any[]).find((b) => b.id === f.buildingId)?.code
-      const next = formatRoomCode(buildingCode, f.code)
-      return next && next !== f.code ? { ...f, code: next } : f
-    })
-  }
-
   async function handleCreateRoom() {
     const { name, code, buildingId, type } = roomForm
-    if (!name || !code || !buildingId || !type) return toast.error("Please fill in all required fields")
+    if (!name || !buildingId || !type) return toast.error("Please fill in all required fields")
     try {
       await createRoom.mutateAsync({
         name, code, buildingId, type,
@@ -642,15 +630,10 @@ export default function RoomsPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle>Add Room</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               <div className="grid gap-2">
                 <Label>Room Name</Label>
                 <Input placeholder="e.g. Room 101" value={roomForm.name} onChange={(e) => setRoomForm((f) => ({ ...f, name: e.target.value }))} />
-              </div>
-              <div className="grid gap-2">
-                <Label>Room Code</Label>
-                <Input placeholder="e.g. HPB-301" value={roomForm.code} onChange={(e) => setRoomForm((f) => ({ ...f, code: e.target.value }))} onBlur={formatCodeField} />
-                <p className="text-xs text-muted-foreground">{ROOM_CODE_HINT}</p>
               </div>
             </div>
             <div className="grid gap-2">
@@ -845,16 +828,11 @@ export default function RoomsPage() {
       {/* Edit Room Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Edit Room — {editTarget?.code}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Edit Room — {editTarget?.name}</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label>Room Name</Label>
               <Input value={roomForm.name} onChange={(e) => setRoomForm((f) => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Room Code</Label>
-              <Input value={roomForm.code} onChange={(e) => setRoomForm((f) => ({ ...f, code: e.target.value }))} onBlur={formatCodeField} />
-              <p className="text-xs text-muted-foreground">{ROOM_CODE_HINT}</p>
             </div>
             <div className="grid gap-2">
               <Label>Building</Label>

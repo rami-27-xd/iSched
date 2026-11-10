@@ -53,7 +53,7 @@ export async function GET(
             set: true,
             subject: { select: { code: true, title: true } },
             section: { select: { name: true } },
-            room: { select: { code: true } },
+            room: { select: { code: true, name: true } },
           },
         })
       : []
@@ -80,7 +80,7 @@ export async function GET(
               subjectCode: e.subject?.code,
               subjectTitle: e.subject?.title,
               sectionName: e.section?.name,
-              roomCode: e.room?.code,
+              roomCode: e.room?.name ?? e.room?.code,
               day: e.day,
               startTime: e.startTime,
               endTime: e.endTime,
@@ -120,7 +120,7 @@ export async function GET(
             },
           },
           section: { select: { name: true } },
-          room: { select: { code: true } },
+          room: { select: { code: true, name: true } },
         },
         orderBy: [{ day: "asc" }, { startTime: "asc" }],
       })
@@ -134,7 +134,7 @@ export async function GET(
           ? `${e.subject.program.head.user.firstName} ${e.subject.program.head.user.lastName}`.trim()
           : null,
         sectionName: e.section?.name,
-        roomCode: e.room?.code,
+        roomCode: e.room?.name ?? e.room?.code,
         day: e.day,
         startTime: e.startTime,
         endTime: e.endTime,

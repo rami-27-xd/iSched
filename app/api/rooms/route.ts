@@ -105,7 +105,7 @@ export async function POST(req: Request) {
     const body = await req.json()
     const { name, code: rawCode, buildingId, type, equipment, restrictedDepartmentIds, restrictedProgramIds } = body
 
-    if (!name || !rawCode || !buildingId || !type) {
+    if (!name || !buildingId || !type) {
       return NextResponse.json(apiError("name, code, buildingId, and type are required"), { status: 400 })
     }
 
@@ -121,11 +121,15 @@ export async function POST(req: Request) {
     // One code format everywhere: <building code>-<room> (lib/room-code.ts).
     const building = await db.building.findUnique({ where: { id: buildingId }, select: { code: true } })
     if (!building) return NextResponse.json(apiError("Building not found"), { status: 404 })
-    const code = formatRoomCode(building.code, rawCode)
+    // Rooms are shown by name only; the code is an internal unique key made from
+    // the building code + name (a typed code, if sent, is still honoured).
+    let code = formatRoomCode(building.code, rawCode || name)
     const codeProblem = roomCodeProblem(building.code, code)
     if (!code || codeProblem) {
-      return NextResponse.json(apiError(codeProblem ?? "Room code is required"), { status: 400 })
+      return NextResponse.json(apiError(codeProblem ?? "Room name is required"), { status: 400 })
     }
+    const base = code
+    for (let n = 2; await db.room.findUnique({ where: { code }, select: { id: true } }); n++) code = `${base}${n}`
 
     const deptIds: string[] = Array.isArray(restrictedDepartmentIds) ? restrictedDepartmentIds : []
     const programIds: string[] = Array.isArray(restrictedProgramIds) ? restrictedProgramIds : []

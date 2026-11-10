@@ -150,7 +150,7 @@ export async function validateEntry(
         mergeGroupId: true,
         subject: { select: { code: true, type: true } },
         faculty: { select: { user: { select: { firstName: true, lastName: true } } } },
-        room: { select: { code: true } },
+        room: { select: { code: true, name: true } },
         section: { select: { name: true } },
         schedule: { select: { department: { select: { abbreviation: true } } } },
       },
@@ -176,7 +176,7 @@ export async function validateEntry(
             mergeGroupId: true,
             subject: { select: { code: true, type: true } },
             faculty: { select: { user: { select: { firstName: true, lastName: true } } } },
-            room: { select: { code: true } },
+            room: { select: { code: true, name: true } },
             section: { select: { name: true } },
             schedule: { select: { department: { select: { abbreviation: true } } } },
           },
@@ -232,6 +232,7 @@ export async function validateEntry(
       where: { id: entry.roomId },
       select: {
         code: true,
+        name: true,
         type: true,
         labSpecialization: true,
         buildingId: true,
@@ -287,7 +288,7 @@ export async function validateEntry(
     const isPathfit = isPathfitCode(subject.code)
     const isVenue = isPathfitVenueCode(roomAccess.code)
     if (isPathfit && !isVenue) {
-      return `${HARD_CONFLICT_PREFIX}PATHFit classes are held in the Gymnasium, the Covered Court or the Field only — ${roomAccess.code} is not one of them.`
+      return `${HARD_CONFLICT_PREFIX}PATHFit classes are held in the Gymnasium, the Covered Court or the Field only — ${roomAccess.name} is not one of them.`
     }
     if (!isPathfit && isVenue) {
       return `${HARD_CONFLICT_PREFIX}The Gymnasium, Covered Court and Field are reserved for PATHFit classes.`
@@ -320,7 +321,7 @@ export async function validateEntry(
       (!!sectionDeptId && roomAccess.departments.some((d) => d.departmentId === sectionDeptId)) ||
       (!!sectionProgramId && roomAccess.programs.some((p) => p.programId === sectionProgramId))
     if (!allowed) {
-      return `Room access restriction: ${roomAccess.code} is reserved for specific departments/programs — ${section?.yearLevel?.program?.name ?? "this section's program"} is not allowed to use it.`
+      return `Room access restriction: ${roomAccess.name} is reserved for specific departments/programs — ${section?.yearLevel?.program?.name ?? "this section's program"} is not allowed to use it.`
     }
   }
 
@@ -337,7 +338,7 @@ export async function validateEntry(
       const has = roomAccess.labSpecialization
         ? String(roomAccess.labSpecialization).replace(/_/g, " ")
         : "no specialization"
-      return `Lab specialization mismatch: "${subject.code}" requires a ${need} laboratory, but ${roomAccess.code} has ${has}.`
+      return `Lab specialization mismatch: "${subject.code}" requires a ${need} laboratory, but ${roomAccess.name} has ${has}.`
     }
   }
 
@@ -348,7 +349,7 @@ export async function validateEntry(
   // would refuse.
   if (subject && roomAccess && !isTbaRoom) {
     if (!roomTypeAllowedForSubject(roomAccess.type, subject)) {
-      return `Room type mismatch: "${subject.code}" must be held in a ${describeRequiredRoomTypes(subject)}, but ${roomAccess.code} is a ${String(roomAccess.type).replace(/_/g, " ").toLowerCase()}.`
+      return `Room type mismatch: "${subject.code}" must be held in a ${describeRequiredRoomTypes(subject)}, but ${roomAccess.name} is a ${String(roomAccess.type).replace(/_/g, " ").toLowerCase()}.`
     }
   }
 
@@ -381,7 +382,7 @@ export async function validateEntry(
       timesOverlap(e.startTime, e.endTime, entry.startTime, entry.endTime)
   )
   if (roomConflict) {
-    return `${HARD_CONFLICT_PREFIX}Room conflict: ${roomConflict.room?.code ?? "Room"} is already booked on ${entry.day} (${roomConflict.startTime}-${roomConflict.endTime}) for "${roomConflict.subject?.code}"${whereClause(scheduleId, roomConflict)}`
+    return `${HARD_CONFLICT_PREFIX}Room conflict: ${roomConflict.room?.name ?? "Room"} is already booked on ${entry.day} (${roomConflict.startTime}-${roomConflict.endTime}) for "${roomConflict.subject?.code}"${whereClause(scheduleId, roomConflict)}`
   }
 
   // 2b. PATHFit venue concurrency — a venue may host only so many PATHFit classes

@@ -87,7 +87,7 @@ export async function GET(req: Request) {
         facultyName: true,
         subject: { select: { code: true, title: true, type: true, units: true } },
         faculty: { select: { employeeId: true, user: { select: { firstName: true, lastName: true } } } },
-        room: { select: { code: true, building: { select: { code: true } } } },
+        room: { select: { code: true, name: true, building: { select: { code: true } } } },
         section: {
           select: {
             id: true,
@@ -148,7 +148,7 @@ export async function GET(req: Request) {
         faculty:
           e.facultyName ??
           (e.faculty?.user ? `${e.faculty.user.firstName} ${e.faculty.user.lastName}`.trim() : e.faculty?.employeeId ?? "—"),
-        room: e.room?.code ?? "",
+        room: e.room?.name ?? e.room?.code ?? "",
         building: e.room?.building?.code ?? "",
         scheduleId: e.schedule.id,
         scheduleStatus: e.schedule.status,

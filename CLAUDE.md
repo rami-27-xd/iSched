@@ -536,3 +536,7 @@ PUBLISHED ──(SUPER_ADMIN reset / unpublish)──► DRAFT        CAS schedu
 - `prisma/standardize-room-codes.ts` (preview; `--apply`) rewrote the old prefixes (HP→HPB, JPR→JPRB, ABB→CIT, EAB→ICT, CTE→CTEB;
   MDP-2014→MDP-214) in place — rooms keep their ids, so scheduled classes are untouched. **Run it against production too.**
   `seed-buildings-rooms.ts` uses the new codes. Building codes themselves are unchanged. Room display names were not changed.
+- **Rooms are shown by name only (2026-11-10)**: the room code is no longer displayed or typed anywhere — it stays as an internal unique key.
+  Add Room has no code field (`POST /api/rooms` builds `<building code>-<name>` and de-duplicates); Edit Room keeps the code untouched.
+  Schedule views, occupancy, dashboards, exports, conflict/validation messages all print `room.name` (API payloads that carried
+  `roomCode` now carry the name; `GET /api/schedules/[id]` selects `room.name`).

@@ -94,7 +94,7 @@ export default function AnalyticsPage() {
     for (const e of entries) {
       const rid = e.roomId ?? e.room?.id ?? ""
       if (!rid) continue
-      const code = e.room?.code ?? rid
+      const code = e.room?.name ?? e.room?.code ?? rid
       if (!map.has(rid)) map.set(rid, { code, hours: 0 })
       map.get(rid)!.hours += getDurationHours(e.startTime, e.endTime)
     }

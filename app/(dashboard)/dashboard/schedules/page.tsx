@@ -1497,7 +1497,7 @@ export default function SchedulesPage() {
         const code = (e.subject?.code ?? "").toLowerCase()
         const title = (e.subject?.title ?? "").toLowerCase()
         const faculty = `${e.faculty?.user?.firstName ?? ""} ${e.faculty?.user?.lastName ?? ""}`.toLowerCase()
-        const room = (e.room?.code ?? "").toLowerCase()
+        const room = `${e.room?.name ?? ""} ${e.room?.code ?? ""}`.toLowerCase()
         const section = entrySectionLabel(e).toLowerCase()
         return code.includes(q) || title.includes(q) || faculty.includes(q) || room.includes(q) || section.includes(q)
       })
@@ -1529,7 +1529,7 @@ export default function SchedulesPage() {
     subjectTitle: e.subject?.title ?? "",
     // Free-text override first ("TBA" on PATHFIT rows), then the linked record.
     facultyName: e.facultyName || (e.faculty?.user ? `${e.faculty.user.firstName} ${e.faculty.user.lastName}` : ""),
-    roomCode: e.room?.code ?? "",
+    roomCode: e.room?.name ?? e.room?.code ?? "",
     sectionName: entrySectionLabel(e),
     day: e.day,
     startTime: e.startTime,
@@ -1613,7 +1613,7 @@ export default function SchedulesPage() {
     const map = new Map<string, string>()
     entries.forEach((e: any) => {
       const rid = e.roomId ?? e.room?.id
-      if (rid && e.room?.code) map.set(rid, e.room.code)
+      if (rid && e.room?.code) map.set(rid, e.room.name ?? e.room.code)
     })
     return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
   }, [entries])
@@ -1801,7 +1801,7 @@ export default function SchedulesPage() {
         overlap(startTime, endTime, e.startTime, e.endTime)
       )
       if (roomConflict) {
-        return toast.error(`Room ${roomConflict.room?.code ?? ""} is already booked at ${roomConflict.startTime}–${roomConflict.endTime} on ${day.charAt(0) + day.slice(1).toLowerCase()}`)
+        return toast.error(`Room ${roomConflict.room?.name ?? roomConflict.room?.code ?? ""} is already booked at ${roomConflict.startTime}–${roomConflict.endTime} on ${day.charAt(0) + day.slice(1).toLowerCase()}`)
       }
 
       // Section conflict — skip if both are lab entries with different sets
@@ -3049,7 +3049,7 @@ export default function SchedulesPage() {
                                                   `${entry.faculty?.user?.firstName ?? ""} ${entry.faculty?.user?.lastName ?? ""}`.trim() ||
                                                   "—"}
                                               </span>
-                                              <span className="font-mono">{entry.room?.code}</span>
+                                              <span>{entry.room?.name ?? entry.room?.code}</span>
                                               <span>{entrySectionLabel(entry)}</span>
                                               {entry.__mergedSections?.length > 1 && (
                                                 <span className="inline-flex items-center rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-800" title="One class held for several sections together">
@@ -3175,7 +3175,7 @@ export default function SchedulesPage() {
                                     `${entry.faculty?.user?.firstName ?? ""} ${entry.faculty?.user?.lastName ?? ""}`.trim() ||
                                     "—"}
                                 </td>
-                                <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-muted-foreground">{entry.room?.code}</td>
+                                <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{entry.room?.name ?? entry.room?.code}</td>
                                 <td className="whitespace-nowrap px-3 py-2">
                                   {entrySectionLabel(entry)}
                                   {entry.__mergedSections?.length > 1 && (
@@ -3716,7 +3716,7 @@ export default function SchedulesPage() {
                     <option value="">Select room</option>
                     {filteredRooms.map((r: any) => (
                       <option key={r.id} value={r.id}>
-                        {r.code} ({r.name}) — {r.building?.code ?? ""} · {r.type?.replace(/_/g, " ")}
+                        {r.name} — {r.building?.code ?? ""} · {r.type?.replace(/_/g, " ")}
                       </option>
                     ))}
                   </select>
@@ -3899,7 +3899,7 @@ export default function SchedulesPage() {
                             <option value="">Select room</option>
                             {filteredRooms.map((r: any) => (
                               <option key={r.id} value={r.id}>
-                                {r.code} ({r.name}){r.building?.code ? ` — ${r.building.code}` : ""}
+                                {r.name}{r.building?.code ? ` — ${r.building.code}` : ""}
                               </option>
                             ))}
                           </select>
@@ -4117,7 +4117,7 @@ export default function SchedulesPage() {
                 >
                   <option value="">— Select room —</option>
                   {editRoomOptions.map((r: any) => (
-                    <option key={r.id} value={r.id}>{r.code} ({r.name}) — {r.type?.replace(/_/g, " ")}</option>
+                    <option key={r.id} value={r.id}>{r.name} — {r.type?.replace(/_/g, " ")}</option>
                   ))}
                 </select>
                 {editEntryForm.subjectId && editSelectedSubject?.requiredRoomType?.length > 0 && (

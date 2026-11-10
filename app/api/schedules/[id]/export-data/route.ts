@@ -51,7 +51,7 @@ export async function GET(
             facultyName: true,
             subject: { select: { code: true, title: true, units: true, hoursPerWeek: true, type: true } },
             faculty: { select: { id: true, user: { select: { firstName: true, lastName: true } } } },
-            room: { select: { code: true } },
+            room: { select: { code: true, name: true } },
             section: {
               select: {
                 id: true,
@@ -83,7 +83,7 @@ export async function GET(
       facultyId: e.faculty?.id ?? "",
       // Free-text override wins, else the linked faculty's real name.
       facultyName: (e.facultyName?.trim() || `${e.faculty?.user?.firstName ?? ""} ${e.faculty?.user?.lastName ?? ""}`).trim(),
-      roomCode: e.room?.code ?? "",
+      roomCode: e.room?.name ?? e.room?.code ?? "",
       sectionId: e.section?.id ?? "",
       sectionName: e.section?.name ?? "",
       programName: e.section?.yearLevel?.program?.name ?? "",

@@ -766,7 +766,7 @@ export async function POST(
         // engine (subjects/faculty/rooms/sections) — no extra join query needed.
         const subjectCodeMap = new Map(allSubjects.map((s: any) => [s.id, s.code]))
         const facultyNameMap = new Map(faculty.map((f: any) => [f.id, `${f.user.firstName} ${f.user.lastName}`]))
-        const roomCodeMap = new Map(rooms.map((r: any) => [r.id, r.code]))
+        const roomCodeMap = new Map(rooms.map((r: any) => [r.id, r.name ?? r.code]))
         const sectionNameMap = new Map(sections.map((s: any) => [s.id, s.name]))
 
         // The TBA faculty and the placeholder rooms (TBA, GYM) are shared by
@@ -812,7 +812,7 @@ export async function POST(
           include: {
             subject: { select: { code: true } },
             faculty: { include: { user: { select: { firstName: true, lastName: true } } } },
-            room: { select: { code: true } },
+            room: { select: { code: true, name: true } },
             section: { select: { name: true } },
           },
         })
@@ -824,7 +824,7 @@ export async function POST(
           startTime: e.startTime,
           endTime: e.endTime,
           ...neutralize(e, e.faculty?.employeeId === "TBA", PLACEHOLDER_ROOM_CODES.includes(e.room?.code)),
-          roomCode: e.room?.code ?? "Unknown Room",
+          roomCode: e.room?.name ?? e.room?.code ?? "Unknown Room",
           facultyName: e.faculty?.user ? `${e.faculty.user.firstName} ${e.faculty.user.lastName}` : "Unknown Faculty",
           sectionId: e.sectionId,
           sectionName: e.section?.name ?? "Unknown Section",
